@@ -30,19 +30,3 @@ enum GhosttyColorSchemeBroadcaster {
         }
     }
 }
-
-enum GhosttyReloadConfigRoute: Equatable {
-    case reapplyApp
-    case reloadAppFromDisk
-    case reapplySurface
-    case reloadSurfaceFromDisk
-
-    static func route(targetTag: ghostty_target_tag_e, soft: Bool) -> Self {
-        switch (targetTag == GHOSTTY_TARGET_SURFACE, soft) {
-        case (false, true): .reapplyApp
-        case (false, false): .reloadAppFromDisk
-        case (true, true): .reapplySurface
-        case (true, false): .reloadSurfaceFromDisk
-        }
-    }
-}

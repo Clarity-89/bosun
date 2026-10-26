@@ -29,8 +29,3 @@ final class SecureInput {
         if wanted { EnableSecureEventInput() } else { DisableSecureEventInput() }
     }
 }
-
-extension Notification.Name {
-    /// Observed by the vendored SurfaceView; Bosun has no setting yet, so it never fires.
-    static let smoothScrollSettingChanged = Notification.Name("com.bosun.smoothScrollSettingChanged")
-}

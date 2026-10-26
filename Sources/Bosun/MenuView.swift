@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuView: View {
     let model: DeckModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -105,9 +106,7 @@ struct MenuView: View {
     private func openInWindow(_ session: DeckSession) {
         model.select(PaneTarget(sessionID: session.id))
         NSApp.activate()
-        for window in NSApp.windows where window.canBecomeKey && !(window is NSPanel) {
-            window.makeKeyAndOrderFront(nil)
-        }
+        openWindow(id: "main")
     }
 }
 

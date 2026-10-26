@@ -3,9 +3,6 @@
 
 @preconcurrency import AppKit
 import GhosttyKit
-import os
-
-private let logger = Logger(subsystem: "com.bosun.Bosun", category: "GhosttyAction")
 
 /// Routes libghostty actions to the surface they target. The return value
 /// is a contract: `false` means "not performed", which lets a `performable:`
@@ -13,7 +10,7 @@ private let logger = Logger(subsystem: "com.bosun.Bosun", category: "GhosttyActi
 /// on purpose return `true`.
 @MainActor
 enum GhosttyActionRouter {
-    static func handleAction(app: ghostty_app_t, target: ghostty_target_s, action: ghostty_action_s) -> Bool {
+    static func handleAction(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
         switch action.tag {
         case GHOSTTY_ACTION_SET_TITLE:
             guard let view = surfaceView(from: target), let ptr = action.action.set_title.title else { return false }
@@ -79,16 +76,15 @@ enum GhosttyActionRouter {
             return true
 
         case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
-            guard let view = surfaceView(from: target) else { return false }
+            // A surface created with a command has `wait-after-command` forced
+            // on (apprt/embedded.zig), so after a normal exit (a Ctrl-Q detach)
+            // the engine would sit on "Process exited" until a keypress; Bosun
+            // ends the pane itself. A fast failure is not performed: the engine
+            // then draws its notice and closes on a keypress via `close_surface_cb`.
             let exited = action.action.child_exited
-            logger.info("child exited code=\(exited.exit_code, privacy: .public) runtime_ms=\(exited.timetime_ms, privacy: .public)")
-            // The engine draws an exit notice and waits for a keypress. For a
-            // normal exit (a Ctrl-Q detach) the pane should just go; a fast
-            // failure (under Ghostty's 250 ms abnormal-exit threshold) keeps
-            // the notice so the error can be read, and closes on a keypress.
-            if exited.timetime_ms >= 250 {
-                view.onProcessExit?()
-            }
+            guard UInt64(exited.timetime_ms) > GhosttyAppController.shared.abnormalExitRuntimeMs,
+                  let view = surfaceView(from: target) else { return false }
+            view.onProcessExit?()
             return true
 
         case GHOSTTY_ACTION_CLOSE_TAB, GHOSTTY_ACTION_CLOSE_WINDOW:

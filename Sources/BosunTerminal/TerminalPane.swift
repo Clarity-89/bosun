@@ -6,32 +6,25 @@ private let logger = Logger(subsystem: "com.bosun.Bosun", category: "TerminalPan
 
 /// One embedded terminal running one command. The surface is created when
 /// the view first lands in a window (libghostty needs the window's backing
-/// scale), and lives until `close()` or deallocation.
+/// scale) and freed with the view.
 @MainActor
 public final class TerminalPane: NSView {
-    public struct Launch: Sendable {
-        public var command: String
-        public var workingDirectory: String?
-        public var environment: [String: String]
-
-        public init(command: String, workingDirectory: String? = nil, environment: [String: String] = [:]) {
-            self.command = command
-            self.workingDirectory = workingDirectory
-            self.environment = environment
-        }
-    }
-
     public var onTitleChange: ((String) -> Void)?
+    /// The command ended or the engine closed the surface; the view is done.
     public var onProcessExit: (() -> Void)?
 
-    public private(set) var title = ""
-
-    private let launch: Launch
+    private let command: String
+    private let environment: [String: String]
     private let surfaceView = SurfaceView(frame: .zero)
     private var started = false
 
-    public init(launch: Launch) {
-        self.launch = launch
+    /// libghostty runs `command` as `sh -c "exec <command>"` through `login`.
+    /// `environment` is added to the child's, with `TERM_PROGRAM` naming Bosun.
+    public init(command: String, environment: [String: String]) {
+        self.command = command
+        var environment = environment
+        environment["TERM_PROGRAM"] = "Bosun"
+        self.environment = environment
         super.init(frame: .zero)
         wantsLayer = true
         surfaceView.translatesAutoresizingMaskIntoConstraints = false
@@ -42,64 +35,47 @@ public final class TerminalPane: NSView {
             surfaceView.topAnchor.constraint(equalTo: topAnchor),
             surfaceView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        surfaceView.onTitleChange = { [weak self] value in
-            self?.title = value
-            self?.onTitleChange?(value)
-        }
-        surfaceView.onProcessExit = { [weak self] in
-            self?.onProcessExit?()
-        }
+        surfaceView.onTitleChange = { [weak self] title in self?.onTitleChange?(title) }
+        surfaceView.onProcessExit = { [weak self] in self?.onProcessExit?() }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    public static var engineError: String? {
-        if case .error(let message) = GhosttyAppController.shared.readiness { return message }
-        return nil
-    }
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil, !started else { return }
         started = true
         createSurface()
-    }
-
-    /// Moves keyboard focus into the terminal.
-    public func focusTerminal() {
-        window?.makeFirstResponder(surfaceView)
-    }
-
-    public func close() {
-        surfaceView.surfaceController?.requestClose()
+        // Deferred: this runs inside the hosting layout pass.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            window?.makeFirstResponder(surfaceView)
+        }
     }
 
     private func createSurface() {
         let controller = GhosttyAppController.shared
         guard let app = controller.app else {
-            logger.error("no ghostty app: \(String(describing: controller.readiness), privacy: .public)")
+            logger.error("libghostty is not running; no surface for \(self.command, privacy: .public)")
             return
         }
         var config = GhosttyFFI.surfaceConfigNew()
         config.scale_factor = Double(window?.backingScaleFactor ?? (NSScreen.main?.backingScaleFactor ?? 2.0))
         config.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
 
-        // Strings must outlive ghostty_surface_new only; it copies them.
-        let keys = Array(launch.environment.keys)
-        let values = keys.map { launch.environment[$0]! }
-        launch.command.withCString { command in
+        // ghostty_surface_new copies the strings, so they only need to outlive the call.
+        let keys = Array(environment.keys)
+        let values = keys.map { environment[$0]! }
+        command.withCString { command in
             config.command = command
-            withOptionalCString(launch.workingDirectory) { cwd in
-                config.working_directory = cwd
-                keys.withCStrings { keyPointers in
-                    values.withCStrings { valuePointers in
-                        var envVars = zip(keyPointers, valuePointers).map { ghostty_env_var_s(key: $0, value: $1) }
-                        envVars.withUnsafeMutableBufferPointer { buffer in
-                            config.env_vars = buffer.baseAddress
-                            config.env_var_count = buffer.count
-                            surfaceView.initializeSurface(app: app, baseConfig: config)
-                        }
+            keys.withCStrings { keyPointers in
+                values.withCStrings { valuePointers in
+                    var envVars = zip(keyPointers, valuePointers).map { ghostty_env_var_s(key: $0, value: $1) }
+                    envVars.withUnsafeMutableBufferPointer { buffer in
+                        config.env_vars = buffer.baseAddress
+                        config.env_var_count = buffer.count
+                        surfaceView.initializeSurface(app: app, baseConfig: config)
                     }
                 }
             }
@@ -107,14 +83,9 @@ public final class TerminalPane: NSView {
         if let surfaceController = surfaceView.surfaceController {
             controller.register(surfaceController)
         } else {
-            logger.error("surface creation failed for \(self.launch.command, privacy: .public)")
+            logger.error("surface creation failed for \(self.command, privacy: .public)")
         }
     }
-}
-
-private func withOptionalCString<T>(_ value: String?, _ body: (UnsafePointer<CChar>?) -> T) -> T {
-    guard let value else { return body(nil) }
-    return value.withCString { body($0) }
 }
 
 extension Array where Element == String {

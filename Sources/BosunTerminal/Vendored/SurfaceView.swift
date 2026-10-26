@@ -16,26 +16,11 @@ import os
 private let logger = Logger(subsystem: "com.calyx.terminal", category: "SurfaceView")
 
 
-// MARK: - SurfaceFocusHost
-
-/// Delegate that receives notifications when a `SurfaceView` becomes the
-/// active (focused) pane. Implemented by `SplitContainerView` so it can
-/// propagate per-pane dimming state without reading any config or broadcasting
-/// notifications.
-@MainActor
-protocol SurfaceFocusHost: AnyObject {
-    func surfaceDidBecomeActive(_ surfaceView: SurfaceView)
-}
-
-
 // MARK: - SurfaceView
 
 @MainActor
 class SurfaceView: NSView {
-
-    /// Weak back-reference to the container that should be told when this
-    /// surface gains focus. Held weakly so the container owns the lifetime.
-    weak var focusHost: any SurfaceFocusHost?
+    // BOSUN: Calyx's SurfaceFocusHost (split-container focus dimming) is not vendored.
 
     /// The surface controller managing the ghostty surface for this view.
     var surfaceController: GhosttySurfaceController?
@@ -49,7 +34,6 @@ class SurfaceView: NSView {
     // BOSUN: the action router records terminal-reported state here instead
     // of fanning out through NotificationCenter; the host observes via closures.
     var onTitleChange: ((String) -> Void)?
-    var onPwdChange: ((String) -> Void)?
     var onProcessExit: (() -> Void)?
 
     func applyTitle(_ value: String) {
@@ -59,7 +43,6 @@ class SurfaceView: NSView {
 
     func applyPwd(_ value: String) {
         pwd = value
-        onPwdChange?(value)
     }
 
     /// Whether the view is focused.
@@ -167,9 +150,6 @@ class SurfaceView: NSView {
     private static let momentumStopThreshold: CGFloat = 10.0  // px/sec to stop
     private static let defaultRowDuration: CFTimeInterval = 0.15  // 150ms per row for single notch
 
-    /// Observer for smooth scroll setting changes from Settings UI.
-    private var smoothScrollSettingObserver: NSObjectProtocol?
-
     /// Timestamp of the last performKeyEquivalent event for command-key handling.
     private var lastPerformKeyEvent: TimeInterval?
 
@@ -194,9 +174,6 @@ class SurfaceView: NSView {
     isolated deinit {
         smoothScrollResetTimer?.invalidate()
         virtualMomentumTimer?.invalidate()
-        if let obs = smoothScrollSettingObserver {
-            NotificationCenter.default.removeObserver(obs)
-        }
         trackingAreas.forEach { removeTrackingArea($0) }
         if _hasSecureInput {
             SecureInput.shared.removeScoped(ObjectIdentifier(self))
@@ -213,16 +190,7 @@ class SurfaceView: NSView {
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
         self.layer = metalLayer
 
-        // Observe smooth scroll setting changes to immediately reset active offsets.
-        smoothScrollSettingObserver = NotificationCenter.default.addObserver(
-            forName: .smoothScrollSettingChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.resetSmoothScrollOffset()
-            }
-        }
+        // BOSUN: Calyx observed its smooth-scroll setting here; Bosun has no such setting.
     }
 
     /// Initialize the ghostty surface for this view.
@@ -366,9 +334,6 @@ class SurfaceView: NSView {
         surfaceController?.setFocus(newFocused)
         if passwordInput {
             SecureInput.shared.setScoped(ObjectIdentifier(self), focused: newFocused)
-        }
-        if newFocused {
-            focusHost?.surfaceDidBecomeActive(self)
         }
     }
 

@@ -41,6 +41,22 @@ public struct AgentDeckBinary: Sendable {
     var directory: String { URL(fileURLWithPath: path).deletingLastPathComponent().path }
 }
 
+/// Command line and environment for an embedded `session attach`: a tmux
+/// client, so the agent keeps running when the pane goes away.
+public struct AttachLaunch: Sendable {
+    public let command: String
+    public let environment: [String: String]
+}
+
+extension AgentDeckBinary {
+    public func attachLaunch(sessionID: String) -> AttachLaunch {
+        AttachLaunch(
+            command: Terminal.attachCommand(executablePath: path, sessionID: sessionID),
+            environment: AgentDeckCLI.childEnvironment(binaryDirectory: directory)
+        )
+    }
+}
+
 public enum AgentDeckCLIError: Error, LocalizedError, Sendable {
     case notFound(rejected: [String])
 
@@ -202,16 +218,6 @@ public actor AgentDeckCLI {
     public func openGhosttyAttach(sessionID: String) async throws {
         let binary = try await binary()
         try await Terminal.openAttach(executablePath: binary.path, sessionID: sessionID)
-    }
-
-    /// Command line and environment for an embedded `session attach`: a tmux
-    /// client, so the agent keeps running when the pane goes away.
-    public func attachLaunch(sessionID: String) async throws -> (command: String, environment: [String: String]) {
-        let binary = try await binary()
-        return (
-            Terminal.attachCommand(executablePath: binary.path, sessionID: sessionID),
-            Self.childEnvironment(binaryDirectory: binary.directory)
-        )
     }
 
     /// Runs the resolved agent-deck in its child environment; a non-zero exit

@@ -1,17 +1,5 @@
 import BosunCore
-import BosunTerminal
 import SwiftUI
-
-/// What the pane shows: a session, optionally one of its tmux windows.
-struct PaneTarget: Hashable {
-    let sessionID: String
-    let windowIndex: Int?
-
-    init(sessionID: String, windowIndex: Int? = nil) {
-        self.sessionID = sessionID
-        self.windowIndex = windowIndex
-    }
-}
 
 @MainActor
 struct MainWindowView: View {
@@ -58,8 +46,8 @@ struct MainWindowView: View {
 
     private var titleText: String {
         guard let selected else { return "Bosun" }
-        let terminalTitle = model.terminalTitles[selected.id] ?? ""
-        return terminalTitle.isEmpty ? selected.title : "\(selected.title) · \(terminalTitle)"
+        guard let pane = model.pane, pane.sessionID == selected.id, !pane.title.isEmpty else { return selected.title }
+        return "\(selected.title) · \(pane.title)"
     }
 
     private var sidebar: some View {
@@ -73,10 +61,9 @@ struct MainWindowView: View {
                         SessionRow(session: session)
                             .tag(PaneTarget(sessionID: session.id))
                             .contextMenu { sessionMenu(for: session) }
-                        // Window 0 is the agent itself; only extra windows get rows.
-                        ForEach(model.windows(for: session.id).filter { $0.index != 0 }) { window in
+                        ForEach(model.extraWindows(for: session.id)) { window in
                             WindowRow(window: window)
-                                .tag(PaneTarget(sessionID: session.id, windowIndex: window.index))
+                                .tag(PaneTarget(sessionID: session.id, windowID: window.windowID))
                                 .contextMenu {
                                     Button("Close Window", role: .destructive) {
                                         model.closeWindow(window, in: session)
@@ -88,7 +75,7 @@ struct MainWindowView: View {
             }
         }
         .listStyle(.sidebar)
-        .overlay(alignment: .bottom) {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             footer
         }
     }
@@ -121,22 +108,21 @@ struct MainWindowView: View {
         }
     }
 
+    @ViewBuilder
     private var detail: some View {
-        TerminalHost(key: model.terminalKey) { sessionID, title in
-            model.terminalTitleChanged(sessionID: sessionID, title: title)
-        } onExit: { sessionID in
-            model.terminalExited(sessionID: sessionID)
-        }
-        .background(Color.black)
-        .overlay {
-            // The host stays mounted; only this placeholder toggles.
-            if model.terminalKey == nil {
-                ContentUnavailableView(
-                    "Select a session",
-                    systemImage: "rectangle.stack",
-                    description: Text(TerminalPane.engineError ?? "The session attaches here, inside Bosun.")
-                )
+        if let pane = model.pane {
+            TerminalHost(launch: pane.launch) { title in
+                model.paneTitleChanged(sessionID: pane.sessionID, title: title)
+            } onExit: {
+                model.paneExited(sessionID: pane.sessionID)
             }
+            .id(pane.sessionID)
+        } else {
+            ContentUnavailableView(
+                "Select a session",
+                systemImage: "rectangle.stack",
+                description: Text(model.engineError ?? "The session attaches here, inside Bosun.")
+            )
         }
     }
 

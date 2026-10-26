@@ -13,14 +13,6 @@ import os
 
 private let logger = Logger(subsystem: "com.calyx.terminal", category: "GhosttySurface")
 
-// MARK: - SearchQuerySender Protocol
-
-@MainActor
-protocol SearchQuerySender: AnyObject {
-    @discardableResult func performSearch(query: String) -> Bool
-    @discardableResult func performAction(_ action: String) -> Bool
-}
-
 // MARK: - GhosttySurfaceController
 
 @MainActor
@@ -86,33 +78,11 @@ final class GhosttySurfaceController: Identifiable, GhosttyColorSchemeReceiving 
             logger.warning("scale_factor not set by caller, using fallback 1.0")
         }
 
-        // BOSUN: Calyx injected its own hook variables here. Bosun passes
-        // the caller's env_vars through unchanged. `ghostty_surface_new`
-        // copies env_vars into its own arena during the call (apprt/
-        // embedded.zig's dupeZ), so the C strings only need to live for the
-        // duration of the nested closures below.
-        var envKeys: [String] = []
-        var envValues: [String] = []
-        if baseConfig.env_var_count > 0, let vars = baseConfig.env_vars {
-            for i in 0..<baseConfig.env_var_count {
-                let envVar = vars[i]
-                guard let key = String(cString: envVar.key, encoding: .utf8),
-                      let value = String(cString: envVar.value, encoding: .utf8) else { continue }
-                envKeys.append(key)
-                envValues.append(value)
-            }
-        }
-
-        let newSurface: ghostty_surface_t? = envKeys.withCStrings { keyPointers in
-            envValues.withCStrings { valuePointers in
-                var envVars = zip(keyPointers, valuePointers).map { ghostty_env_var_s(key: $0, value: $1) }
-                return envVars.withUnsafeMutableBufferPointer { buffer -> ghostty_surface_t? in
-                    config.env_vars = buffer.baseAddress
-                    config.env_var_count = buffer.count
-                    return GhosttyFFI.surfaceNew(app, config: &config)
-                }
-            }
-        }
+        // BOSUN: Calyx re-marshalled env_vars here to inject its hook
+        // variables; Bosun passes the caller's pointers straight through.
+        // `ghostty_surface_new` copies them into its own arena during the
+        // call (apprt/embedded.zig's dupeZ), so they only need to outlive it.
+        let newSurface = GhosttyFFI.surfaceNew(app, config: &config)
 
         // Create the surface.
         guard let newSurface else {
@@ -380,36 +350,6 @@ final class GhosttySurfaceController: Identifiable, GhosttyColorSchemeReceiving 
     }
 }
 
-// MARK: - SearchQuerySender Conformance
-
-extension GhosttySurfaceController: SearchQuerySender {}
-
-// MARK: - Array<String> C String Helper
-
-private extension Array where Element == String {
-    /// Provides a valid `UnsafePointer<Int8>?` for every element,
-    /// simultaneously, for the duration of `body`. Ghostty's own macOS
-    /// target has an equivalent (`Array<String>.withCStrings` in
-    /// `Array+Extension.swift`), but that lives in a separate Xcode
-    /// project/target and isn't reusable from Calyx.
-    ///
-    /// `pointers` is preallocated and written into by index rather than
-    /// grown with `accumulated + [cString]` on each recursive step: array
-    /// concatenation copies the whole accumulated array every time, which
-    /// makes that shape of recursion O(n²) in element count. Writing by
-    /// index keeps each step O(1), for O(n) overall.
-    func withCStrings<T>(_ body: ([UnsafePointer<Int8>?]) throws -> T) rethrows -> T {
-        var pointers = [UnsafePointer<Int8>?](repeating: nil, count: count)
-        func step(_ index: Int) throws -> T {
-            guard index < count else { return try body(pointers) }
-            return try self[index].withCString { cString in
-                pointers[index] = cString
-                return try step(index + 1)
-            }
-        }
-        return try step(0)
-    }
-}
 
 // MARK: - NSScreen Extension
 

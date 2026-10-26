@@ -8,35 +8,42 @@ import os
 
 private let logger = Logger(subsystem: "com.bosun.Bosun", category: "GhosttyApp")
 
+public enum GhosttyEngineError: Error, LocalizedError {
+    case initFailed
+    case configFailed
+    case appFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .initFailed: "ghostty_init failed"
+        case .configFailed: "the Ghostty configuration failed to load"
+        case .appFailed: "ghostty_app_new failed"
+        }
+    }
+}
+
 /// Owns the single `ghostty_app_t` and the config it was created with.
 @MainActor
-final class GhosttyAppController {
-    static let shared = GhosttyAppController()
+public final class GhosttyAppController {
+    public static let shared = GhosttyAppController()
 
-    enum Readiness { case ready, error(String) }
-
-    private(set) var readiness: Readiness = .error("not started")
     nonisolated(unsafe) private(set) var app: ghostty_app_t? = nil
-    private(set) var configManager: GhosttyConfigManager
+    private var configManager: GhosttyConfigManager?
     private var configFileWatcher: ConfigFileWatcher?
     private var appearanceObservation: NSKeyValueObservation?
     /// Every live surface, for config and colour-scheme fan-out.
     private var surfaces = NSHashTable<GhosttySurfaceController>.weakObjects()
 
-    private init() {
+    private init() {}
+
+    /// Starts the engine, once, before any pane exists. On failure `app`
+    /// stays nil and panes log instead of crashing.
+    public func start() throws {
+        guard app == nil else { return }
         GhosttyResources.applyEnvironment()
-        // ghostty_init must precede every other engine call, including
-        // ghostty_config_new; a failed init leaves the manager unloaded.
-        let initialized = GhosttyFFI.initialize()
-        configManager = initialized ? GhosttyConfigManager() : GhosttyConfigManager(unloaded: ())
-        guard initialized else {
-            readiness = .error("ghostty_init failed")
-            return
-        }
-        guard configManager.isLoaded, let config = configManager.config else {
-            readiness = .error("ghostty config failed to load")
-            return
-        }
+        // ghostty_init must precede every other engine call, including ghostty_config_new.
+        guard GhosttyFFI.initialize() else { throw GhosttyEngineError.initFailed }
+        guard let configManager = GhosttyConfigManager() else { throw GhosttyEngineError.configFailed }
         var runtimeConfig = ghostty_runtime_config_s(
             userdata: Unmanaged.passUnretained(self).toOpaque(),
             supports_selection_clipboard: false,
@@ -47,12 +54,11 @@ final class GhosttyAppController {
             write_clipboard_cb: ghosttyWriteClipboardCallback,
             close_surface_cb: ghosttyCloseSurfaceCallback
         )
-        guard let newApp = GhosttyFFI.appNew(&runtimeConfig, config: config) else {
-            readiness = .error("ghostty_app_new failed")
-            return
+        guard let newApp = GhosttyFFI.appNew(&runtimeConfig, config: configManager.config) else {
+            throw GhosttyEngineError.appFailed
         }
+        self.configManager = configManager
         app = newApp
-        readiness = .ready
         GhosttyFFI.appSetFocus(newApp, focused: NSApp.isActive)
 
         let center = NotificationCenter.default
@@ -77,6 +83,11 @@ final class GhosttyAppController {
         GhosttyFFI.appTick(app)
     }
 
+    /// From the current config, so a reload is honoured.
+    var abnormalExitRuntimeMs: UInt64 {
+        configManager?.abnormalExitRuntimeMs ?? 250
+    }
+
     func register(_ surface: GhosttySurfaceController) {
         surfaces.add(surface)
     }
@@ -85,17 +96,16 @@ final class GhosttyAppController {
     /// a config that fails to parse keeps the previous one.
     func reloadConfig() {
         guard let app else { return }
-        let fresh = GhosttyConfigManager()
-        guard fresh.isLoaded, let config = fresh.config else {
+        guard let fresh = GhosttyConfigManager() else {
             logger.warning("config reload failed; keeping previous config")
             return
         }
         let previous = configManager
         configManager = fresh
-        withExtendedLifetime((previous, fresh)) {
-            GhosttyFFI.appUpdateConfig(app, config: config)
+        withExtendedLifetime(previous) {
+            GhosttyFFI.appUpdateConfig(app, config: fresh.config)
             for surface in surfaces.allObjects {
-                surface.updateConfig(config)
+                surface.updateConfig(fresh.config)
             }
         }
     }
@@ -139,6 +149,9 @@ final class GhosttyAppController {
 }
 
 // MARK: - C callbacks (file-level functions so they can be @convention(c))
+//
+// The runtime config declares `supports_selection_clipboard: false`, so the
+// clipboard callbacks only ever see the general pasteboard.
 
 /// Called from an arbitrary thread; returns nothing, so it hops asynchronously.
 private func ghosttyWakeupCallback(_ userdata: UnsafeMutableRawPointer?) {
@@ -151,52 +164,47 @@ private func ghosttyWakeupCallback(_ userdata: UnsafeMutableRawPointer?) {
 
 /// Called on the main thread during tick and must return, so it enters the
 /// main actor synchronously.
-private func ghosttyActionCallback(_ app: ghostty_app_t?, _ target: ghostty_target_s, _ action: ghostty_action_s) -> Bool {
-    guard let app else { return false }
-    nonisolated(unsafe) let safeApp = app
+private func ghosttyActionCallback(_: ghostty_app_t?, _ target: ghostty_target_s, _ action: ghostty_action_s) -> Bool {
     let safeTarget = target
     let safeAction = action
     return MainActor.assumeIsolated {
-        GhosttyActionRouter.handleAction(app: safeApp, target: safeTarget, action: safeAction)
+        GhosttyActionRouter.handleAction(target: safeTarget, action: safeAction)
     }
 }
 
-private func ghosttyReadClipboardCallback(_ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e, _ state: UnsafeMutableRawPointer?) -> Bool {
+private func ghosttyReadClipboardCallback(_ userdata: UnsafeMutableRawPointer?, _: ghostty_clipboard_e, _ state: UnsafeMutableRawPointer?) -> Bool {
     guard let userdata else { return false }
     nonisolated(unsafe) let safeUserdata = userdata
     nonisolated(unsafe) let safeState = state
-    MainActor.assumeIsolated {
-        let view = GhosttyAppController.surfaceView(fromUserdata: safeUserdata)
-        guard let surface = view.surfaceController?.surface else { return }
-        let pasteboard: NSPasteboard = location == GHOSTTY_CLIPBOARD_SELECTION
-            ? NSPasteboard(name: NSPasteboard.Name("com.bosun.selection"))
-            : .general
-        let text = pasteboard.string(forType: .string) ?? ""
+    return MainActor.assumeIsolated {
+        guard let surface = GhosttyAppController.surfaceView(fromUserdata: safeUserdata).surfaceController?.surface else {
+            return false
+        }
+        let text = NSPasteboard.general.string(forType: .string) ?? ""
         text.withCString { ptr in
             GhosttyFFI.surfaceCompleteClipboardRequest(surface, data: ptr, state: safeState, confirmed: false)
         }
+        return true
     }
-    return true
 }
 
 /// libghostty asks before pasting text it considers unsafe (newlines,
 /// bracketed-paste terminators). The pane hosts a tmux client where
 /// multi-line pastes are routine, so the paste proceeds as requested.
-private func ghosttyConfirmReadClipboardCallback(_ userdata: UnsafeMutableRawPointer?, _ string: UnsafePointer<CChar>?, _ state: UnsafeMutableRawPointer?, _ request: ghostty_clipboard_request_e) {
+private func ghosttyConfirmReadClipboardCallback(_ userdata: UnsafeMutableRawPointer?, _ string: UnsafePointer<CChar>?, _ state: UnsafeMutableRawPointer?, _: ghostty_clipboard_request_e) {
     guard let userdata else { return }
     nonisolated(unsafe) let safeUserdata = userdata
     nonisolated(unsafe) let safeState = state
     let contents = string.map { String(cString: $0) } ?? ""
     MainActor.assumeIsolated {
-        let view = GhosttyAppController.surfaceView(fromUserdata: safeUserdata)
-        guard let surface = view.surfaceController?.surface else { return }
+        guard let surface = GhosttyAppController.surfaceView(fromUserdata: safeUserdata).surfaceController?.surface else { return }
         contents.withCString { ptr in
             GhosttyFFI.surfaceCompleteClipboardRequest(surface, data: ptr, state: safeState, confirmed: true)
         }
     }
 }
 
-private func ghosttyWriteClipboardCallback(_ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e, _ contents: UnsafePointer<ghostty_clipboard_content_s>?, _ contentsLen: Int, _ confirm: Bool) {
+private func ghosttyWriteClipboardCallback(_: UnsafeMutableRawPointer?, _: ghostty_clipboard_e, _ contents: UnsafePointer<ghostty_clipboard_content_s>?, _ contentsLen: Int, _: Bool) {
     guard let contents, contentsLen > 0 else { return }
     var value: String?
     for i in 0..<contentsLen {
@@ -211,15 +219,14 @@ private func ghosttyWriteClipboardCallback(_ userdata: UnsafeMutableRawPointer?,
     }
     guard let value else { return }
     MainActor.assumeIsolated {
-        let pasteboard: NSPasteboard = location == GHOSTTY_CLIPBOARD_SELECTION
-            ? NSPasteboard(name: NSPasteboard.Name("com.bosun.selection"))
-            : .general
-        pasteboard.declareTypes([.string], owner: nil)
-        pasteboard.setString(value, forType: .string)
+        NSPasteboard.general.declareTypes([.string], owner: nil)
+        NSPasteboard.general.setString(value, forType: .string)
     }
 }
 
-private func ghosttyCloseSurfaceCallback(_ userdata: UnsafeMutableRawPointer?, _ processAlive: Bool) {
+/// The surface's process ended, or the engine was asked to close it; either
+/// way the pane is over.
+private func ghosttyCloseSurfaceCallback(_ userdata: UnsafeMutableRawPointer?, _: Bool) {
     guard let userdata else { return }
     nonisolated(unsafe) let safeUserdata = userdata
     MainActor.assumeIsolated {
