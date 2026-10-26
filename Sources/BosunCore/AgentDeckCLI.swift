@@ -41,6 +41,22 @@ public struct AgentDeckBinary: Sendable {
     var directory: String { URL(fileURLWithPath: path).deletingLastPathComponent().path }
 }
 
+/// Command line and environment for an embedded `session attach`: a tmux
+/// client, so the agent keeps running when the pane goes away.
+public struct AttachLaunch: Sendable {
+    public let command: String
+    public let environment: [String: String]
+}
+
+extension AgentDeckBinary {
+    public func attachLaunch(sessionID: String) -> AttachLaunch {
+        AttachLaunch(
+            command: Terminal.attachCommand(executablePath: path, sessionID: sessionID),
+            environment: AgentDeckCLI.childEnvironment(binaryDirectory: directory)
+        )
+    }
+}
+
 public enum AgentDeckCLIError: Error, LocalizedError, Sendable {
     case notFound(rejected: [String])
 
@@ -204,7 +220,9 @@ public actor AgentDeckCLI {
         try await Terminal.openAttach(executablePath: binary.path, sessionID: sessionID)
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
+    /// Runs the resolved agent-deck in its child environment; a non-zero exit
+    /// is `SubprocessError.exited`.
+    func run(_ arguments: [String]) async throws -> ProcessResult {
         let binary = try await binary()
         let result = try await Subprocess.run(
             executable: binary.path,
@@ -212,6 +230,10 @@ public actor AgentDeckCLI {
             environment: Self.childEnvironment(binaryDirectory: binary.directory)
         )
         try result.checkSucceeded()
-        return try JSONDecoder().decode(type, from: Data(result.stdout.utf8))
+        return result
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
+        try JSONDecoder().decode(type, from: Data(try await run(arguments).stdout.utf8))
     }
 }

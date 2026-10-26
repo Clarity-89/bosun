@@ -1,4 +1,5 @@
 import BosunCore
+import BosunTerminal
 import Foundation
 import Observation
 import os
@@ -12,12 +13,18 @@ final class DeckModel {
     private(set) var connection: ConnectionState = .starting
     private(set) var statusEventsEnabled = false
     private(set) var lastError: String?
+    private(set) var selection: PaneTarget?
+    private(set) var pane: AttachedPane?
+    /// Nil once libghostty is running; otherwise what the pane shows instead.
+    private(set) var engineError: String?
+    private(set) var windowsBySession: [String: [SessionWindow]] = [:]
     private var refreshTask: Task<Void, Never>?
 
     @ObservationIgnored private let cli = AgentDeckCLI(
         agentDeckPath: UserDefaults.standard.string(forKey: "agentDeckPath")
     )
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var binary: AgentDeckBinary?
     @ObservationIgnored private var followerTask: Task<Void, Never>?
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var delayedRefreshTask: Task<Void, Never>?
@@ -46,6 +53,12 @@ final class DeckModel {
     func start() {
         guard !started else { return }
         started = true
+        do {
+            try GhosttyAppController.shared.start()
+        } catch {
+            engineError = error.localizedDescription
+            logger.error("libghostty failed to start: \(error.localizedDescription, privacy: .public)")
+        }
         Task { await bootstrap() }
     }
 
@@ -67,16 +80,25 @@ final class DeckModel {
         refreshTask = nil
     }
 
-    func attach(_ session: DeckSession) {
-        lastError = nil
-        Task {
-            do {
-                try await cli.openGhosttyAttach(sessionID: session.id)
-                logger.info("opened Ghostty for \(session.id, privacy: .public)")
-            } catch {
-                lastError = error.localizedDescription
-                logger.error("Ghostty attach failed: \(error.localizedDescription, privacy: .public)")
+    /// Window rows for every session, keyed back from tmux session name
+    /// to agent-deck id.
+    private func loadAllWindows() async {
+        do {
+            let byTmuxName = try await cli.listAllWindows()
+            windowsBySession = sessions.reduce(into: [:]) { result, session in
+                if let name = session.tmuxSession, let windows = byTmuxName[name] {
+                    result[session.id] = windows
+                }
             }
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Pops the session out into a separate Ghostty window.
+    func openInGhostty(_ session: DeckSession) {
+        run("Ghostty attach") { [cli] in
+            try await cli.openGhosttyAttach(sessionID: session.id)
         }
     }
 
@@ -91,6 +113,7 @@ final class DeckModel {
                 ])
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
+            await loadAllWindows()
         } catch is CancellationError {
         } catch {
             lastError = error.localizedDescription
@@ -98,9 +121,91 @@ final class DeckModel {
         }
     }
 
+    /// Shows the target in the pane. Attaching runs `agent-deck session
+    /// attach`, a tmux client, so the agent keeps running when the pane goes
+    /// away; a window row first switches the session's current window, as
+    /// the TUI's window rows do.
+    func select(_ target: PaneTarget?) {
+        selection = target
+        guard let target else {
+            pane = nil
+            return
+        }
+        if let windowID = target.windowID {
+            run("select window") { [cli] in try await cli.selectWindow(windowID: windowID) }
+        }
+        guard pane?.sessionID != target.sessionID else { return }
+        guard let binary else {
+            lastError = "agent-deck is still starting"
+            return
+        }
+        pane = AttachedPane(sessionID: target.sessionID, launch: binary.attachLaunch(sessionID: target.sessionID))
+        logger.info("attached \(target.sessionID, privacy: .public) in window")
+        Task { await loadAllWindows() }
+    }
+
+    /// A session's windows after the first, which runs the agent.
+    func extraWindows(for sessionID: String) -> ArraySlice<SessionWindow> {
+        (windowsBySession[sessionID] ?? []).dropFirst()
+    }
+
+    /// "Open shell here" as a new tmux window in the session's directory.
+    func newShellWindow(in session: DeckSession) {
+        guard let tmuxSession = session.tmuxSession else { return }
+        run("new window") { [cli] in
+            try await cli.newShellWindow(tmuxSession: tmuxSession, workingDirectory: session.path)
+        } then: { [weak self] in
+            await self?.loadAllWindows()
+        }
+    }
+
+    /// "Open shell here" as a split of the session's active window.
+    func split(_ session: DeckSession, _ direction: SplitDirection) {
+        guard let tmuxSession = session.tmuxSession else { return }
+        run("split") { [cli] in
+            try await cli.splitShellPane(tmuxSession: tmuxSession, direction: direction, workingDirectory: session.path)
+        }
+    }
+
+    func closeWindow(_ window: SessionWindow, in session: DeckSession) {
+        run("close window") { [cli] in
+            try await cli.closeWindow(sessionID: session.id, windowID: window.windowID)
+        } then: { [weak self] in
+            await self?.loadAllWindows()
+        }
+    }
+
+    func paneTitleChanged(sessionID: String, title: String) {
+        guard pane?.sessionID == sessionID else { return }
+        pane?.title = title
+    }
+
+    /// The tmux client ended (Ctrl-Q detach or the session stopped); the
+    /// agent itself is untouched, only the pane is gone.
+    func paneExited(sessionID: String) {
+        guard pane?.sessionID == sessionID else { return }
+        pane = nil
+        selection = nil
+        logger.info("pane for \(sessionID, privacy: .public) exited")
+    }
+
+    private func run(_ label: String, _ operation: @escaping @Sendable () async throws -> Void, then follow: (@MainActor () async -> Void)? = nil) {
+        lastError = nil
+        Task {
+            do {
+                try await operation()
+                await follow?()
+            } catch {
+                lastError = error.localizedDescription
+                logger.error("\(label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     private func bootstrap() async {
         do {
             let binary = try await cli.binary()
+            self.binary = binary
             logger.info("using \(binary.path, privacy: .public) v\(binary.version, privacy: .public)")
             statusEventsEnabled = try await cli.statusEventsEnabled()
             // Cursor before the list: anything published in between is
@@ -202,6 +307,24 @@ struct SessionGroup: Identifiable {
     let name: String
     var sessions: [DeckSession]
     var id: String { name }
+}
+
+/// What the pane shows: a session, optionally one of its extra tmux windows.
+struct PaneTarget: Hashable {
+    let sessionID: String
+    let windowID: String?
+
+    init(sessionID: String, windowID: String? = nil) {
+        self.sessionID = sessionID
+        self.windowID = windowID
+    }
+}
+
+/// The session attached in the pane and the title its terminal reports.
+struct AttachedPane {
+    let sessionID: String
+    let launch: AttachLaunch
+    var title = ""
 }
 
 extension DeckSession {
