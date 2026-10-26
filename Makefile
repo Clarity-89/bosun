@@ -2,9 +2,13 @@ APP     := Bosun
 BUNDLE  := build/$(APP).app
 BINDIR   = $(shell swift build -c release --show-bin-path)
 
-.PHONY: build bundle run stop clean
+.PHONY: vendor build bundle run stop clean
 
-build:
+# libghostty static library + headers; see scripts/fetch-ghosttykit.sh.
+vendor:
+	scripts/fetch-ghosttykit.sh Vendor
+
+build: vendor
 	swift build -c release --product $(APP)
 
 # SwiftPM emits a bare binary; menu bar apps need a bundle for LSUIElement

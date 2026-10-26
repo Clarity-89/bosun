@@ -50,8 +50,8 @@ struct MenuView: View {
                     ForEach(model.groups) { group in
                         Section {
                             ForEach(group.sessions) { session in
-                                SessionRow(session: session) {
-                                    model.attach(session)
+                                MenuSessionRow(session: session) {
+                                    openInWindow(session)
                                 }
                             }
                         } header: {
@@ -99,27 +99,26 @@ struct MenuView: View {
         }
         .padding(10)
     }
+
+    /// The menu bar is the quick list; selecting a row shows that session
+    /// in the main window and brings it forward.
+    private func openInWindow(_ session: DeckSession) {
+        model.select(session.id)
+        NSApp.activate()
+        for window in NSApp.windows where window.canBecomeKey && !(window is NSPanel) {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
 }
 
-private struct SessionRow: View {
+private struct MenuSessionRow: View {
     let session: DeckSession
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.title)
-                        .font(.body)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+            HStack {
+                SessionRow(session: session)
                 Spacer(minLength: 4)
                 Image(systemName: "terminal")
                     .font(.caption)
@@ -127,29 +126,9 @@ private struct SessionRow: View {
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
     }
 
-    private var subtitle: String {
-        let tool = session.tool.isEmpty ? "agent" : session.tool
-        if let substate = session.substate {
-            return "\(tool) · \(session.status.label) · \(substate)"
-        }
-        return "\(tool) · \(session.status.label)"
-    }
-
-    private var statusColor: Color {
-        switch session.status {
-        case .running: .blue
-        case .waiting: .orange
-        case .idle: .green
-        case .error: .red
-        case .stopped: .gray
-        case .starting: .yellow
-        case .queued: .indigo
-        case .unknown: .secondary
-        }
-    }
 }

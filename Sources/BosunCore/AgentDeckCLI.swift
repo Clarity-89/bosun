@@ -204,6 +204,16 @@ public actor AgentDeckCLI {
         try await Terminal.openAttach(executablePath: binary.path, sessionID: sessionID)
     }
 
+    /// Command line and environment for an embedded `session attach`: a tmux
+    /// client, so the agent keeps running when the pane goes away.
+    public func attachLaunch(sessionID: String) async throws -> (command: String, environment: [String: String]) {
+        let binary = try await binary()
+        return (
+            Terminal.attachCommand(executablePath: binary.path, sessionID: sessionID),
+            Self.childEnvironment(binaryDirectory: binary.directory)
+        )
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
         let binary = try await binary()
         let result = try await Subprocess.run(

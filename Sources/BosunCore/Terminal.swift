@@ -1,16 +1,20 @@
 @preconcurrency import Foundation
 
 public enum Terminal {
+    /// `<agent-deck> session attach <id>`, quoted for `sh`.
+    public static func attachCommand(executablePath: String, sessionID: String) -> String {
+        "\(shellQuote(executablePath)) session attach \(shellQuote(sessionID))"
+    }
+
     /// `open -na` starts a separate Ghostty instance per attach (Ghostty has
     /// no CLI verb for a new window in the running instance). Without
     /// `quit-after-last-window-closed` that instance would outlive its window
     /// and accumulate one orphan process per click.
     static func attachArguments(executablePath: String, sessionID: String) -> [String] {
-        let command = "exec \(shellQuote(executablePath)) session attach \(shellQuote(sessionID))"
-        return [
+        [
             "-na", "Ghostty.app", "--args",
             "--quit-after-last-window-closed=true",
-            "-e", "/bin/zsh", "-lc", command,
+            "-e", "/bin/zsh", "-lc", "exec " + attachCommand(executablePath: executablePath, sessionID: sessionID),
         ]
     }
 

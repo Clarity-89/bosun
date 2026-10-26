@@ -8,12 +8,11 @@ struct BosunApp: App {
     private let model = DeckModel.shared
 
     var body: some Scene {
-        // The first WindowGroup opens at launch, so the session list is
-        // visible even when the menu bar hides the status item.
-        WindowGroup("Bosun", id: "sessions") {
-            MenuView(model: model)
+        WindowGroup("Bosun", id: "main") {
+            MainWindowView(model: model)
+                .frame(minWidth: 900, minHeight: 560)
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
@@ -38,20 +37,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
         installSignalHandlers()
         DeckModel.shared.start()
-        // LaunchServices does not activate LSUIElement apps, and macOS 14+
-        // activation is cooperative: this brings the window forward when no
-        // other app is in use and is refused otherwise. Reopening the app
-        // (`open -a Bosun`, or clicking it in Finder) always works.
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            NSApp.activate()
-            for window in NSApp.windows where window.canBecomeKey {
+    }
+
+    /// Closing the window must not quit: the menu bar item keeps running.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            for window in NSApp.windows where window.canBecomeKey && !(window is NSPanel) {
                 window.makeKeyAndOrderFront(nil)
             }
         }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

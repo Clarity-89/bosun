@@ -7,9 +7,29 @@ let package = Package(
     products: [
         .executable(name: "Bosun", targets: ["Bosun"]),
         .library(name: "BosunCore", targets: ["BosunCore"]),
+        .library(name: "BosunTerminal", targets: ["BosunTerminal"]),
     ],
     targets: [
         .target(name: "BosunCore"),
-        .executableTarget(name: "Bosun", dependencies: ["BosunCore"]),
+        // libghostty (Ghostty 1.3.1) as built by Calyx; fetched into the
+        // gitignored Vendor/ by `make vendor` (scripts/fetch-ghosttykit.sh).
+        .binaryTarget(name: "GhosttyKit", path: "Vendor/GhosttyKit.xcframework"),
+        .target(
+            name: "BosunTerminal",
+            dependencies: ["GhosttyKit"],
+            exclude: ["Vendored/CALYX-LICENSE"],
+            linkerSettings: [
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalKit"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("IOKit"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("Carbon"),
+                .linkedLibrary("z"),
+                .linkedLibrary("c++"),
+            ]
+        ),
+        .executableTarget(name: "Bosun", dependencies: ["BosunCore", "BosunTerminal"]),
     ]
 )

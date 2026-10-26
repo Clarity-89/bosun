@@ -1,4 +1,5 @@
 import BosunCore
+import BosunTerminal
 import Foundation
 import Observation
 import os
@@ -12,6 +13,9 @@ final class DeckModel {
     private(set) var connection: ConnectionState = .starting
     private(set) var statusEventsEnabled = false
     private(set) var lastError: String?
+    private(set) var selectedSessionID: String?
+    private(set) var terminalKey: TerminalHost.Key?
+    private(set) var terminalTitles: [String: String] = [:]
     private var refreshTask: Task<Void, Never>?
 
     @ObservationIgnored private let cli = AgentDeckCLI(
@@ -67,7 +71,8 @@ final class DeckModel {
         refreshTask = nil
     }
 
-    func attach(_ session: DeckSession) {
+    /// Pops the session out into a separate Ghostty window.
+    func openInGhostty(_ session: DeckSession) {
         lastError = nil
         Task {
             do {
@@ -98,6 +103,34 @@ final class DeckModel {
         }
     }
 
+    /// Attaches the selected session inside the main window. The embedded
+    /// pane runs `agent-deck session attach`, a tmux client, so the agent
+    /// keeps running when the pane goes away.
+    func select(_ sessionID: String?) {
+        selectedSessionID = sessionID
+        guard let sessionID else {
+            terminalKey = nil
+            return
+        }
+        Task {
+            do {
+                var launch = try await cli.attachLaunch(sessionID: sessionID)
+                launch.environment["TERM_PROGRAM"] = "Bosun"
+                guard selectedSessionID == sessionID else { return }
+                terminalKey = TerminalHost.Key(
+                    sessionID: sessionID,
+                    launch: TerminalPane.Launch(command: "exec \(launch.command)", environment: launch.environment)
+                )
+                logger.info("attached \(sessionID, privacy: .public) in window")
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func terminalTitleChanged(sessionID: String, title: String) {
+        terminalTitles[sessionID] = title
+    }
     private func bootstrap() async {
         do {
             let binary = try await cli.binary()

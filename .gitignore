@@ -3,3 +3,5 @@ build/
 .swiftpm/
 *.xcodeproj
 .DS_Store
+# libghostty binary (141 MB); `make vendor` fetches it
+Vendor/
