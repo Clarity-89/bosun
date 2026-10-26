@@ -117,9 +117,10 @@ final class DeckModel {
                 var launch = try await cli.attachLaunch(sessionID: sessionID)
                 launch.environment["TERM_PROGRAM"] = "Bosun"
                 guard selectedSessionID == sessionID else { return }
+                // libghostty runs this as `sh -c "exec <command>"`; no exec here.
                 terminalKey = TerminalHost.Key(
                     sessionID: sessionID,
-                    launch: TerminalPane.Launch(command: "exec \(launch.command)", environment: launch.environment)
+                    launch: TerminalPane.Launch(command: launch.command, environment: launch.environment)
                 )
                 logger.info("attached \(sessionID, privacy: .public) in window")
             } catch {

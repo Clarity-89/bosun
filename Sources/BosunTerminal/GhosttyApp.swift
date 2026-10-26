@@ -25,8 +25,11 @@ final class GhosttyAppController {
 
     private init() {
         GhosttyResources.applyEnvironment()
-        configManager = GhosttyConfigManager()
-        guard GhosttyFFI.initialize() else {
+        // ghostty_init must precede every other engine call, including
+        // ghostty_config_new; a failed init leaves the manager unloaded.
+        let initialized = GhosttyFFI.initialize()
+        configManager = initialized ? GhosttyConfigManager() : GhosttyConfigManager(unloaded: ())
+        guard initialized else {
             readiness = .error("ghostty_init failed")
             return
         }

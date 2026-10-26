@@ -33,6 +33,12 @@ final class GhosttyConfigManager {
         config = Self.loadDefaultConfig()
     }
 
+    /// A manager with no config, for the path where `ghostty_init` failed
+    /// and `ghostty_config_new` must not be called.
+    init(unloaded: Void) {
+        config = nil
+    }
+
     init(clone source: ghostty_config_t) {
         config = GhosttyFFI.configClone(source)
     }

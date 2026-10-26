@@ -80,14 +80,21 @@ enum GhosttyActionRouter {
 
         case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
             guard let view = surfaceView(from: target) else { return false }
-            view.onProcessExit?()
+            let exited = action.action.child_exited
+            logger.info("child exited code=\(exited.exit_code, privacy: .public) runtime_ms=\(exited.timetime_ms, privacy: .public)")
+            // The engine draws an exit notice and waits for a keypress. For a
+            // normal exit (a Ctrl-Q detach) the pane should just go; a fast
+            // failure (under Ghostty's 250 ms abnormal-exit threshold) keeps
+            // the notice so the error can be read, and closes on a keypress.
+            if exited.timetime_ms >= 250 {
+                view.onProcessExit?()
+            }
             return true
 
         case GHOSTTY_ACTION_CLOSE_TAB, GHOSTTY_ACTION_CLOSE_WINDOW:
-            // A tmux client is closed by detaching; the surface host decides.
-            guard let view = surfaceView(from: target) else { return false }
-            view.onProcessExit?()
-            return true
+            // Keybind-driven closes; the pane is a tmux client, so detaching
+            // (Ctrl-Q) is the way out. Not performed.
+            return false
 
         case GHOSTTY_ACTION_QUIT:
             // libghostty asking to quit must never quit Bosun; consumed on purpose.
