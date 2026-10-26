@@ -13,9 +13,10 @@ final class DeckModel {
     private(set) var connection: ConnectionState = .starting
     private(set) var statusEventsEnabled = false
     private(set) var lastError: String?
-    private(set) var selectedSessionID: String?
+    private(set) var selection: PaneTarget?
     private(set) var terminalKey: TerminalHost.Key?
     private(set) var terminalTitles: [String: String] = [:]
+    private(set) var windowsBySession: [String: [SessionWindow]] = [:]
     private var refreshTask: Task<Void, Never>?
 
     @ObservationIgnored private let cli = AgentDeckCLI(
@@ -71,6 +72,19 @@ final class DeckModel {
         refreshTask = nil
     }
 
+    /// Window rows for every session, keyed back from tmux session name
+    /// to agent-deck id.
+    private func loadAllWindows() async {
+        guard let byTmuxName = try? await cli.listAllWindows() else { return }
+        var result: [String: [SessionWindow]] = [:]
+        for session in sessions {
+            if let name = session.tmuxSession, let windows = byTmuxName[name] {
+                result[session.id] = windows
+            }
+        }
+        windowsBySession = result
+    }
+
     /// Pops the session out into a separate Ghostty window.
     func openInGhostty(_ session: DeckSession) {
         lastError = nil
@@ -96,6 +110,7 @@ final class DeckModel {
                 ])
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
+            await loadAllWindows()
         } catch is CancellationError {
         } catch {
             lastError = error.localizedDescription
@@ -105,27 +120,75 @@ final class DeckModel {
 
     /// Attaches the selected session inside the main window. The embedded
     /// pane runs `agent-deck session attach`, a tmux client, so the agent
-    /// keeps running when the pane goes away.
-    func select(_ sessionID: String?) {
-        selectedSessionID = sessionID
-        guard let sessionID else {
+    /// keeps running when the pane goes away. A window index selects that
+    /// tmux window first, as the TUI's window rows do.
+    func select(_ target: PaneTarget?) {
+        selection = target
+        guard let target else {
             terminalKey = nil
             return
         }
+        let sessionID = target.sessionID
         Task {
             do {
-                var launch = try await cli.attachLaunch(sessionID: sessionID)
-                launch.environment["TERM_PROGRAM"] = "Bosun"
-                guard selectedSessionID == sessionID else { return }
-                // libghostty runs this as `sh -c "exec <command>"`; no exec here.
-                terminalKey = TerminalHost.Key(
-                    sessionID: sessionID,
-                    launch: TerminalPane.Launch(command: launch.command, environment: launch.environment)
-                )
-                logger.info("attached \(sessionID, privacy: .public) in window")
+                if let index = target.windowIndex, let tmuxSession = session(sessionID)?.tmuxSession {
+                    try await cli.selectWindow(tmuxSession: tmuxSession, index: index)
+                }
+                guard selection?.sessionID == sessionID else { return }
+                if terminalKey?.sessionID != sessionID {
+                    var launch = try await cli.attachLaunch(sessionID: sessionID)
+                    launch.environment["TERM_PROGRAM"] = "Bosun"
+                    guard selection?.sessionID == sessionID else { return }
+                    // libghostty runs this as `sh -c "exec <command>"`; no exec here.
+                    terminalKey = TerminalHost.Key(
+                        sessionID: sessionID,
+                        launch: TerminalPane.Launch(command: launch.command, environment: launch.environment)
+                    )
+                    logger.info("attached \(sessionID, privacy: .public) in window")
+                }
+                await loadWindows(for: sessionID)
             } catch {
                 lastError = error.localizedDescription
             }
+        }
+    }
+
+    func windows(for sessionID: String) -> [SessionWindow] {
+        windowsBySession[sessionID] ?? []
+    }
+
+    func loadWindows(for sessionID: String) async {
+        guard let tmuxSession = session(sessionID)?.tmuxSession else { return }
+        do {
+            windowsBySession[sessionID] = try await cli.listWindows(tmuxSession: tmuxSession)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// "Open shell here" as a new tmux window in the session's directory.
+    func newShellWindow(in session: DeckSession) {
+        guard let tmuxSession = session.tmuxSession else { return }
+        run("new window") { [cli] in
+            try await cli.newShellWindow(tmuxSession: tmuxSession, workingDirectory: session.path)
+        } then: { [weak self] in
+            await self?.loadWindows(for: session.id)
+        }
+    }
+
+    /// "Open shell here" as a split of the session's active window.
+    func split(_ session: DeckSession, _ direction: SplitDirection) {
+        guard let tmuxSession = session.tmuxSession else { return }
+        run("split") { [cli] in
+            try await cli.splitShellPane(tmuxSession: tmuxSession, direction: direction, workingDirectory: session.path)
+        }
+    }
+
+    func closeWindow(_ window: SessionWindow, in session: DeckSession) {
+        run("close window") { [cli] in
+            try await cli.closeWindow(sessionID: session.id, windowIndex: window.index)
+        } then: { [weak self] in
+            await self?.loadWindows(for: session.id)
         }
     }
 
@@ -138,8 +201,25 @@ final class DeckModel {
     func terminalExited(sessionID: String) {
         guard terminalKey?.sessionID == sessionID else { return }
         terminalKey = nil
-        selectedSessionID = nil
+        selection = nil
         logger.info("pane for \(sessionID, privacy: .public) exited")
+    }
+
+    private func session(_ id: String) -> DeckSession? {
+        sessions.first { $0.id == id }
+    }
+
+    private func run(_ label: String, _ operation: @escaping @Sendable () async throws -> Void, then follow: (@MainActor () async -> Void)? = nil) {
+        lastError = nil
+        Task {
+            do {
+                try await operation()
+                await follow?()
+            } catch {
+                lastError = error.localizedDescription
+                logger.error("\(label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     private func bootstrap() async {

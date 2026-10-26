@@ -2,6 +2,17 @@ import BosunCore
 import BosunTerminal
 import SwiftUI
 
+/// What the pane shows: a session, optionally one of its tmux windows.
+struct PaneTarget: Hashable {
+    let sessionID: String
+    let windowIndex: Int?
+
+    init(sessionID: String, windowIndex: Int? = nil) {
+        self.sessionID = sessionID
+        self.windowIndex = windowIndex
+    }
+}
+
 @MainActor
 struct MainWindowView: View {
     @Bindable var model: DeckModel
@@ -17,6 +28,12 @@ struct MainWindowView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let selected {
+                    Menu {
+                        shellActions(for: selected)
+                    } label: {
+                        Label("Open Shell Here", systemImage: "plus.rectangle.on.rectangle")
+                    }
+                    .help("New shell window or split in this session")
                     Button {
                         model.openInGhostty(selected)
                     } label: {
@@ -35,7 +52,8 @@ struct MainWindowView: View {
     }
 
     private var selected: DeckSession? {
-        model.sessions.first { $0.id == model.selectedSessionID }
+        guard let id = model.selection?.sessionID else { return nil }
+        return model.sessions.first { $0.id == id }
     }
 
     private var titleText: String {
@@ -46,14 +64,25 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         List(selection: Binding(
-            get: { model.selectedSessionID },
+            get: { model.selection },
             set: { model.select($0) }
         )) {
             ForEach(model.groups) { group in
                 Section(group.name) {
                     ForEach(group.sessions) { session in
                         SessionRow(session: session)
-                            .tag(session.id)
+                            .tag(PaneTarget(sessionID: session.id))
+                            .contextMenu { sessionMenu(for: session) }
+                        // Window 0 is the agent itself; only extra windows get rows.
+                        ForEach(model.windows(for: session.id).filter { $0.index != 0 }) { window in
+                            WindowRow(window: window)
+                                .tag(PaneTarget(sessionID: session.id, windowIndex: window.index))
+                                .contextMenu {
+                                    Button("Close Window", role: .destructive) {
+                                        model.closeWindow(window, in: session)
+                                    }
+                                }
+                        }
                     }
                 }
             }
@@ -64,12 +93,41 @@ struct MainWindowView: View {
         }
     }
 
+    @ViewBuilder
+    private func sessionMenu(for session: DeckSession) -> some View {
+        shellActions(for: session)
+        Divider()
+        Button("Open in Ghostty") { model.openInGhostty(session) }
+    }
+
+    /// The TUI's "open shell here" choices: a new window, or a split of
+    /// the active window, each with `$SHELL` in the session's directory.
+    @ViewBuilder
+    private func shellActions(for session: DeckSession) -> some View {
+        Button {
+            model.newShellWindow(in: session)
+        } label: {
+            Label("New Shell Window", systemImage: "plus.rectangle")
+        }
+        Button {
+            model.split(session, .sideBySide)
+        } label: {
+            Label("Split Side by Side", systemImage: "rectangle.split.2x1")
+        }
+        Button {
+            model.split(session, .topAndBottom)
+        } label: {
+            Label("Split Top and Bottom", systemImage: "rectangle.split.1x2")
+        }
+    }
+
     private var detail: some View {
         TerminalHost(key: model.terminalKey) { sessionID, title in
             model.terminalTitleChanged(sessionID: sessionID, title: title)
         } onExit: { sessionID in
             model.terminalExited(sessionID: sessionID)
         }
+        .background(Color.black)
         .overlay {
             // The host stays mounted; only this placeholder toggles.
             if model.terminalKey == nil {
@@ -125,6 +183,28 @@ struct SessionRow: View {
             return "\(tool) · \(session.status.label) · \(substate)"
         }
         return "\(tool) · \(session.status.label)"
+    }
+}
+
+/// An extra tmux window of a session, indented under its session row.
+struct WindowRow: View {
+    let window: SessionWindow
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(window.name.isEmpty ? "window \(window.index)" : window.name)
+                .lineLimit(1)
+            Spacer()
+            Text(window.command)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.leading, 16)
+        .padding(.vertical, 1)
     }
 }
 

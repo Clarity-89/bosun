@@ -103,7 +103,7 @@ struct MenuView: View {
     /// The menu bar is the quick list; selecting a row shows that session
     /// in the main window and brings it forward.
     private func openInWindow(_ session: DeckSession) {
-        model.select(session.id)
+        model.select(PaneTarget(sessionID: session.id))
         NSApp.activate()
         for window in NSApp.windows where window.canBecomeKey && !(window is NSPanel) {
             window.makeKeyAndOrderFront(nil)

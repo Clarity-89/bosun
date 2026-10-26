@@ -214,7 +214,9 @@ public actor AgentDeckCLI {
         )
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
+    /// Runs the resolved agent-deck in its child environment; a non-zero exit
+    /// is `SubprocessError.exited`.
+    func run(_ arguments: [String]) async throws -> ProcessResult {
         let binary = try await binary()
         let result = try await Subprocess.run(
             executable: binary.path,
@@ -222,6 +224,10 @@ public actor AgentDeckCLI {
             environment: Self.childEnvironment(binaryDirectory: binary.directory)
         )
         try result.checkSucceeded()
-        return try JSONDecoder().decode(type, from: Data(result.stdout.utf8))
+        return result
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
+        try JSONDecoder().decode(type, from: Data(try await run(arguments).stdout.utf8))
     }
 }

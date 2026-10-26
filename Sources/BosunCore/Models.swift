@@ -35,16 +35,23 @@ public enum SessionStatus: String, Decodable, Sendable {
 }
 
 /// One row of `list --json`. Optionality follows the Go struct's `omitempty`:
-/// `group` and `tool` are always present (possibly empty), `substate` is
-/// absent when there is no refinement.
+/// `group`, `tool` and `path` are always present (possibly empty); `substate`
+/// and `tmux_session` are absent when there is no refinement or no server.
 public struct DeckSession: Decodable, Identifiable, Equatable, Sendable {
     public let id: String
     public let title: String
+    public let path: String
     public let group: String
     public let tool: String
     public var status: SessionStatus
     public var substate: String?
+    public let tmuxSession: String?
     public let archived: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, path, group, tool, status, substate, archived
+        case tmuxSession = "tmux_session"
+    }
 }
 
 /// `events stats --json`. `enabled` is the bus itself (`AGENTDECK_EVENTS_BUS`),
