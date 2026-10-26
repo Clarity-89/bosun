@@ -131,6 +131,16 @@ final class DeckModel {
     func terminalTitleChanged(sessionID: String, title: String) {
         terminalTitles[sessionID] = title
     }
+
+    /// The tmux client ended (Ctrl-Q detach or the session stopped); the
+    /// agent itself is untouched, only the pane is gone.
+    func terminalExited(sessionID: String) {
+        guard terminalKey?.sessionID == sessionID else { return }
+        terminalKey = nil
+        selectedSessionID = nil
+        logger.info("pane for \(sessionID, privacy: .public) exited")
+    }
+
     private func bootstrap() async {
         do {
             let binary = try await cli.binary()
