@@ -41,9 +41,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         installSignalHandlers()
         DeckModel.shared.start()
-        // An accessory app does not come forward on its own, and the
-        // WindowGroup window does not exist yet at this point; order it
-        // front once SwiftUI has created it.
+        // LaunchServices does not activate LSUIElement apps, and macOS 14+
+        // activation is cooperative: this brings the window forward when no
+        // other app is in use and is refused otherwise. Reopening the app
+        // (`open -a Bosun`, or clicking it in Finder) always works.
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
             NSApp.activate()
