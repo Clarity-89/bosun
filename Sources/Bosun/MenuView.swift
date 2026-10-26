@@ -1,7 +1,6 @@
 import BosunCore
 import SwiftUI
 
-@MainActor
 struct MenuView: View {
     let model: DeckModel
 
@@ -48,7 +47,7 @@ struct MenuView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 50)
                 } else {
-                    ForEach(groups) { group in
+                    ForEach(model.groups) { group in
                         Section {
                             ForEach(group.sessions) { session in
                                 SessionRow(session: session) {
@@ -100,21 +99,6 @@ struct MenuView: View {
         }
         .padding(10)
     }
-
-    private var groups: [SessionGroup] {
-        Dictionary(grouping: model.sessions) { session in
-            let group = session.group?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return group.isEmpty ? "Ungrouped" : group
-        }
-        .map { SessionGroup(name: $0.key, sessions: $0.value) }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-}
-
-private struct SessionGroup: Identifiable {
-    let name: String
-    let sessions: [DeckSession]
-    var id: String { name }
 }
 
 private struct SessionRow: View {
@@ -149,8 +133,8 @@ private struct SessionRow: View {
     }
 
     private var subtitle: String {
-        let tool = session.tool?.isEmpty == false ? session.tool! : "agent"
-        if let substate = session.substate, !substate.isEmpty {
+        let tool = session.tool.isEmpty ? "agent" : session.tool
+        if let substate = session.substate {
             return "\(tool) · \(session.status.label) · \(substate)"
         }
         return "\(tool) · \(session.status.label)"
@@ -164,6 +148,7 @@ private struct SessionRow: View {
         case .error: .red
         case .stopped: .gray
         case .starting: .yellow
+        case .queued: .indigo
         case .unknown: .secondary
         }
     }

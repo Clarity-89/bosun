@@ -5,7 +5,7 @@ import SwiftUI
 @main
 struct BosunApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = DeckModel.shared
+    private let model = DeckModel.shared
 
     var body: some Scene {
         // The first WindowGroup opens at launch, so the session list is

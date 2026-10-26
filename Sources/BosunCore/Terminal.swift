@@ -5,7 +5,7 @@ public enum Terminal {
     /// no CLI verb for a new window in the running instance). Without
     /// `quit-after-last-window-closed` that instance would outlive its window
     /// and accumulate one orphan process per click.
-    public static func attachArguments(executablePath: String, sessionID: String) -> [String] {
+    static func attachArguments(executablePath: String, sessionID: String) -> [String] {
         let command = "exec \(shellQuote(executablePath)) session attach \(shellQuote(sessionID))"
         return [
             "-na", "Ghostty.app", "--args",
@@ -14,17 +14,16 @@ public enum Terminal {
         ]
     }
 
-    public static func openAttach(
-        executablePath: String,
-        sessionID: String,
-        environment: [String: String]
-    ) async throws -> ProcessResult {
-        try await ProcessRunner.run(
+    /// LaunchServices gives Ghostty the login environment, never `open`'s, so
+    /// `open` itself runs with ours; nothing in it reaches the attach.
+    public static func openAttach(executablePath: String, sessionID: String) async throws {
+        let result = try await Subprocess.run(
             executable: "/usr/bin/open",
             arguments: attachArguments(executablePath: executablePath, sessionID: sessionID),
-            environment: environment,
-            timeout: 10
+            environment: ProcessInfo.processInfo.environment,
+            timeout: .seconds(10)
         )
+        try result.checkSucceeded()
     }
 
     private static func shellQuote(_ value: String) -> String {

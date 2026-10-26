@@ -1,4 +1,7 @@
 @preconcurrency import Foundation
+import os
+
+private let log = Logger(subsystem: "com.bosun.Bosun", category: "agent-deck")
 
 public struct AgentDeckVersion: Comparable, CustomStringConvertible, Sendable {
     public let major: Int
@@ -34,6 +37,21 @@ public struct AgentDeckVersion: Comparable, CustomStringConvertible, Sendable {
 public struct AgentDeckBinary: Sendable {
     public let path: String
     public let version: AgentDeckVersion
+
+    var directory: String { URL(fileURLWithPath: path).deletingLastPathComponent().path }
+}
+
+public enum AgentDeckCLIError: Error, LocalizedError, Sendable {
+    case notFound(rejected: [String])
+
+    public var errorDescription: String? {
+        switch self {
+        case .notFound(let rejected):
+            rejected.isEmpty
+                ? "agent-deck was not found"
+                : "no agent-deck ≥ v\(AgentDeckVersion.minimumSupported); found: \(rejected.joined(separator: ", "))"
+        }
+    }
 }
 
 public actor AgentDeckCLI {
@@ -41,11 +59,7 @@ public actor AgentDeckCLI {
     private var resolved: AgentDeckBinary?
 
     public init(agentDeckPath: String? = nil) {
-        self.configuredPath = agentDeckPath ?? UserDefaults.standard.string(forKey: "agentDeckPath")
-    }
-
-    public func executablePath() async throws -> String {
-        try await binary().path
+        configuredPath = agentDeckPath
     }
 
     /// Picks the newest installed agent-deck. Several copies commonly coexist
@@ -57,13 +71,15 @@ public actor AgentDeckCLI {
             return resolved
         }
 
+        let environment = Self.childEnvironment(binaryDirectory: nil)
         var candidates: [String] = []
         if let configuredPath { candidates.append(configuredPath) }
-        let lookup = try? await ProcessRunner.run(
+        // The login shell knows the user's PATH; a LaunchServices-launched app does not.
+        let lookup = try? await Subprocess.run(
             executable: "/bin/zsh",
             arguments: ["-lc", "which -a agent-deck"],
-            environment: executionEnvironment(),
-            timeout: 10
+            environment: environment,
+            timeout: .seconds(10)
         )
         candidates += (lookup?.stdout ?? "")
             .split(whereSeparator: \.isNewline)
@@ -76,80 +92,70 @@ public actor AgentDeckCLI {
             "/opt/homebrew/bin/agent-deck",
             "/usr/local/bin/agent-deck",
         ]
-
         var seen = Set<String>()
+        candidates = candidates.filter { seen.insert($0).inserted && FileManager.default.isExecutableFile(atPath: $0) }
+
+        var versions: [String: AgentDeckVersion] = [:]
+        await withTaskGroup(of: (String, AgentDeckVersion?).self) { group in
+            for path in candidates {
+                group.addTask { (path, await Self.probeVersion(at: path, environment: environment)) }
+            }
+            for await (path, version) in group {
+                versions[path] = version
+            }
+        }
+
+        // Candidate order decides ties, so PATH order still wins among equal versions.
         var found: [AgentDeckBinary] = []
         var rejected: [String] = []
-        for path in candidates where seen.insert(path).inserted {
-            guard FileManager.default.isExecutableFile(atPath: path) else { continue }
-            guard let output = try? await ProcessRunner.run(
-                executable: path, arguments: ["--version"],
-                environment: executionEnvironment(), timeout: 5
-            ), output.succeeded, let version = AgentDeckVersion(versionOutput: output.stdout) else {
-                rejected.append("\(path) (no version)")
-                continue
-            }
-            if version < .minimumSupported {
+        for path in candidates {
+            switch versions[path] {
+            case let version? where version >= .minimumSupported:
+                found.append(AgentDeckBinary(path: path, version: version))
+            case let version?:
                 rejected.append("\(path) (v\(version))")
-                continue
+            case nil:
+                rejected.append("\(path) (no version)")
             }
-            found.append(AgentDeckBinary(path: path, version: version))
         }
 
         // A configured path wins when it qualifies; otherwise the newest.
-        let chosen = found.first(where: { $0.path == configuredPath })
+        guard let chosen = found.first(where: { $0.path == configuredPath })
             ?? found.max(by: { $0.version < $1.version })
-        guard let chosen else {
-            let detail = rejected.isEmpty
-                ? "agent-deck was not found"
-                : "no agent-deck ≥ v\(AgentDeckVersion.minimumSupported); found: \(rejected.joined(separator: ", "))"
-            throw ProcessRunnerError.launchFailed(detail)
+        else {
+            throw AgentDeckCLIError.notFound(rejected: rejected)
         }
         resolved = chosen
         return chosen
+    }
+
+    private static func probeVersion(at path: String, environment: [String: String]) async -> AgentDeckVersion? {
+        guard let result = try? await Subprocess.run(
+            executable: path, arguments: ["--version"], environment: environment, timeout: .seconds(5)
+        ), result.succeeded else { return nil }
+        return AgentDeckVersion(versionOutput: result.stdout)
     }
 
     /// A minimal environment for agent-deck children: never the launching
     /// shell's `TMUX`/`AGENTDECK_*`, which would make `session attach` nest or
     /// misattribute the caller. The chosen binary's directory leads PATH so a
     /// re-exec by name (hooks, tmux-side helpers) lands on the same build.
-    public func executionEnvironment() -> [String: String] {
-        var environment: [String: String] = [:]
+    static func childEnvironment(binaryDirectory: String?) -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
-        let home = inherited["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
-        let inheritedPath = inherited["PATH"] ?? ""
-        let standardPath = [
-            resolved.map { ($0.path as NSString).deletingLastPathComponent } ?? "",
-            inheritedPath,
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ]
-        environment["PATH"] = standardPath
-            .joined(separator: ":")
-            .split(separator: ":")
-            .map(String.init)
-            .reduce(into: [String]()) { paths, path in
-                if !paths.contains(path) { paths.append(path) }
-            }
-            .joined(separator: ":")
-        environment["HOME"] = home
-        environment["USER"] = inherited["USER"] ?? NSUserName()
-        environment["LOGNAME"] = inherited["LOGNAME"] ?? environment["USER"]
-        environment["SHELL"] = inherited["SHELL"] ?? "/bin/zsh"
-        environment["LANG"] = inherited["LANG"] ?? "en_US.UTF-8"
+        let directories = [binaryDirectory].compactMap { $0 }
+            + (inherited["PATH"] ?? "").split(separator: ":").map(String.init)
+            + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        var seen = Set<String>()
 
-        for key in [
-            "AGENTDECK_PROFILE",
-            "XDG_CONFIG_HOME",
-            "XDG_DATA_HOME",
-            "XDG_CACHE_HOME",
-            "CLAUDE_CONFIG_DIR",
-            "CODEX_HOME",
-        ] {
+        var environment: [String: String] = [
+            "PATH": directories.filter { seen.insert($0).inserted }.joined(separator: ":"),
+            "HOME": inherited["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path,
+            "USER": inherited["USER"] ?? NSUserName(),
+            "SHELL": inherited["SHELL"] ?? "/bin/zsh",
+            "LANG": inherited["LANG"] ?? "en_US.UTF-8",
+        ]
+        environment["LOGNAME"] = inherited["LOGNAME"] ?? environment["USER"]
+        for key in ["AGENTDECK_PROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
             if let value = inherited[key], !value.isEmpty {
                 environment[key] = value
             }
@@ -158,66 +164,54 @@ public actor AgentDeckCLI {
     }
 
     public func list() async throws -> [DeckSession] {
-        let result = try await run(["list", "--json"])
-        try check(result)
-        return try JSONDecoder().decode([DeckSession].self, from: Data(result.stdout.utf8))
+        try await decode([DeckSession].self, ["list", "--json"])
     }
 
     public func eventsStats() async throws -> EventsStats {
-        let result = try await run(["events", "stats", "--json"])
-        try check(result)
-        return try JSONDecoder().decode(EventsStats.self, from: Data(result.stdout.utf8))
+        try await decode(EventsStats.self, ["events", "stats", "--json"])
     }
 
     public func statusEventsEnabled() async throws -> Bool {
-        let result = try await run(["config", "get", "macapp.status_events", "--json"])
-        try check(result)
-        return try JSONDecoder().decode(ConfigValue.self, from: Data(result.stdout.utf8)).value
+        try await decode(ConfigValue.self, ["config", "get", "macapp.status_events", "--json"]).value
     }
 
-    public func follow(
-        after cursor: UInt64,
-        onStart: (@Sendable (pid_t) -> Void)? = nil
-    ) async throws -> AsyncThrowingStream<BusFrame, Error> {
-        let path = try await executablePath()
-        return BusFollower.stream(
-            executable: path,
-            environment: executionEnvironment(),
-            after: cursor,
-            onStart: onStart
-        )
+    /// Status frames after `cursor`. Ends only by cancellation or with an
+    /// error; see `isCursorTooOld` for the one the caller resyncs from.
+    public func follow(after cursor: UInt64) async throws -> some AsyncSequence<BusFrame, any Error> & Sendable {
+        let binary = try await binary()
+        return try Subprocess.lines(
+            executable: binary.path,
+            arguments: ["events", "follow", "--json", "--after", String(cursor), "--kind", "session.status"],
+            environment: Self.childEnvironment(binaryDirectory: binary.directory)
+        ).compactMap { line in
+            guard let frame = try? JSONDecoder().decode(BusFrame.self, from: Data(line.utf8)) else {
+                log.warning("skipping undecodable frame: \(line, privacy: .public)")
+                return nil
+            }
+            return frame
+        }
+    }
+
+    /// `events follow` exits 1 with this on stderr when `--after` predates the
+    /// retained log; the caller resyncs from `eventsStats().cursor`.
+    public static func isCursorTooOld(_ error: any Error) -> Bool {
+        guard case SubprocessError.exited(_, _, let stderr) = error else { return false }
+        return stderr.contains("cursor older than the retained log")
     }
 
     public func openGhosttyAttach(sessionID: String) async throws {
-        let path = try await executablePath()
-        let result = try await Terminal.openAttach(
-            executablePath: path,
-            sessionID: sessionID,
-            environment: executionEnvironment()
-        )
-        try check(result)
+        let binary = try await binary()
+        try await Terminal.openAttach(executablePath: binary.path, sessionID: sessionID)
     }
 
-    public func attachArguments(sessionID: String) async throws -> [String] {
-        let path = try await executablePath()
-        return Terminal.attachArguments(executablePath: path, sessionID: sessionID)
-    }
-
-    private func run(_ arguments: [String]) async throws -> ProcessResult {
-        let path = try await executablePath()
-        return try await ProcessRunner.run(
-            executable: path,
+    private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
+        let binary = try await binary()
+        let result = try await Subprocess.run(
+            executable: binary.path,
             arguments: arguments,
-            environment: executionEnvironment()
+            environment: Self.childEnvironment(binaryDirectory: binary.directory)
         )
-    }
-
-    private func check(_ result: ProcessResult) throws {
-        guard result.succeeded else {
-            let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw ProcessRunnerError.launchFailed(
-                detail.isEmpty ? "agent-deck exited with status \(result.status)" : detail
-            )
-        }
+        try result.checkSucceeded()
+        return try JSONDecoder().decode(type, from: Data(result.stdout.utf8))
     }
 }
