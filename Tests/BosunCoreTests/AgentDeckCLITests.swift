@@ -120,3 +120,34 @@ import Testing
         #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
     }
 }
+
+/// `notify-daemon install --json` as agent-deck prints it. A failure exits 1
+/// with its reason in the stdout JSON, not on stderr; the fixture is the one
+/// failure reproducible without touching launchd (Linux, no systemd).
+@Suite struct NotifyDaemonInstallTests {
+    let command = "agent-deck notify-daemon install --json"
+
+    @Test func successReportsThePlist() throws {
+        let result = ProcessResult(command: command, status: 0, stdout: """
+            {
+              "path": "/Users/me/Library/LaunchAgents/com.agentdeck.transition-notifier.plist",
+              "success": true
+            }
+            """, stderr: "")
+        #expect(try AgentDeckCLI.installedPath(result) == "/Users/me/Library/LaunchAgents/com.agentdeck.transition-notifier.plist")
+    }
+
+    @Test func failureSurfacesTheReportedReason() {
+        let reason = "installing the notify daemon: systemd user session not available; run manually: agent-deck notify-daemon"
+        let result = ProcessResult(command: command, status: 1, stdout: """
+            {
+              "code": "INVALID_OPERATION",
+              "error": "\(reason)",
+              "success": false
+            }
+            """, stderr: "")
+        #expect(throws: AgentDeckCLIError.reported(reason)) {
+            try AgentDeckCLI.installedPath(result)
+        }
+    }
+}

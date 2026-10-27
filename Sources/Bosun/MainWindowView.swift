@@ -144,11 +144,13 @@ struct MainWindowView: View {
             if !model.statusEventsEnabled {
                 Label("Live status events are off", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
+            } else if model.statusOwner == .nobody {
+                NotifyDaemonOffer(model: model)
             }
             if let error = model.lastError {
                 Text(error).foregroundStyle(.red).lineLimit(2)
             }
-            Text(model.connection.label).foregroundStyle(.secondary)
+            Text(model.connectionLabel).foregroundStyle(.secondary)
         }
         .font(.caption)
         .frame(maxWidth: .infinity, alignment: .leading)

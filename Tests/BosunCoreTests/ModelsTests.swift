@@ -95,3 +95,34 @@ import Testing
         #expect(stats.cursor == 3_302_517)
     }
 }
+
+/// `events stats --json` from agent-deck with `status_owner` (v1.16.34 dev
+/// build). An older build, or an owner newer than Bosun, leaves the owner nil
+/// and the stats intact, so Bosun neither warns nor offers an install.
+@Suite struct StatusOwnerDecodingTests {
+    static let stats = """
+        {"enabled":true,"dir":"/Users/me/.local/share/agent-deck/bus/default","cursor":3302834,"published":0,"written":0,"synced":0,"dropped":0,"queue_len":0,"queue_cap":0,"status_owner":"tui","kinds":{"session.status":165,"tmux.output":1650223}}
+        """
+
+    static func decode(_ json: String) throws -> EventsStats {
+        try JSONDecoder().decode(EventsStats.self, from: Data(json.utf8))
+    }
+
+    @Test(arguments: zip(["tui", "notify-daemon", "none"], [StatusOwner.tui, .notifyDaemon, .nobody]))
+    func decodesEachOwner(raw: String, owner: StatusOwner) throws {
+        let stats = try Self.decode(Self.stats.replacingOccurrences(of: #""status_owner":"tui""#, with: #""status_owner":"\#(raw)""#))
+        #expect(stats.statusOwner == owner)
+    }
+
+    @Test func olderAgentDeckHasNoOwner() throws {
+        let stats = try Self.decode(Self.stats.replacingOccurrences(of: #""status_owner":"tui","#, with: ""))
+        #expect(stats.statusOwner == nil)
+        #expect(stats.enabled)
+    }
+
+    @Test func unknownOwnerDoesNotFailTheStats() throws {
+        let stats = try Self.decode(Self.stats.replacingOccurrences(of: #""status_owner":"tui""#, with: #""status_owner":"web""#))
+        #expect(stats.statusOwner == nil)
+        #expect(stats.cursor == 3_302_834)
+    }
+}

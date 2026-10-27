@@ -59,6 +59,8 @@ extension AgentDeckBinary {
 
 public enum AgentDeckCLIError: Error, LocalizedError, Equatable, Sendable {
     case notFound(rejected: [String])
+    /// A `--json` command's own error message.
+    case reported(String)
 
     public var errorDescription: String? {
         switch self {
@@ -66,6 +68,8 @@ public enum AgentDeckCLIError: Error, LocalizedError, Equatable, Sendable {
             rejected.isEmpty
                 ? "agent-deck was not found"
                 : "no agent-deck ≥ v\(AgentDeckVersion.minimumSupported); found: \(rejected.joined(separator: ", "))"
+        case .reported(let message):
+            message
         }
     }
 }
@@ -202,6 +206,40 @@ public actor AgentDeckCLI {
 
     public func statusEventsEnabled() async throws -> Bool {
         try await decode(ConfigValue.self, ["config", "get", "macapp.status_events", "--json"]).value
+    }
+
+    /// Installs agent-deck's notify daemon as the launchd agent `conductor
+    /// setup` also installs, so one daemon runs whichever installed it, and
+    /// returns the plist path. Only for a binary whose `eventsStats()` has a
+    /// `statusOwner`: older builds ignore `install` and run the daemon in the
+    /// foreground, never exiting.
+    public func installNotifyDaemon() async throws -> String {
+        let binary = try await binary()
+        return try Self.installedPath(await Subprocess.run(
+            executable: binary.path,
+            arguments: ["notify-daemon", "install", "--json"],
+            environment: Self.childEnvironment(binaryDirectory: binary.directory)
+        ))
+    }
+
+    /// The plist path from `notify-daemon install --json`. A failure exits 1
+    /// with `{"success": false, "error": …}` on stdout, a reason the
+    /// stderr-based `checkSucceeded` would drop.
+    static func installedPath(_ result: ProcessResult) throws -> String {
+        let reply = try? JSONDecoder().decode(InstallReply.self, from: Data(result.stdout.utf8))
+        if !result.succeeded, let error = reply?.error {
+            throw AgentDeckCLIError.reported(error)
+        }
+        try result.checkSucceeded()
+        guard let path = reply?.path else {
+            throw AgentDeckCLIError.reported("notify-daemon install did not say where it installed the daemon")
+        }
+        return path
+    }
+
+    private struct InstallReply: Decodable {
+        let path: String?
+        let error: String?
     }
 
     /// Status frames after `cursor`. Ends only by cancellation or with an

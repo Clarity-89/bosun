@@ -22,9 +22,10 @@ relative to the agent-deck checkout.
 
 ## Core changes
 
-Bosun carries its own copy of the agent-deck code; these are the changes to
-make in that copy. Nothing else in the table needs a core change.
+Bosun drives the installed agent-deck through its CLI and event bus; these are
+the agent-deck changes it needs. Nothing else in the table needs a core change.
 
 1. `session show --json`: add `worktree_path`, `additional_paths`, `multi_repo_root`. Blocks multi-repo open-in-IDE.
 2. `skill attached/attach/detach --json`.
 3. Registry coverage for `session.show`, `session.send`, `harness.list`, `skill.*` so the daemon `call` path becomes useful.
+4. Done on agent-deck's `feature/status-owner` branch, not upstream yet: `events stats --json` reports `status_owner` (`tui`, `notify-daemon` or `none`), and `notify-daemon install --json` installs the notify daemon without a conductor. Bosun uses both to keep statuses live with the TUI closed (#7).

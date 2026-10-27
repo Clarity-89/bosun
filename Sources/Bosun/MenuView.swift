@@ -22,7 +22,7 @@ struct MenuView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Bosun")
                     .font(.headline)
-                Text(model.connection.label)
+                Text(model.connectionLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -76,6 +76,9 @@ struct MenuView: View {
                 Label("Live status events are off", systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
+            } else if model.statusOwner == .nobody {
+                NotifyDaemonOffer(model: model)
+                    .font(.caption)
             }
             if let error = model.lastError {
                 Text(error)
