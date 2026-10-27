@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  # A cache saved by a PR run stays with that PR; main runs save the one
+  # every PR restores.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# macOS minutes cost ten times Linux ones: a new push cancels its PR's
+# running check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+
+      # The pin lives in the fetch script, so the script's hash keys the
+      # cache: each new pin downloads once.
+      - name: Restore engine
+        id: engine
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Vendor/GhosttyKit.xcframework
+          key: ghosttykit-${{ hashFiles('scripts/fetch-ghosttykit.sh') }}
+
+      - run: make vendor
+
+      # Saved before the build so a failing build does not download 141 MB again.
+      - name: Save engine
+        if: steps.engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Vendor/GhosttyKit.xcframework
+          key: ${{ steps.engine.outputs.cache-primary-key }}
+
+      - run: make build
+
+      - run: make test
