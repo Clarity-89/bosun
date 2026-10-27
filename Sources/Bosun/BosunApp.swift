@@ -47,27 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installSignalHandlers()
-        installExitTrace()
         DeckModel.shared.start()
-    }
-
-    /// Bosun never calls exit itself, so any exit is a library deciding to
-    /// end the process; the backtrace of the exiting thread names it.
-    /// Written synchronously: os_log is asynchronous and loses messages
-    /// sent this late.
-    private func installExitTrace() {
-        atexit {
-            let symbols = Thread.callStackSymbols.joined(separator: "\n")
-            let path = NSString("~/Library/Logs/Bosun-exit.log").expandingTildeInPath
-            let line = "\(Date()) process exiting; caller:\n\(symbols)\n\n"
-            if let handle = FileHandle(forWritingAtPath: path) {
-                handle.seekToEndOfFile()
-                handle.write(Data(line.utf8))
-                try? handle.synchronize()
-            } else {
-                try? line.write(toFile: path, atomically: true, encoding: .utf8)
-            }
-        }
     }
 
     /// Closing the window must not quit: the menu bar item keeps running.
