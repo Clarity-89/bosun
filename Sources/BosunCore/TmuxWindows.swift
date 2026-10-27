@@ -40,8 +40,16 @@ extension AgentDeckCLI {
             "-F", "#{session_name}\t#{window_index}\t#{window_id}\t#{window_name}\t#{pane_current_command}",
         ])
         guard result.succeeded else { return [:] }
+        return SessionWindow.parse(listOutput: result.stdout)
+    }
+}
+
+extension SessionWindow {
+    /// Parses `list-windows -a` output in the tab-separated format above.
+    /// Lines that do not have five fields or a numeric index are skipped.
+    public static func parse(listOutput: String) -> [String: [SessionWindow]] {
         var bySession: [String: [SessionWindow]] = [:]
-        for line in result.stdout.split(whereSeparator: \.isNewline) {
+        for line in listOutput.split(whereSeparator: \.isNewline) {
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard fields.count >= 5, let index = Int(fields[1]) else { continue }
             bySession[fields[0], default: []].append(
@@ -50,6 +58,9 @@ extension AgentDeckCLI {
         }
         return bySession
     }
+}
+
+extension AgentDeckCLI {
 
     /// Mirrors the TUI's "open shell here" as a new window.
     public func newShellWindow(tmuxSession: String, workingDirectory: String?) async throws {

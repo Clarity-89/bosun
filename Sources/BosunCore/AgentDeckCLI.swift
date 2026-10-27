@@ -121,7 +121,23 @@ public actor AgentDeckCLI {
             }
         }
 
-        // Candidate order decides ties, so PATH order still wins among equal versions.
+        let selection = Self.select(candidates: candidates, versions: versions, configuredPath: configuredPath)
+        guard let chosen = selection.chosen else {
+            throw AgentDeckCLIError.notFound(rejected: selection.rejected)
+        }
+        resolved = chosen
+        return chosen
+    }
+
+    /// Picks the binary to use: a configured path when it qualifies,
+    /// otherwise the newest version at or above `minimumSupported`.
+    /// Candidate order decides ties, so PATH order still wins among equal
+    /// versions. `rejected` names every candidate that did not qualify.
+    static func select(
+        candidates: [String],
+        versions: [String: AgentDeckVersion],
+        configuredPath: String?
+    ) -> (chosen: AgentDeckBinary?, rejected: [String]) {
         var found: [AgentDeckBinary] = []
         var rejected: [String] = []
         for path in candidates {
@@ -134,15 +150,9 @@ public actor AgentDeckCLI {
                 rejected.append("\(path) (no version)")
             }
         }
-
-        // A configured path wins when it qualifies; otherwise the newest.
-        guard let chosen = found.first(where: { $0.path == configuredPath })
+        let chosen = found.first(where: { $0.path == configuredPath })
             ?? found.max(by: { $0.version < $1.version })
-        else {
-            throw AgentDeckCLIError.notFound(rejected: rejected)
-        }
-        resolved = chosen
-        return chosen
+        return (chosen, rejected)
     }
 
     private static func probeVersion(at path: String, environment: [String: String]) async -> AgentDeckVersion? {
