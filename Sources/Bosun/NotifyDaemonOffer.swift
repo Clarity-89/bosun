@@ -24,8 +24,8 @@ struct NotifyDaemonOffer: View {
         alert.messageText = "Install agent-deck's notify daemon?"
         alert.informativeText = """
             It runs in the background and publishes session statuses while no \
-            agent-deck TUI is open. It is the launch agent `agent-deck conductor setup` \
-            installs.
+            agent-deck TUI is open. It is the same launch agent that \
+            "agent-deck conductor setup" installs.
 
             It also repairs agent-deck's Claude hooks, keeps agent-deck updated when \
             [updates] in config.toml allows it, and sends desktop notifications if \
