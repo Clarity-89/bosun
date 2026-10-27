@@ -19,9 +19,13 @@ concurrency:
 jobs:
   build-and-test:
     name: Build and test
-    runs-on: macos-26
+    # Xcode 27 ships only on this preview image; macos-26 stops at Xcode 26.6.
+    runs-on: xcode-27
     # A run takes about a minute; the default cap is 6 hours of macOS billing.
     timeout-minutes: 10
+    # Pinned to the local Xcode so CI and local builds use the same Swift.
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
