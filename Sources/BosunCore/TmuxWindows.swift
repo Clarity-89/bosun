@@ -10,6 +10,23 @@ public struct SessionWindow: Identifiable, Equatable, Sendable {
     public let command: String
 
     public var id: String { windowID }
+
+    /// `tmux list-windows -F` format that `parse(listOutput:)` reads back.
+    static let listFormat = "#{session_name}\t#{window_index}\t#{window_id}\t#{window_name}\t#{pane_current_command}"
+
+    /// Windows from `listFormat` lines, in tmux's order and keyed by session
+    /// name. Lines with fewer than five fields or a non-numeric index are skipped.
+    static func parse(listOutput: String) -> [String: [SessionWindow]] {
+        var bySession: [String: [SessionWindow]] = [:]
+        for line in listOutput.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count >= 5, let index = Int(fields[1]) else { continue }
+            bySession[fields[0], default: []].append(
+                SessionWindow(index: index, windowID: fields[2], name: fields[3], command: fields[4])
+            )
+        }
+        return bySession
+    }
 }
 
 public enum SplitDirection: Sendable {
@@ -35,20 +52,9 @@ extension AgentDeckCLI {
     /// Every window of every session, in tmux's index order and keyed by
     /// tmux session name; one call per refresh instead of one per session.
     public func listAllWindows() async throws -> [String: [SessionWindow]] {
-        let result = try await tmux([
-            "list-windows", "-a",
-            "-F", "#{session_name}\t#{window_index}\t#{window_id}\t#{window_name}\t#{pane_current_command}",
-        ])
+        let result = try await tmux(["list-windows", "-a", "-F", SessionWindow.listFormat])
         guard result.succeeded else { return [:] }
-        var bySession: [String: [SessionWindow]] = [:]
-        for line in result.stdout.split(whereSeparator: \.isNewline) {
-            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count >= 5, let index = Int(fields[1]) else { continue }
-            bySession[fields[0], default: []].append(
-                SessionWindow(index: index, windowID: fields[2], name: fields[3], command: fields[4])
-            )
-        }
-        return bySession
+        return SessionWindow.parse(listOutput: result.stdout)
     }
 
     /// Mirrors the TUI's "open shell here" as a new window.

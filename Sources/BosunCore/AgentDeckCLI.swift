@@ -57,7 +57,7 @@ extension AgentDeckBinary {
     }
 }
 
-public enum AgentDeckCLIError: Error, LocalizedError, Sendable {
+public enum AgentDeckCLIError: Error, LocalizedError, Equatable, Sendable {
     case notFound(rejected: [String])
 
     public var errorDescription: String? {
@@ -121,11 +121,24 @@ public actor AgentDeckCLI {
             }
         }
 
-        // Candidate order decides ties, so PATH order still wins among equal versions.
+        let chosen = try Self.select(probed: candidates.map { ($0, versions[$0]) }, configuredPath: configuredPath)
+        resolved = chosen
+        return chosen
+    }
+
+    /// Picks the binary to use from the probed candidates: a configured path
+    /// when it qualifies, otherwise the newest version at or above
+    /// `minimumSupported`. The first of equal versions wins, so PATH order
+    /// still breaks ties. Throws `notFound` naming every candidate that did
+    /// not qualify.
+    static func select(
+        probed: [(path: String, version: AgentDeckVersion?)],
+        configuredPath: String?
+    ) throws -> AgentDeckBinary {
         var found: [AgentDeckBinary] = []
         var rejected: [String] = []
-        for path in candidates {
-            switch versions[path] {
+        for (path, version) in probed {
+            switch version {
             case let version? where version >= .minimumSupported:
                 found.append(AgentDeckBinary(path: path, version: version))
             case let version?:
@@ -134,14 +147,11 @@ public actor AgentDeckCLI {
                 rejected.append("\(path) (no version)")
             }
         }
-
-        // A configured path wins when it qualifies; otherwise the newest.
         guard let chosen = found.first(where: { $0.path == configuredPath })
             ?? found.max(by: { $0.version < $1.version })
         else {
             throw AgentDeckCLIError.notFound(rejected: rejected)
         }
-        resolved = chosen
         return chosen
     }
 
@@ -156,8 +166,11 @@ public actor AgentDeckCLI {
     /// shell's `TMUX`/`AGENTDECK_*`, which would make `session attach` nest or
     /// misattribute the caller. The chosen binary's directory leads PATH so a
     /// re-exec by name (hooks, tmux-side helpers) lands on the same build.
-    static func childEnvironment(binaryDirectory: String?) -> [String: String] {
-        let inherited = ProcessInfo.processInfo.environment
+    /// `inherited` is the launcher's environment, Bosun's own by default.
+    static func childEnvironment(
+        binaryDirectory: String?,
+        inherited: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
         let directories = [binaryDirectory].compactMap { $0 }
             + (inherited["PATH"] ?? "").split(separator: ":").map(String.init)
             + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
