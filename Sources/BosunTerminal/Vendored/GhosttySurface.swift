@@ -112,14 +112,20 @@ final class GhosttySurfaceController: Identifiable, GhosttyColorSchemeReceiving 
         logger.info("Surface created: \(self.id)")
     }
 
-    deinit {
-        // Surface must be freed on the main actor. Since deinit may run off main,
-        // capture the surface value and dispatch.
-        if let surface {
-            Task.detached { @MainActor in
-                GhosttyFFI.surfaceFree(surface)
-            }
-        }
+    /// BOSUN: frees the engine surface now, on the main actor. Must run
+    /// while the hosting view is alive: the engine holds the view as
+    /// unretained userdata until the surface is freed.
+    func free() {
+        guard let surface else { return }
+        self.surface = nil
+        GhosttyFFI.surfaceFree(surface)
+    }
+
+    /// BOSUN: last resort for a controller dropped without `free()`.
+    /// Isolated so the free is synchronous on the main actor; a deferred
+    /// free would let the engine tick against a view that is already gone.
+    isolated deinit {
+        free()
     }
 
     // MARK: - Size & Scale

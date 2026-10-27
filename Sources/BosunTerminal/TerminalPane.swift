@@ -47,11 +47,20 @@ public final class TerminalPane: NSView {
         guard window != nil, !started else { return }
         started = true
         createSurface()
-        // Deferred: this runs inside the hosting layout pass.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            window?.makeFirstResponder(surfaceView)
-        }
+    }
+
+    /// Moves keyboard focus into the terminal. The pane never takes focus
+    /// by itself: the host decides, so creating a pane cannot steal keys
+    /// from whatever created it.
+    public func focusTerminal() {
+        window?.makeFirstResponder(surfaceView)
+    }
+
+    /// Frees the engine surface now. It also dies with the view, but a
+    /// dismantled pane may linger before deallocation; this ends the tmux
+    /// client at once.
+    public func teardown() {
+        surfaceView.teardownSurface()
     }
 
     private func createSurface() {

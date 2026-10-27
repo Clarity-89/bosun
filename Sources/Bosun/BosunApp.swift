@@ -15,6 +15,7 @@ struct BosunApp: App {
         .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            FocusCommands()
         }
 
         MenuBarExtra {
@@ -30,6 +31,34 @@ struct BosunApp: App {
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+/// Keyboard focus moves between the list and the terminal only on request,
+/// so each direction gets a View menu item. Both shortcuts are unbound in
+/// Ghostty's defaults (⌘⇧T is `undo`), so the surface passes them on to
+/// the menu bar.
+struct FocusCommands: Commands {
+    @FocusedBinding(\.sidebarFocused) private var sidebarFocused
+    @FocusedBinding(\.terminalFocusRequest) private var terminalFocusRequest
+
+    var body: some Commands {
+        CommandGroup(after: .sidebar) {
+            Button("Focus Sidebar") { sidebarFocused = true }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+                .disabled(sidebarFocused == nil)
+            Button("Focus Terminal") { terminalFocusRequest? += 1 }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(terminalFocusRequest == nil)
+        }
+    }
+}
+
+extension FocusedValues {
+    /// Whether the key window's session list has keyboard focus.
+    @Entry var sidebarFocused: Binding<Bool>?
+    /// The key window's terminal focus request counter; each increment
+    /// moves keyboard focus into its pane. Nil while it has no pane.
+    @Entry var terminalFocusRequest: Binding<Int>?
 }
 
 @MainActor

@@ -136,7 +136,7 @@ public final class GhosttyAppController {
 
     static func surfaceView(from surface: ghostty_surface_t) -> SurfaceView? {
         guard let ud = GhosttyFFI.surfaceUserdata(surface) else { return nil }
-        return Unmanaged<SurfaceView>.fromOpaque(ud).takeUnretainedValue()
+        return surfaceView(fromUserdata: ud)
     }
 
     static func surfaceView(fromUserdata userdata: UnsafeMutableRawPointer) -> SurfaceView {
