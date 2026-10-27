@@ -72,20 +72,8 @@ struct MenuView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if !model.statusEventsEnabled {
-                Label("Live status events are off", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            } else if model.statusOwner == .nobody {
-                NotifyDaemonOffer(model: model)
-                    .font(.caption)
-            }
-            if let error = model.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-            }
+            StatusNotices(model: model)
+                .font(.caption)
             HStack {
                 Button {
                     Task { await model.refresh() }

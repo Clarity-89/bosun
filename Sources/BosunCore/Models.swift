@@ -60,30 +60,28 @@ public struct EventsStats: Decodable, Sendable {
     public let enabled: Bool
     public let cursor: UInt64
     /// Nil from agent-deck builds that predate `status_owner`, which also lack
-    /// `notify-daemon install`, and for an owner newer than this build.
+    /// `notify-daemon install`.
     public let statusOwner: StatusOwner?
 
     private enum CodingKeys: String, CodingKey {
         case enabled, cursor
         case statusOwner = "status_owner"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = try container.decode(Bool.self, forKey: .enabled)
-        cursor = try container.decode(UInt64.self, forKey: .cursor)
-        // An owner this build does not know must not fail startup.
-        statusOwner = try? container.decodeIfPresent(StatusOwner.self, forKey: .statusOwner)
-    }
 }
 
 /// Who writes a profile's status transitions, and with them the
-/// `session.status` frames Bosun follows.
+/// `session.status` frames Bosun follows; an owner newer than this build
+/// decodes as `other`.
 public enum StatusOwner: String, Decodable, Sendable {
     case tui
     case notifyDaemon = "notify-daemon"
     /// Nothing does, so rows change only when the list is reloaded.
     case nobody = "none"
+    case other
+
+    public init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
 }
 
 /// `config get <key> --json`, for a boolean key.

@@ -121,25 +121,14 @@ import Testing
     }
 }
 
-/// `notify-daemon install --json` as agent-deck prints it. A failure exits 1
-/// with its reason in the stdout JSON, not on stderr; the fixture is the one
-/// failure reproducible without touching launchd (Linux, no systemd).
-@Suite struct NotifyDaemonInstallTests {
-    let command = "agent-deck notify-daemon install --json"
-
-    @Test func successReportsThePlist() throws {
-        let result = ProcessResult(command: command, status: 0, stdout: """
-            {
-              "path": "/Users/me/Library/LaunchAgents/com.agentdeck.transition-notifier.plist",
-              "success": true
-            }
-            """, stderr: "")
-        #expect(try AgentDeckCLI.installedPath(result) == "/Users/me/Library/LaunchAgents/com.agentdeck.transition-notifier.plist")
-    }
-
-    @Test func failureSurfacesTheReportedReason() {
+/// A failing `--json` command as agent-deck prints it: exit 1 with the reason
+/// in the stdout JSON, not on stderr. The fixture is `notify-daemon install`
+/// on Linux without systemd, the one failure reproducible without touching
+/// launchd. A command that reports on stderr instead keeps that text.
+@Suite struct ReportedFailureTests {
+    @Test func stdoutEnvelopeIsTheReason() {
         let reason = "installing the notify daemon: systemd user session not available; run manually: agent-deck notify-daemon"
-        let result = ProcessResult(command: command, status: 1, stdout: """
+        let result = ProcessResult(command: "agent-deck notify-daemon install --json", status: 1, stdout: """
             {
               "code": "INVALID_OPERATION",
               "error": "\(reason)",
@@ -147,7 +136,15 @@ import Testing
             }
             """, stderr: "")
         #expect(throws: AgentDeckCLIError.reported(reason)) {
-            try AgentDeckCLI.installedPath(result)
+            try AgentDeckCLI.checkReported(result)
         }
+    }
+
+    @Test func stderrFailureKeepsItsText() {
+        let result = ProcessResult(command: "agent-deck events stats --json", status: 1, stdout: "", stderr: "Error: encode stats: broken pipe\n")
+        let error = #expect(throws: SubprocessError.self) {
+            try AgentDeckCLI.checkReported(result)
+        }
+        #expect(error?.localizedDescription == "Error: encode stats: broken pipe")
     }
 }

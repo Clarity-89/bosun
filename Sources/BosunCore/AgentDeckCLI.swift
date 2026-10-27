@@ -214,32 +214,11 @@ public actor AgentDeckCLI {
     /// `statusOwner`: older builds ignore `install` and run the daemon in the
     /// foreground, never exiting.
     public func installNotifyDaemon() async throws -> String {
-        let binary = try await binary()
-        return try Self.installedPath(await Subprocess.run(
-            executable: binary.path,
-            arguments: ["notify-daemon", "install", "--json"],
-            environment: Self.childEnvironment(binaryDirectory: binary.directory)
-        ))
+        try await decode(Installed.self, ["notify-daemon", "install", "--json"]).path
     }
 
-    /// The plist path from `notify-daemon install --json`. A failure exits 1
-    /// with `{"success": false, "error": …}` on stdout, a reason the
-    /// stderr-based `checkSucceeded` would drop.
-    static func installedPath(_ result: ProcessResult) throws -> String {
-        let reply = try? JSONDecoder().decode(InstallReply.self, from: Data(result.stdout.utf8))
-        if !result.succeeded, let error = reply?.error {
-            throw AgentDeckCLIError.reported(error)
-        }
-        try result.checkSucceeded()
-        guard let path = reply?.path else {
-            throw AgentDeckCLIError.reported("notify-daemon install did not say where it installed the daemon")
-        }
-        return path
-    }
-
-    private struct InstallReply: Decodable {
-        let path: String?
-        let error: String?
+    private struct Installed: Decodable {
+        let path: String
     }
 
     /// Status frames after `cursor`. Ends only by cancellation or with an
@@ -271,8 +250,9 @@ public actor AgentDeckCLI {
         try await Terminal.openAttach(executablePath: binary.path, sessionID: sessionID)
     }
 
-    /// Runs the resolved agent-deck in its child environment; a non-zero exit
-    /// is `SubprocessError.exited`.
+    /// Runs the resolved agent-deck in its child environment. A failing
+    /// `--json` command is `AgentDeckCLIError.reported`; any other non-zero
+    /// exit is `SubprocessError.exited`.
     func run(_ arguments: [String]) async throws -> ProcessResult {
         let binary = try await binary()
         let result = try await Subprocess.run(
@@ -280,8 +260,25 @@ public actor AgentDeckCLI {
             arguments: arguments,
             environment: Self.childEnvironment(binaryDirectory: binary.directory)
         )
-        try result.checkSucceeded()
+        try Self.checkReported(result)
         return result
+    }
+
+    /// A failing `--json` command exits non-zero with its reason as
+    /// `{"success": false, "error": …}` on stdout, where the stderr-based
+    /// `checkSucceeded` would not look.
+    static func checkReported(_ result: ProcessResult) throws {
+        if !result.succeeded,
+           let failure = try? JSONDecoder().decode(Failure.self, from: Data(result.stdout.utf8)),
+           !failure.success {
+            throw AgentDeckCLIError.reported(failure.error)
+        }
+        try result.checkSucceeded()
+    }
+
+    private struct Failure: Decodable {
+        let success: Bool
+        let error: String
     }
 
     private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {

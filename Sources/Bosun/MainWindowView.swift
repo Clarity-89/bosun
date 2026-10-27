@@ -141,15 +141,7 @@ struct MainWindowView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if !model.statusEventsEnabled {
-                Label("Live status events are off", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-            } else if model.statusOwner == .nobody {
-                NotifyDaemonOffer(model: model)
-            }
-            if let error = model.lastError {
-                Text(error).foregroundStyle(.red).lineLimit(2)
-            }
+            StatusNotices(model: model)
             Text(model.connectionLabel).foregroundStyle(.secondary)
         }
         .font(.caption)
