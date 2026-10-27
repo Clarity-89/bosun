@@ -2,7 +2,7 @@ APP     := Bosun
 BUNDLE  := build/$(APP).app
 BINDIR   = $(shell swift build -c release --show-bin-path)
 
-.PHONY: vendor build bundle run stop clean
+.PHONY: vendor build test bundle run stop clean
 
 # libghostty static library + headers; see scripts/fetch-ghosttykit.sh.
 vendor:
@@ -10,6 +10,10 @@ vendor:
 
 build: vendor
 	swift build -c release --product $(APP)
+
+# BosunCoreTests only; the engine needs a GUI session, so it has no unit tests.
+test: vendor
+	swift test
 
 # SwiftPM emits a bare binary; menu bar apps need a bundle for LSUIElement
 # and a stable bundle identifier.
