@@ -47,11 +47,20 @@ public final class TerminalPane: NSView {
         guard window != nil, !started else { return }
         started = true
         createSurface()
-        // Deferred: this runs inside the hosting layout pass.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            window?.makeFirstResponder(surfaceView)
-        }
+    }
+
+    /// Moves keyboard focus into the terminal. Never called automatically:
+    /// a pane created by arrow-key navigation in the list must not steal
+    /// the keys the user is navigating with.
+    public func focusTerminal() {
+        window?.makeFirstResponder(surfaceView)
+    }
+
+    /// Frees the engine surface while this view still exists. Called by the
+    /// host when SwiftUI dismantles the pane; relying on deinit ordering
+    /// instead let engine callbacks reach a deallocated view.
+    public func teardown() {
+        surfaceView.teardownSurface()
     }
 
     private func createSurface() {
@@ -63,6 +72,10 @@ public final class TerminalPane: NSView {
         var config = GhosttyFFI.surfaceConfigNew()
         config.scale_factor = Double(window?.backingScaleFactor ?? (NSScreen.main?.backingScaleFactor ?? 2.0))
         config.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
+
+        // Before surface_new: INITIAL_SIZE and CELL_SIZE arrive synchronously
+        // from inside it and are dropped for an unregistered view.
+        GhosttyAppController.registerLive(surfaceView)
 
         // ghostty_surface_new copies the strings, so they only need to outlive the call.
         let keys = Array(environment.keys)
@@ -83,6 +96,7 @@ public final class TerminalPane: NSView {
         if let surfaceController = surfaceView.surfaceController {
             controller.register(surfaceController)
         } else {
+            GhosttyAppController.unregisterLive(surfaceView)
             logger.error("surface creation failed for \(self.command, privacy: .public)")
         }
     }

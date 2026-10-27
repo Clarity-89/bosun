@@ -172,6 +172,9 @@ class SurfaceView: NSView {
     }
 
     isolated deinit {
+        // BOSUN: a view that dies without teardownSurface must still leave
+        // the live registry, or its stale pointer could match a new object.
+        GhosttyAppController.unregisterLive(self)
         smoothScrollResetTimer?.invalidate()
         virtualMomentumTimer?.invalidate()
         trackingAreas.forEach { removeTrackingArea($0) }
@@ -202,6 +205,14 @@ class SurfaceView: NSView {
             return
         }
         self.surfaceController = controller
+    }
+
+    /// BOSUN: frees the engine surface synchronously and leaves the live
+    /// registry, so no further engine callback can reach this view.
+    func teardownSurface() {
+        GhosttyAppController.unregisterLive(self)
+        surfaceController?.free()
+        surfaceController = nil
     }
 
     // MARK: - View Lifecycle
@@ -620,6 +631,11 @@ class SurfaceView: NSView {
     // MARK: - Mouse Input
 
     override func mouseDown(with event: NSEvent) {
+        // BOSUN: a plain NSView does not take focus on click; the pane is
+        // never auto-focused, so the click is the way in.
+        if window?.firstResponder !== self {
+            window?.makeFirstResponder(self)
+        }
         let mods = EventTranslator.translateModifiers(event.modifierFlags)
         surfaceController?.sendMouseButton(
             state: GHOSTTY_MOUSE_PRESS,

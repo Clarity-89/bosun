@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 struct MainWindowView: View {
     @Bindable var model: DeckModel
+    @FocusState private var sidebarFocused: Bool
 
     var body: some View {
         NavigationSplitView {
@@ -11,6 +12,9 @@ struct MainWindowView: View {
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
         } detail: {
             detail
+        }
+        .onChange(of: model.sidebarFocusRequest) {
+            sidebarFocused = true
         }
         .navigationTitle(titleText)
         .toolbar {
@@ -75,6 +79,14 @@ struct MainWindowView: View {
             }
         }
         .listStyle(.sidebar)
+        .focused($sidebarFocused)
+        // Arrow keys keep navigating the list; Return hands the keyboard to
+        // the attached terminal.
+        .onKeyPress(.return) {
+            guard model.pane != nil else { return .ignored }
+            model.focusTerminal()
+            return .handled
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footer
         }
@@ -111,7 +123,7 @@ struct MainWindowView: View {
     @ViewBuilder
     private var detail: some View {
         if let pane = model.pane {
-            TerminalHost(launch: pane.launch) { title in
+            TerminalHost(launch: pane.launch, focusRequest: model.terminalFocusRequest) { title in
                 model.paneTitleChanged(sessionID: pane.sessionID, title: title)
             } onExit: {
                 model.paneExited(sessionID: pane.sessionID)

@@ -18,6 +18,9 @@ final class DeckModel {
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
+    /// Monotonic counters; views act on each new value.
+    private(set) var terminalFocusRequest = 0
+    private(set) var sidebarFocusRequest = 0
     private var refreshTask: Task<Void, Never>?
 
     @ObservationIgnored private let cli = AgentDeckCLI(
@@ -48,6 +51,17 @@ final class DeckModel {
             }
         }
         return groups
+    }
+
+    /// Keyboard focus moves only on request: Return or a click for the
+    /// terminal, the Focus Sidebar command for the list.
+    func focusTerminal() {
+        guard pane != nil else { return }
+        terminalFocusRequest += 1
+    }
+
+    func focusSidebar() {
+        sidebarFocusRequest += 1
     }
 
     func start() {
