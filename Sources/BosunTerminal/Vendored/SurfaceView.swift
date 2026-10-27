@@ -172,9 +172,9 @@ class SurfaceView: NSView {
     }
 
     isolated deinit {
-        // BOSUN: a view that dies without teardownSurface must still leave
-        // the live registry, or its stale pointer could match a new object.
-        GhosttyAppController.unregisterLive(self)
+        // BOSUN: the engine calls back into this view until its surface is
+        // freed, so the surface cannot outlive the view.
+        teardownSurface()
         smoothScrollResetTimer?.invalidate()
         virtualMomentumTimer?.invalidate()
         trackingAreas.forEach { removeTrackingArea($0) }
@@ -207,10 +207,9 @@ class SurfaceView: NSView {
         self.surfaceController = controller
     }
 
-    /// BOSUN: frees the engine surface synchronously and leaves the live
-    /// registry, so no further engine callback can reach this view.
+    /// BOSUN: frees the engine surface synchronously; after this no engine
+    /// callback can reach this view.
     func teardownSurface() {
-        GhosttyAppController.unregisterLive(self)
         surfaceController?.free()
         surfaceController = nil
     }
@@ -631,8 +630,9 @@ class SurfaceView: NSView {
     // MARK: - Mouse Input
 
     override func mouseDown(with event: NSEvent) {
-        // BOSUN: a plain NSView does not take focus on click; the pane is
-        // never auto-focused, so the click is the way in.
+        // BOSUN: a plain NSView does not take focus on click and the pane is
+        // never auto-focused, so the click is the way in. Left button only,
+        // as in Ghostty; the press still reaches the terminal.
         if window?.firstResponder !== self {
             window?.makeFirstResponder(self)
         }

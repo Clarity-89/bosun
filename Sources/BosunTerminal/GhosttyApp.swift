@@ -92,20 +92,6 @@ public final class GhosttyAppController {
         surfaces.add(surface)
     }
 
-    /// Userdata pointers of surface views that are alive. A callback whose
-    /// userdata is not here refers to a view that is gone; dereferencing it
-    /// would be a use-after-free (the engine delivers actions for a surface
-    /// until it is freed, and SwiftUI may drop the view first).
-    private static var liveSurfaceViews = Set<UnsafeMutableRawPointer>()
-
-    static func registerLive(_ view: SurfaceView) {
-        liveSurfaceViews.insert(Unmanaged.passUnretained(view).toOpaque())
-    }
-
-    static func unregisterLive(_ view: SurfaceView) {
-        liveSurfaceViews.remove(Unmanaged.passUnretained(view).toOpaque())
-    }
-
     /// Reloads the user's Ghostty config and pushes it to every surface;
     /// a config that fails to parse keeps the previous one.
     func reloadConfig() {
@@ -153,12 +139,8 @@ public final class GhosttyAppController {
         return surfaceView(fromUserdata: ud)
     }
 
-    static func surfaceView(fromUserdata userdata: UnsafeMutableRawPointer) -> SurfaceView? {
-        guard liveSurfaceViews.contains(userdata) else {
-            logger.warning("engine callback for a surface view that is gone; ignored")
-            return nil
-        }
-        return Unmanaged<SurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+    static func surfaceView(fromUserdata userdata: UnsafeMutableRawPointer) -> SurfaceView {
+        Unmanaged<SurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     }
 
     static func appController(from userdata: UnsafeMutableRawPointer) -> GhosttyAppController {
@@ -195,7 +177,7 @@ private func ghosttyReadClipboardCallback(_ userdata: UnsafeMutableRawPointer?, 
     nonisolated(unsafe) let safeUserdata = userdata
     nonisolated(unsafe) let safeState = state
     return MainActor.assumeIsolated {
-        guard let surface = GhosttyAppController.surfaceView(fromUserdata: safeUserdata)?.surfaceController?.surface else {
+        guard let surface = GhosttyAppController.surfaceView(fromUserdata: safeUserdata).surfaceController?.surface else {
             return false
         }
         let text = NSPasteboard.general.string(forType: .string) ?? ""
@@ -215,7 +197,7 @@ private func ghosttyConfirmReadClipboardCallback(_ userdata: UnsafeMutableRawPoi
     nonisolated(unsafe) let safeState = state
     let contents = string.map { String(cString: $0) } ?? ""
     MainActor.assumeIsolated {
-        guard let surface = GhosttyAppController.surfaceView(fromUserdata: safeUserdata)?.surfaceController?.surface else { return }
+        guard let surface = GhosttyAppController.surfaceView(fromUserdata: safeUserdata).surfaceController?.surface else { return }
         contents.withCString { ptr in
             GhosttyFFI.surfaceCompleteClipboardRequest(surface, data: ptr, state: safeState, confirmed: true)
         }
@@ -248,6 +230,6 @@ private func ghosttyCloseSurfaceCallback(_ userdata: UnsafeMutableRawPointer?, _
     guard let userdata else { return }
     nonisolated(unsafe) let safeUserdata = userdata
     MainActor.assumeIsolated {
-        GhosttyAppController.surfaceView(fromUserdata: safeUserdata)?.onProcessExit?()
+        GhosttyAppController.surfaceView(fromUserdata: safeUserdata).onProcessExit?()
     }
 }

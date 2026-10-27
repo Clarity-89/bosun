@@ -112,25 +112,20 @@ final class GhosttySurfaceController: Identifiable, GhosttyColorSchemeReceiving 
         logger.info("Surface created: \(self.id)")
     }
 
-    /// BOSUN: frees the engine surface now, on the main actor, while the
-    /// hosting view is still alive. The deferred free below leaves a window
-    /// in which the engine delivers actions for a surface whose userdata
-    /// points at a deallocated view (objc_retain on garbage, caught by the
-    /// engine's Sentry handler, which then _exits the process).
+    /// BOSUN: frees the engine surface now, on the main actor. Must run
+    /// while the hosting view is alive: the engine holds the view as
+    /// unretained userdata until the surface is freed.
     func free() {
         guard let surface else { return }
         self.surface = nil
         GhosttyFFI.surfaceFree(surface)
     }
 
-    deinit {
-        // Fallback only; TerminalPane.teardown frees explicitly. deinit may
-        // run off main, so the free has to be dispatched.
-        if let surface {
-            Task.detached { @MainActor in
-                GhosttyFFI.surfaceFree(surface)
-            }
-        }
+    /// BOSUN: last resort for a controller dropped without `free()`.
+    /// Isolated so the free is synchronous on the main actor; a deferred
+    /// free would let the engine tick against a view that is already gone.
+    isolated deinit {
+        free()
     }
 
     // MARK: - Size & Scale

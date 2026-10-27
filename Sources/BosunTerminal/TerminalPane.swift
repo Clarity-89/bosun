@@ -49,16 +49,16 @@ public final class TerminalPane: NSView {
         createSurface()
     }
 
-    /// Moves keyboard focus into the terminal. Never called automatically:
-    /// a pane created by arrow-key navigation in the list must not steal
-    /// the keys the user is navigating with.
+    /// Moves keyboard focus into the terminal. The pane never takes focus
+    /// by itself: the host decides, so creating a pane cannot steal keys
+    /// from whatever created it.
     public func focusTerminal() {
         window?.makeFirstResponder(surfaceView)
     }
 
-    /// Frees the engine surface while this view still exists. Called by the
-    /// host when SwiftUI dismantles the pane; relying on deinit ordering
-    /// instead let engine callbacks reach a deallocated view.
+    /// Frees the engine surface now. It also dies with the view, but a
+    /// dismantled pane may linger before deallocation; this ends the tmux
+    /// client at once.
     public func teardown() {
         surfaceView.teardownSurface()
     }
@@ -72,10 +72,6 @@ public final class TerminalPane: NSView {
         var config = GhosttyFFI.surfaceConfigNew()
         config.scale_factor = Double(window?.backingScaleFactor ?? (NSScreen.main?.backingScaleFactor ?? 2.0))
         config.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
-
-        // Before surface_new: INITIAL_SIZE and CELL_SIZE arrive synchronously
-        // from inside it and are dropped for an unregistered view.
-        GhosttyAppController.registerLive(surfaceView)
 
         // ghostty_surface_new copies the strings, so they only need to outlive the call.
         let keys = Array(environment.keys)
@@ -96,7 +92,6 @@ public final class TerminalPane: NSView {
         if let surfaceController = surfaceView.surfaceController {
             controller.register(surfaceController)
         } else {
-            GhosttyAppController.unregisterLive(surfaceView)
             logger.error("surface creation failed for \(self.command, privacy: .public)")
         }
     }

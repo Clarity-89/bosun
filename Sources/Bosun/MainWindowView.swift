@@ -5,6 +5,8 @@ import SwiftUI
 struct MainWindowView: View {
     @Bindable var model: DeckModel
     @FocusState private var sidebarFocused: Bool
+    /// Monotonic; TerminalHost moves first responder into the pane on each new value.
+    @State private var terminalFocusRequest = 0
 
     var body: some View {
         NavigationSplitView {
@@ -13,9 +15,8 @@ struct MainWindowView: View {
         } detail: {
             detail
         }
-        .onChange(of: model.sidebarFocusRequest) {
-            sidebarFocused = true
-        }
+        .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
+        .focusedSceneValue(\.terminalFocusRequest, model.pane == nil ? nil : $terminalFocusRequest)
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -84,7 +85,7 @@ struct MainWindowView: View {
         // the attached terminal.
         .onKeyPress(.return) {
             guard model.pane != nil else { return .ignored }
-            model.focusTerminal()
+            terminalFocusRequest += 1
             return .handled
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -123,7 +124,7 @@ struct MainWindowView: View {
     @ViewBuilder
     private var detail: some View {
         if let pane = model.pane {
-            TerminalHost(launch: pane.launch, focusRequest: model.terminalFocusRequest) { title in
+            TerminalHost(launch: pane.launch, focusRequest: terminalFocusRequest) { title in
                 model.paneTitleChanged(sessionID: pane.sessionID, title: title)
             } onExit: {
                 model.paneExited(sessionID: pane.sessionID)
