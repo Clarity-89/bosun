@@ -351,6 +351,32 @@ final class DeckModel {
         lifecycle("delete", session) { [cli] in try await cli.deleteSession(id: session.id) }
     }
 
+    /// Drag and drop within a group. The rows reorder at once; agent-deck
+    /// then stores the order, and the list that follows confirms it or,
+    /// after a refusal, puts it back.
+    func moveSession(_ move: SessionMove) {
+        guard busySessionIDs.insert(move.sessionID).inserted else { return }
+        let rank = Dictionary(uniqueKeysWithValues: move.order.enumerated().map { ($1, $0) })
+        // A group's rows are consecutive; reorder them where they are.
+        let indices = sessions.indices.filter { rank[sessions[$0].id] != nil }
+        let reordered = indices.map { sessions[$0] }.sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
+        for (index, session) in zip(indices, reordered) {
+            sessions[index] = session
+        }
+        lastError = nil
+        Task {
+            defer { busySessionIDs.remove(move.sessionID) }
+            do {
+                try await cli.moveSession(id: move.sessionID, move.placement)
+                logger.info("moved \(move.sessionID, privacy: .public)")
+            } catch {
+                lastError = error.localizedDescription
+                logger.error("move \(move.sessionID, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            }
+            await refresh()
+        }
+    }
+
     /// One action per session at a time; the list reloads after it, so the
     /// row changes even before the bus reports it. `done` runs once it
     /// succeeds, before the reload. A deleted session's pane goes with its

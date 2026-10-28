@@ -76,11 +76,16 @@ struct MainWindowView: View {
                         Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
                     }
                 if expanded {
-                    ForEach(group.sessions) { session in
-                        SidebarSessionRow(model: model, session: session)
-                            .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
-                            .contextMenu { sessionMenu(for: session) }
-                        ForEach(model.extraWindows(for: session.id)) { window in
+                    let rows = sidebarRows(of: group)
+                    // One row per element, so a drag moves exactly the row it
+                    // picked up; a session's windows follow it on the next list.
+                    ForEach(rows) { row in
+                        switch row {
+                        case .session(let session):
+                            SidebarSessionRow(model: model, session: session)
+                                .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
+                                .contextMenu { sessionMenu(for: session) }
+                        case .window(let window, let session):
                             WindowRow(window: window)
                                 .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
                                 .contextMenu {
@@ -88,6 +93,12 @@ struct MainWindowView: View {
                                         model.closeWindow(window, in: session)
                                     }
                                 }
+                                .moveDisabled(true)
+                        }
+                    }
+                    .onMove { source, destination in
+                        if let move = SessionMove(rows: rows.map(\.sessionID), from: source, to: destination) {
+                            model.moveSession(move)
                         }
                     }
                 }
@@ -138,6 +149,12 @@ struct MainWindowView: View {
     private func toggle(_ group: String) {
         withAnimation(.easeOut(duration: 0.15)) {
             model.toggleGroup(group)
+        }
+    }
+
+    private func sidebarRows(of group: SessionGroup) -> [SessionListRow] {
+        group.sessions.flatMap { session in
+            [SessionListRow.session(session)] + model.extraWindows(for: session.id).map { SessionListRow.window($0, of: session) }
         }
     }
 
@@ -352,6 +369,24 @@ struct SessionRow: View {
             return "\(tool) · \(session.status.label) · \(substate)"
         }
         return "\(tool) · \(session.status.label)"
+    }
+}
+
+/// A row under a group: a session, or one of its extra windows.
+private enum SessionListRow: Identifiable {
+    case session(DeckSession)
+    case window(SessionWindow, of: DeckSession)
+
+    var id: String {
+        switch self {
+        case .session(let session): session.id
+        case .window(let window, let session): "\(session.id)/\(window.windowID)"
+        }
+    }
+
+    /// Nil for a window row, which a drag cannot move.
+    var sessionID: String? {
+        if case .session(let session) = self { session.id } else { nil }
     }
 }
 
