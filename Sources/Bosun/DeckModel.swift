@@ -10,6 +10,10 @@ final class DeckModel {
     static let shared = DeckModel()
 
     private(set) var sessions: [DeckSession] = []
+    /// False until the first `list` answers, or startup fails before one:
+    /// the session lists show placeholder rows until then, and an empty
+    /// list after it means there are no sessions.
+    private(set) var hasLoadedSessions = false
     private(set) var connection: ConnectionState = .starting
     private var statusEventsEnabled = false
     /// Who publishes status transitions; nil until known, with the bus off,
@@ -182,6 +186,7 @@ final class DeckModel {
                 deckGroups = groups
             }
             sessions = DeckSession.inDeckOrder(visible, groupPaths: deckGroups.map(\.path))
+            hasLoadedSessions = true
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
             // A session deleted while not running has no tmux client whose
@@ -192,6 +197,7 @@ final class DeckModel {
             await loadAllWindows()
         } catch is CancellationError {
         } catch {
+            hasLoadedSessions = true
             lastError = error.localizedDescription
             logger.error("list failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -475,6 +481,7 @@ final class DeckModel {
                 lastError = "The event bus is disabled; statuses refresh every 60 s"
             }
         } catch {
+            hasLoadedSessions = true
             connection = .unavailable
             lastError = error.localizedDescription
             logger.error("startup failed: \(error.localizedDescription, privacy: .public)")

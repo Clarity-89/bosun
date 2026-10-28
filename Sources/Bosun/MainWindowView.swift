@@ -103,6 +103,18 @@ struct MainWindowView: View {
                 }
             }
             .listStyle(.sidebar)
+            // Over the list, which has no rows yet, so selection, keys and
+            // drags never meet a placeholder.
+            .overlay(alignment: .topLeading) {
+                if !model.hasLoadedSessions {
+                    SessionListPlaceholder()
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: model.hasLoadedSessions)
             .focused($sidebarFocused)
             // Only the focused list sees these keys, so every letter still
             // reaches the terminal.

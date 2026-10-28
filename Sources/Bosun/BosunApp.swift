@@ -8,7 +8,10 @@ struct BosunApp: App {
     private let model = DeckModel.shared
 
     var body: some Scene {
-        WindowGroup("Bosun", id: "main") {
+        // One window, as the model has one selection and one pane: opening
+        // it from the menu bar brings it forward, or back after a close,
+        // where a WindowGroup would add a second window on the same session.
+        Window("Bosun", id: "main") {
             MainWindowView(model: model)
                 .frame(minWidth: 900, minHeight: 560)
         }

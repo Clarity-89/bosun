@@ -39,7 +39,11 @@ struct MenuView: View {
     private var sessionList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
-                if model.sessions.isEmpty {
+                if !model.hasLoadedSessions {
+                    SessionListPlaceholder()
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                } else if model.sessions.isEmpty {
                     ContentUnavailableView(
                         "No sessions",
                         systemImage: "rectangle.stack",
