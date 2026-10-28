@@ -33,8 +33,8 @@ public enum SessionStatus: String, Decodable, Sendable {
         self == .waiting || self == .error
     }
 
-    /// Whether the session has a process to stop or restart; a stopped or
-    /// failed one can only be started.
+    /// Whether the session has a process to stop or attach to; a stopped or
+    /// failed one has none.
     public var hasProcess: Bool {
         self != .stopped && self != .error
     }

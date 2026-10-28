@@ -77,14 +77,13 @@ enum GhosttyActionRouter {
 
         case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
             // A surface created with a command has `wait-after-command` forced
-            // on (apprt/embedded.zig), so after a normal exit (a Ctrl-Q detach)
-            // the engine would sit on "Process exited" until a keypress; Bosun
-            // ends the pane itself. A fast failure is not performed: the engine
-            // then draws its notice and closes on a keypress via `close_surface_cb`.
+            // on (apprt/embedded.zig), so the engine would sit on "Process
+            // exited", or on its abnormal-exit notice, until a keypress. Bosun
+            // ends the pane itself either way; the host hears which exit it was.
+            guard let view = surfaceView(from: target) else { return false }
             let exited = action.action.child_exited
-            guard UInt64(exited.timetime_ms) > GhosttyAppController.shared.abnormalExitRuntimeMs,
-                  let view = surfaceView(from: target) else { return false }
-            view.onProcessExit?()
+            let abnormal = UInt64(exited.timetime_ms) <= GhosttyAppController.shared.abnormalExitRuntimeMs
+            view.onProcessExit?(abnormal ? .abnormal : .normal)
             return true
 
         case GHOSTTY_ACTION_CLOSE_TAB, GHOSTTY_ACTION_CLOSE_WINDOW:

@@ -224,12 +224,12 @@ private func ghosttyWriteClipboardCallback(_: UnsafeMutableRawPointer?, _: ghost
     }
 }
 
-/// The surface's process ended, or the engine was asked to close it; either
-/// way the pane is over.
+/// The engine closed the surface, on a close keybind or a key pressed after
+/// the process ended; either way the pane is over.
 private func ghosttyCloseSurfaceCallback(_ userdata: UnsafeMutableRawPointer?, _: Bool) {
     guard let userdata else { return }
     nonisolated(unsafe) let safeUserdata = userdata
     MainActor.assumeIsolated {
-        GhosttyAppController.surfaceView(fromUserdata: safeUserdata).onProcessExit?()
+        GhosttyAppController.surfaceView(fromUserdata: safeUserdata).onProcessExit?(.normal)
     }
 }

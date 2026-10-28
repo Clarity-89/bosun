@@ -17,7 +17,7 @@ final class DeckModel {
     private var statusOwner: StatusOwner?
     private(set) var lastError: String?
     private(set) var selection: SidebarItem?
-    private(set) var pane: AttachedPane?
+    private(set) var pane: SessionPane?
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
@@ -154,6 +154,11 @@ final class DeckModel {
                 ])
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
+            // A session deleted while not running has no tmux client whose
+            // exit would close its pane.
+            if case .notRunning(let sessionID, _)? = pane, !sessions.contains(where: { $0.id == sessionID }) {
+                closePane()
+            }
             await loadAllWindows()
         } catch is CancellationError {
         } catch {
@@ -164,8 +169,10 @@ final class DeckModel {
 
     /// Shows the target in the pane. Attaching runs `agent-deck session
     /// attach`, a tmux client, so the agent keeps running when the pane goes
-    /// away; a window row first switches the session's current window, as
-    /// the TUI's window rows do. A group row leaves the pane as it is.
+    /// away; a stopped or failed session gets Start and Restart instead, as
+    /// its attach would exit at once. A window row first switches the
+    /// session's current window, as the TUI's window rows do. A group row
+    /// leaves the pane as it is.
     func select(_ item: SidebarItem?) {
         selection = item
         guard let item else {
@@ -177,12 +184,20 @@ final class DeckModel {
             run("select window") { [cli] in try await cli.selectWindow(windowID: windowID) }
         }
         guard pane?.sessionID != target.sessionID else { return }
+        if sessions.first(where: { $0.id == target.sessionID })?.status.hasProcess == false {
+            pane = .notRunning(sessionID: target.sessionID, error: nil)
+            return
+        }
+        attach(target.sessionID)
+    }
+
+    private func attach(_ sessionID: String) {
         guard let binary else {
             lastError = "agent-deck is still starting"
             return
         }
-        pane = AttachedPane(sessionID: target.sessionID, launch: binary.attachLaunch(sessionID: target.sessionID))
-        logger.info("attached \(target.sessionID, privacy: .public) in window")
+        pane = .attached(AttachedPane(sessionID: sessionID, launch: binary.attachLaunch(sessionID: sessionID)))
+        logger.info("attached \(sessionID, privacy: .public) in window")
         Task { await loadAllWindows() }
     }
 
@@ -218,7 +233,7 @@ final class DeckModel {
     }
 
     func startSession(_ session: DeckSession) {
-        lifecycle("start", session) { [cli] in try await cli.startSession(id: session.id) }
+        relaunch("start", session) { [cli] in try await cli.startSession(id: session.id) }
     }
 
     func stopSession(_ session: DeckSession) {
@@ -226,7 +241,7 @@ final class DeckModel {
     }
 
     func restartSession(_ session: DeckSession) {
-        lifecycle("restart", session) { [cli] in try await cli.restartSession(id: session.id) }
+        relaunch("restart", session) { [cli] in try await cli.restartSession(id: session.id) }
     }
 
     func renameSession(_ session: DeckSession, to title: String) {
@@ -238,36 +253,82 @@ final class DeckModel {
     }
 
     /// One action per session at a time; the list reloads after it, so the
-    /// row changes even before the bus reports it. A deleted session's pane
-    /// goes with its tmux client, through `paneExited`.
-    private func lifecycle(_ label: String, _ session: DeckSession, _ operation: @escaping @Sendable () async throws -> Void) {
+    /// row changes even before the bus reports it. `done` runs once it
+    /// succeeds, before the reload; `failed` is `run`'s. A deleted session's
+    /// pane goes with its tmux client, through `paneExited`, or with the
+    /// list that no longer has it.
+    private func lifecycle(
+        _ label: String,
+        _ session: DeckSession,
+        _ operation: @escaping @Sendable () async throws -> Void,
+        then done: (@MainActor () -> Void)? = nil,
+        failed report: (@MainActor (String) -> Void)? = nil
+    ) {
         guard busySessionIDs.insert(session.id).inserted else { return }
-        run(label, operation) { [weak self] in
+        run(label, operation, then: { [weak self] in
             logger.info("\(label, privacy: .public) \(session.id, privacy: .public) done")
+            done?()
             await self?.refresh()
-        } finally: { [weak self] in
+        }, failed: report, finally: { [weak self] in
             self?.busySessionIDs.remove(session.id)
+        })
+    }
+
+    /// Start and Restart. While the pane shows the session as not running,
+    /// success attaches it there and a failure puts agent-deck's reason in
+    /// the pane; once the pane has moved on, they act as the other actions do.
+    private func relaunch(_ label: String, _ session: DeckSession, _ operation: @escaping @Sendable () async throws -> Void) {
+        lifecycle(label, session, operation) { [weak self] in
+            guard let self, showsNotRunning(session.id) else { return }
+            attach(session.id)
+        } failed: { [weak self] message in
+            guard let self else { return }
+            if showsNotRunning(session.id) {
+                pane = .notRunning(sessionID: session.id, error: message)
+            } else {
+                lastError = message
+            }
         }
     }
 
-    func paneTitleChanged(sessionID: String, title: String) {
-        guard pane?.sessionID == sessionID else { return }
-        pane?.title = title
+    private func showsNotRunning(_ sessionID: String) -> Bool {
+        if case .notRunning(sessionID, _)? = pane { true } else { false }
     }
 
-    /// The tmux client ended (Ctrl-Q detach or the session stopped); the
-    /// agent itself is untouched, only the pane is gone.
-    func paneExited(sessionID: String) {
-        guard pane?.sessionID == sessionID else { return }
+    func paneTitleChanged(sessionID: String, title: String) {
+        guard case .attached(var attached)? = pane, attached.sessionID == sessionID else { return }
+        attached.title = title
+        pane = .attached(attached)
+    }
+
+    /// The tmux client ended. A Ctrl-Q detach or a stop closes the pane; the
+    /// agent itself is untouched. An attach that ended at once found nothing
+    /// to attach to, whatever the row said, so the pane offers to start the
+    /// session and the list catches up.
+    func paneExited(sessionID: String, exit: TerminalPane.Exit) {
+        guard pane?.attached?.sessionID == sessionID else { return }
+        switch exit {
+        case .normal:
+            closePane()
+            logger.info("pane for \(sessionID, privacy: .public) exited")
+        case .abnormal:
+            pane = .notRunning(sessionID: sessionID, error: nil)
+            logger.info("attach to \(sessionID, privacy: .public) ended at once")
+            Task { await refresh() }
+        }
+    }
+
+    private func closePane() {
         pane = nil
         if case .pane = selection { selection = nil }
-        logger.info("pane for \(sessionID, privacy: .public) exited")
     }
 
+    /// `failed`, when given, gets the error instead of the footer.
     private func run(
         _ label: String,
         _ operation: @escaping @Sendable () async throws -> Void,
         then follow: (@MainActor () async -> Void)? = nil,
+        failed report: (@MainActor (String) -> Void)? = nil,
         finally cleanup: (@MainActor () -> Void)? = nil
     ) {
         lastError = nil
@@ -277,8 +338,12 @@ final class DeckModel {
                 try await operation()
                 await follow?()
             } catch {
-                lastError = error.localizedDescription
                 logger.error("\(label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                if let report {
+                    report(error.localizedDescription)
+                } else {
+                    lastError = error.localizedDescription
+                }
             }
         }
     }
@@ -455,6 +520,27 @@ struct PaneTarget: Hashable {
 enum SidebarItem: Hashable {
     case group(String)
     case pane(PaneTarget)
+}
+
+/// What the pane shows for a session.
+enum SessionPane {
+    /// Its terminal.
+    case attached(AttachedPane)
+    /// Start and Restart, while the session is not running; `error` is
+    /// agent-deck's reason the last of them failed.
+    case notRunning(sessionID: String, error: String?)
+
+    var sessionID: String {
+        switch self {
+        case .attached(let attached): attached.sessionID
+        case .notRunning(let sessionID, _): sessionID
+        }
+    }
+
+    /// Nil while the session is not running.
+    var attached: AttachedPane? {
+        if case .attached(let attached) = self { attached } else { nil }
+    }
 }
 
 /// The session attached in the pane and the title its terminal reports.

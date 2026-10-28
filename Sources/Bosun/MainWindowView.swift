@@ -16,7 +16,7 @@ struct MainWindowView: View {
             detail
         }
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
-        .focusedSceneValue(\.terminalFocusRequest, model.pane == nil ? nil : $terminalFocusRequest)
+        .focusedSceneValue(\.terminalFocusRequest, model.pane?.attached == nil ? nil : $terminalFocusRequest)
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -47,7 +47,8 @@ struct MainWindowView: View {
     /// Names what the pane shows, which a selected group row leaves as it was.
     private var titleText: String {
         guard let pane = model.pane, let shown = model.sessions.first(where: { $0.id == pane.sessionID }) else { return "Bosun" }
-        return pane.title.isEmpty ? shown.title : "\(shown.title) · \(pane.title)"
+        guard let title = pane.attached?.title, !title.isEmpty else { return shown.title }
+        return "\(shown.title) · \(title)"
     }
 
     private var sidebar: some View {
@@ -100,7 +101,7 @@ struct MainWindowView: View {
         case (.return, .group(let name)?), (.tab, .group(let name)?):
             toggle(name)
         case (.return, _):
-            guard model.pane != nil else { return .ignored }
+            guard model.pane?.attached != nil else { return .ignored }
             terminalFocusRequest += 1
         case (.tab, .pane?):
             guard let session = model.selectedSession else { return .ignored }
@@ -159,14 +160,19 @@ struct MainWindowView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let pane = model.pane {
+        switch model.pane {
+        case .attached(let pane)?:
             TerminalHost(launch: pane.launch, focusRequest: terminalFocusRequest) { title in
                 model.paneTitleChanged(sessionID: pane.sessionID, title: title)
-            } onExit: {
-                model.paneExited(sessionID: pane.sessionID)
+            } onExit: { exit in
+                model.paneExited(sessionID: pane.sessionID, exit: exit)
             }
             .id(pane.sessionID)
-        } else {
+        case .notRunning(let sessionID, let error)?:
+            if let session = model.sessions.first(where: { $0.id == sessionID }) {
+                NotRunningPane(model: model, session: session, error: error)
+            }
+        case nil:
             ContentUnavailableView(
                 "Select a session",
                 systemImage: "rectangle.stack",
@@ -184,6 +190,36 @@ struct MainWindowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(.bar)
+    }
+}
+
+/// The pane of a session that is not running: Start and Restart, and
+/// agent-deck's reason when the last of them failed.
+@MainActor
+private struct NotRunningPane: View {
+    let model: DeckModel
+    let session: DeckSession
+    let error: String?
+
+    var body: some View {
+        let busy = model.busySessionIDs.contains(session.id)
+        ContentUnavailableView {
+            Label(session.title, systemImage: "stop.circle")
+        } description: {
+            // A retry in flight makes the last failure stale.
+            if let error, !busy {
+                Text(error).foregroundStyle(.red)
+            } else {
+                Text("The session is not running.")
+            }
+        } actions: {
+            HStack {
+                Button("Start") { model.startSession(session) }
+                Button("Restart") { model.restartSession(session) }
+                if busy { ProgressView().controlSize(.small) }
+            }
+            .disabled(busy)
+        }
     }
 }
 
