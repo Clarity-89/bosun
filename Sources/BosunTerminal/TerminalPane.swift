@@ -21,6 +21,9 @@ public final class TerminalPane: NSView {
     public var onTitleChange: ((String) -> Void)?
     /// The command ended or the engine closed the surface; the view is done.
     public var onProcessExit: ((ProcessExit) -> Void)?
+    /// Whether a ⌘ key belongs to the app's menu bar, which then gets it
+    /// before the engine's keybinds do; nil leaves every key to the engine.
+    public var yieldsKeyEquivalent: ((NSEvent) -> Bool)?
 
     private let command: String
     private let environment: [String: String]
@@ -56,6 +59,15 @@ public final class TerminalPane: NSView {
         guard window != nil, !started else { return }
         started = true
         createSurface()
+    }
+
+    /// The window asks the views for a key equivalent before the menu bar,
+    /// and the surface performs any key Ghostty binds (⌘N is `new_window`).
+    /// Not handled here, and not asked of the surface, a yielded key goes on
+    /// to the menu bar.
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if yieldsKeyEquivalent?(event) == true { return false }
+        return super.performKeyEquivalent(with: event)
     }
 
     /// Moves keyboard focus into the terminal. The pane never takes focus

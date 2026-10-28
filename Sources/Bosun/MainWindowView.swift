@@ -7,6 +7,7 @@ struct MainWindowView: View {
     @FocusState private var sidebarFocused: Bool
     /// Monotonic; TerminalHost moves first responder into the pane on each new value.
     @State private var terminalFocusRequest = 0
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -25,10 +26,10 @@ struct MainWindowView: View {
                 } label: {
                     Label("New Session", systemImage: "plus")
                 }
-                .help("New session in the selected group (⌘N)")
+                .help("New session in the selected group (\(Shortcut.newSession.menu?.label ?? ""))")
                 if let selected = model.selectedSession {
                     Menu {
-                        shellActions(for: selected)
+                        ShellActionItems(model: model, session: selected)
                     } label: {
                         Label("Open Shell Here", systemImage: "plus.rectangle.on.rectangle")
                     }
@@ -62,85 +63,107 @@ struct MainWindowView: View {
 
     private var sidebar: some View {
         let rows = sidebarRows
-        return List(selection: Binding(
-            get: { model.selection },
-            set: { model.select($0) }
-        )) {
-            // One flat list with one row per element, so a drag moves the row
-            // it picked up: a group header takes its sessions along, a session
-            // stays in its group, a window stays under its session.
-            ForEach(rows) { row in
-                switch row {
-                case .group(let group, let expanded):
-                    // A row, not a Section header, so arrows and Tab reach it as
-                    // they reach a group in the TUI.
-                    GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
-                        .tag(SidebarItem.group(group.name))
-                        .contextMenu {
-                            Button("New Session…") { model.promptNewSession(inGroup: group.name) }
-                            Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
-                        }
-                case .session(let session):
-                    SidebarSessionRow(model: model, session: session)
-                        .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
-                        .contextMenu { sessionMenu(for: session) }
-                case .window(let window, let session):
-                    WindowRow(window: window)
-                        .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
-                        .contextMenu {
-                            Button("Close Window", role: .destructive) {
-                                model.closeWindow(window, in: session)
+        return ScrollViewReader { proxy in
+            List(selection: Binding(
+                get: { model.selection },
+                set: { model.select($0) }
+            )) {
+                // One flat list with one row per element, so a drag moves the row
+                // it picked up: a group header takes its sessions along, a session
+                // stays in its group, a window stays under its session.
+                ForEach(rows) { row in
+                    switch row {
+                    case .group(let group, let expanded):
+                        // A row, not a Section header, so arrows and Tab reach it as
+                        // they reach a group in the TUI.
+                        GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
+                            .tag(row.item)
+                            .contextMenu {
+                                Button("New Session…") { model.promptNewSession(inGroup: group.name) }
+                                Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
                             }
-                        }
-                        .moveDisabled(true)
+                    case .session(let session):
+                        SidebarSessionRow(model: model, session: session)
+                            .tag(row.item)
+                            .contextMenu { SessionActionItems(model: model, session: session) }
+                    case .window(let window, let session):
+                        WindowRow(window: window)
+                            .tag(row.item)
+                            .contextMenu {
+                                Button("Close Window…", role: .destructive) {
+                                    SessionPrompts.confirmClose(window, in: session, model: model)
+                                }
+                                .shortcut(.delete)
+                            }
+                            .moveDisabled(true)
+                    }
+                }
+                .onMove { source, destination in
+                    switch SidebarMove(rows: rows, from: source, to: destination) {
+                    case .group(let move)?: model.moveGroup(move)
+                    case .session(let move)?: model.moveSession(move)
+                    case nil: break
+                    }
                 }
             }
-            .onMove { source, destination in
-                switch SidebarMove(rows: rows, from: source, to: destination) {
-                case .group(let move)?: model.moveGroup(move)
-                case .session(let move)?: model.moveSession(move)
-                case nil: break
-                }
+            .listStyle(.sidebar)
+            .focused($sidebarFocused)
+            // Only the focused list sees these keys, so every letter still
+            // reaches the terminal.
+            .onKeyPress(keys: Shortcut.listKeys, phases: [.down, .repeat]) { press in
+                guard let action = Shortcut.listAction(key: press.key, modifiers: press.modifiers) else { return .ignored }
+                guard press.phase == .down || action.repeats else { return .handled }
+                return perform(action, rows: rows, scroll: proxy)
             }
-        }
-        .listStyle(.sidebar)
-        .focused($sidebarFocused)
-        // Only the focused list sees these keys, so every letter still
-        // reaches the terminal.
-        .onKeyPress(keys: [.return, .tab, "d", "r"]) { press in
-            press.modifiers.isEmpty ? handle(press.key) : .ignored
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            footer
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                footer
+            }
         }
     }
 
-    /// The TUI's keys. Return folds a group, or hands the keyboard to the
+    /// The TUI's keys, on the selected row as the TUI's act on the row under
+    /// its cursor. Return folds a group, or hands the keyboard to the
     /// attached terminal. Tab folds the selected group; on a session it folds
     /// the session's group and moves the selection up to it, so a second Tab
-    /// opens the group again. d deletes and r renames the selected session.
-    private func handle(_ key: KeyEquivalent) -> KeyPress.Result {
-        switch (key, model.selection) {
-        case (.return, .group(let name)?), (.tab, .group(let name)?):
+    /// opens the group again. A key with nothing to do on the row is still
+    /// handled, so the list never type-selects by it.
+    private func perform(_ action: Shortcut, rows: [SidebarRow], scroll proxy: ScrollViewProxy) -> KeyPress.Result {
+        switch (action, model.selection) {
+        case (.moveDown, let selection), (.moveUp, let selection):
+            guard let row = SidebarRow.row(action == .moveDown ? 1 : -1, from: selection, in: rows) else { break }
+            model.select(row.item)
+            proxy.scrollTo(row.id)
+        case (.reorderUp, let selection), (.reorderDown, let selection):
+            guard let index = rows.firstIndex(where: { $0.item == selection }) else { break }
+            switch SidebarMove(rows: rows, moving: index, up: action == .reorderUp) {
+            case .group(let move)?: model.moveGroup(move)
+            case .session(let move)?: model.moveSession(move)
+            case nil: break
+            }
+        case (.toggleGroup, .group(let name)?), (.focusTerminal, .group(let name)?):
             toggle(name)
-        case (.return, _):
+        case (.foldGroup, .group(let name)?):
+            if !model.collapsedGroups.contains(name) { toggle(name) }
+        case (.unfoldGroup, .group(let name)?):
+            if model.collapsedGroups.contains(name) { toggle(name) }
+        case (.toggleGroup, .pane?), (.foldGroup, .pane?):
+            guard let group = model.selectedSession?.groupName else { break }
+            if action == .toggleGroup || !model.collapsedGroups.contains(group) { toggle(group) }
+            model.select(.group(group))
+        case (.focusTerminal, _):
             guard model.pane?.attached != nil else { return .ignored }
             terminalFocusRequest += 1
-        case (.tab, .pane?):
-            guard let session = model.selectedSession else { return .ignored }
-            toggle(session.groupName)
-            model.select(.group(session.groupName))
-        case ("d", .pane(let target)?), ("r", .pane(let target)?):
-            guard target.windowID == nil, let session = model.selectedSession,
-                  !model.busySessionIDs.contains(session.id)
-            else { return .ignored }
-            if key == "d" {
-                SessionPrompts.confirmDelete(session, model: model)
-            } else {
-                SessionPrompts.rename(session, model: model)
-            }
-        default:
-            return .ignored
+        case (.newSession, _):
+            model.promptNewSession()
+        case (.quickSession, _):
+            model.quickCreateSession()
+        case (.cheatSheet, _):
+            openWindow(id: ShortcutsView.windowID)
+        case (.rename, _), (.restart, _), (.stop, _), (.delete, _), (.splitSideBySide, _), (.openInGhostty, _):
+            guard let session = model.selectedSession, !model.busySessionIDs.contains(session.id) else { break }
+            action.run(on: session, window: model.selectedWindow, model: model)
+        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.focusSidebar, _):
+            break
         }
         return .handled
     }
@@ -159,36 +182,6 @@ struct MainWindowView: View {
             return [SidebarRow.group(group, expanded: expanded)] + (expanded ? group.sessions : []).flatMap { session in
                 [SidebarRow.session(session)] + model.extraWindows(for: session.id).map { SidebarRow.window($0, of: session) }
             }
-        }
-    }
-
-    @ViewBuilder
-    private func sessionMenu(for session: DeckSession) -> some View {
-        shellActions(for: session)
-        Divider()
-        Button("Open in Ghostty") { model.openInGhostty(session) }
-        Divider()
-        SessionActionItems(model: model, session: session)
-    }
-
-    /// The TUI's "open shell here" choices: a new window, or a split of
-    /// the active window, each with `$SHELL` in the session's directory.
-    @ViewBuilder
-    private func shellActions(for session: DeckSession) -> some View {
-        Button {
-            model.newShellWindow(in: session)
-        } label: {
-            Label("New Shell Window", systemImage: "plus.rectangle")
-        }
-        Button {
-            model.split(session, .sideBySide)
-        } label: {
-            Label("Split Side by Side", systemImage: "rectangle.split.2x1")
-        }
-        Button {
-            model.split(session, .topAndBottom)
-        } label: {
-            Label("Split Top and Bottom", systemImage: "rectangle.split.1x2")
         }
     }
 
@@ -418,7 +411,7 @@ struct WindowRow: View {
             Image(systemName: "terminal")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(window.name.isEmpty ? "window \(window.index)" : window.name)
+            Text(window.title)
                 .lineLimit(1)
             Spacer()
             Text(window.command)

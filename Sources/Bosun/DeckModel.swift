@@ -81,6 +81,12 @@ final class DeckModel {
         return sessions.first { $0.id == target.sessionID }
     }
 
+    /// Nil unless a window row is selected.
+    var selectedWindow: SessionWindow? {
+        guard case .pane(let target)? = selection, let windowID = target.windowID else { return nil }
+        return windowsBySession[target.sessionID]?.first { $0.windowID == windowID }
+    }
+
     /// The session the pane shows; nil while it shows none or the list no
     /// longer has it.
     var paneSession: DeckSession? {
@@ -659,6 +665,13 @@ extension DeckSession {
     var groupName: String {
         let name = group.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Ungrouped" : name
+    }
+}
+
+extension SessionWindow {
+    /// tmux names a window after its command, but a rename can clear it.
+    var title: String {
+        name.isEmpty ? "window \(index)" : name
     }
 }
 
