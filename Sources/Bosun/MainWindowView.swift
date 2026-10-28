@@ -164,8 +164,8 @@ struct MainWindowView: View {
 }
 
 /// A sidebar row: highlighted on hover, with Rename and Delete fading in at
-/// the trailing edge so the common actions need no context menu. The buttons
-/// keep their space while hidden, so the title never shifts under the pointer.
+/// the trailing edge so the common actions need no context menu. They take
+/// room only while shown, so the subtitle uses the full width otherwise.
 @MainActor
 private struct SidebarSessionRow: View {
     let model: DeckModel
@@ -176,20 +176,21 @@ private struct SidebarSessionRow: View {
         HStack(spacing: 8) {
             SessionRow(session: session)
             Spacer(minLength: 0)
-            HStack(spacing: 4) {
-                RowActionButton(systemImage: "pencil", help: "Rename (r)") {
-                    SessionPrompts.rename(session, model: model)
+            if isHovered {
+                HStack(spacing: 4) {
+                    RowActionButton(systemImage: "pencil", help: "Rename (r)") {
+                        SessionPrompts.rename(session, model: model)
+                    }
+                    RowActionButton(systemImage: "trash", help: "Delete (d)", destructive: true) {
+                        SessionPrompts.confirmDelete(session, model: model)
+                    }
                 }
-                RowActionButton(systemImage: "trash", help: "Delete (d)", destructive: true) {
-                    SessionPrompts.confirmDelete(session, model: model)
-                }
+                .disabled(model.busySessionIDs.contains(session.id))
+                .transition(.opacity)
             }
-            .opacity(isHovered ? 1 : 0)
-            .allowsHitTesting(isHovered)
-            .disabled(model.busySessionIDs.contains(session.id))
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .padding(.vertical, 2.5)
         .background(.primary.opacity(isHovered ? 0.16 : 0), in: .rect(cornerRadius: 6))
         .contentShape(.rect)
         .onHover { isHovered = $0 }
@@ -232,14 +233,17 @@ struct SessionRow: View {
                 .fill(session.status.color)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.title).lineLimit(1)
+                Text(session.title)
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 2)
+        // The full text when the row is too narrow for it.
+        .help("\(session.title)\n\(subtitle)")
     }
 
     private var subtitle: String {

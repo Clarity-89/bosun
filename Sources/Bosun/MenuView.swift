@@ -116,7 +116,7 @@ private struct MenuSessionRow: View {
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
         }
         .buttonStyle(.plain)
     }
