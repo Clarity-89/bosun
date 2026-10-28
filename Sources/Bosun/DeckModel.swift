@@ -16,13 +16,18 @@ final class DeckModel {
     /// or from an agent-deck too old to say.
     private var statusOwner: StatusOwner?
     private(set) var lastError: String?
-    private(set) var selection: PaneTarget?
+    private(set) var selection: SidebarItem?
     private(set) var pane: AttachedPane?
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
     /// Sessions with a lifecycle action in flight; their actions wait for it.
     private(set) var busySessionIDs: Set<String> = []
+    /// Bosun's own: agent-deck keeps the TUI's expanded groups in its
+    /// database, with no CLI to read or set them.
+    private(set) var collapsedGroups = Set(UserDefaults.standard.stringArray(forKey: "collapsedGroups") ?? []) {
+        didSet { UserDefaults.standard.set(collapsedGroups.sorted(), forKey: "collapsedGroups") }
+    }
     private var refreshTask: Task<Void, Never>?
     private var installTask: Task<Void, Never>?
 
@@ -66,9 +71,10 @@ final class DeckModel {
         sessions.count(where: { $0.status.needsAttention })
     }
 
+    /// Nil while a group row is selected.
     var selectedSession: DeckSession? {
-        guard let id = selection?.sessionID else { return nil }
-        return sessions.first { $0.id == id }
+        guard case .pane(let target)? = selection else { return nil }
+        return sessions.first { $0.id == target.sessionID }
     }
 
     /// `sessions` is kept sorted by group, so consecutive rows form a group.
@@ -82,6 +88,14 @@ final class DeckModel {
             }
         }
         return groups
+    }
+
+    func setGroup(_ name: String, expanded: Bool) {
+        if expanded {
+            collapsedGroups.remove(name)
+        } else {
+            collapsedGroups.insert(name)
+        }
     }
 
     func start() {
@@ -159,13 +173,14 @@ final class DeckModel {
     /// Shows the target in the pane. Attaching runs `agent-deck session
     /// attach`, a tmux client, so the agent keeps running when the pane goes
     /// away; a window row first switches the session's current window, as
-    /// the TUI's window rows do.
-    func select(_ target: PaneTarget?) {
-        selection = target
-        guard let target else {
+    /// the TUI's window rows do. A group row leaves the pane as it is.
+    func select(_ item: SidebarItem?) {
+        selection = item
+        guard let item else {
             pane = nil
             return
         }
+        guard case .pane(let target) = item else { return }
         if let windowID = target.windowID {
             run("select window") { [cli] in try await cli.selectWindow(windowID: windowID) }
         }
@@ -261,7 +276,7 @@ final class DeckModel {
     func paneExited(sessionID: String) {
         guard pane?.sessionID == sessionID else { return }
         pane = nil
-        selection = nil
+        if case .pane = selection { selection = nil }
         logger.info("pane for \(sessionID, privacy: .public) exited")
     }
 
@@ -450,6 +465,12 @@ struct PaneTarget: Hashable {
         self.sessionID = sessionID
         self.windowID = windowID
     }
+}
+
+/// A sidebar row: a group header or a pane target.
+enum SidebarItem: Hashable {
+    case group(String)
+    case pane(PaneTarget)
 }
 
 /// The session attached in the pane and the title its terminal reports.

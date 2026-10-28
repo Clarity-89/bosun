@@ -44,10 +44,10 @@ struct MainWindowView: View {
         }
     }
 
+    /// Names what the pane shows, which a selected group row leaves as it was.
     private var titleText: String {
-        guard let selected = model.selectedSession else { return "Bosun" }
-        guard let pane = model.pane, pane.sessionID == selected.id, !pane.title.isEmpty else { return selected.title }
-        return "\(selected.title) · \(pane.title)"
+        guard let pane = model.pane, let shown = model.sessions.first(where: { $0.id == pane.sessionID }) else { return "Bosun" }
+        return pane.title.isEmpty ? shown.title : "\(shown.title) · \(pane.title)"
     }
 
     private var sidebar: some View {
@@ -56,14 +56,19 @@ struct MainWindowView: View {
             set: { model.select($0) }
         )) {
             ForEach(model.groups) { group in
-                Section(group.name) {
+                let expanded = !model.collapsedGroups.contains(group.name)
+                // A row, not a Section header, so arrows and Tab reach it as
+                // they reach a group in the TUI.
+                GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
+                    .tag(SidebarItem.group(group.name))
+                if expanded {
                     ForEach(group.sessions) { session in
                         SidebarSessionRow(model: model, session: session)
-                            .tag(PaneTarget(sessionID: session.id))
+                            .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
                             .contextMenu { sessionMenu(for: session) }
                         ForEach(model.extraWindows(for: session.id)) { window in
                             WindowRow(window: window)
-                                .tag(PaneTarget(sessionID: session.id, windowID: window.windowID))
+                                .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
                                 .contextMenu {
                                     Button("Close Window", role: .destructive) {
                                         model.closeWindow(window, in: session)
@@ -76,9 +81,13 @@ struct MainWindowView: View {
         }
         .listStyle(.sidebar)
         .focused($sidebarFocused)
-        // Arrow keys keep navigating the list; Return hands the keyboard to
-        // the attached terminal.
+        // Arrow keys keep navigating the list; Return folds a group, as in
+        // the TUI, or hands the keyboard to the attached terminal.
         .onKeyPress(.return) {
+            if case .group(let name)? = model.selection {
+                toggle(name)
+                return .handled
+            }
             guard model.pane != nil else { return .ignored }
             terminalFocusRequest += 1
             return .handled
@@ -87,7 +96,8 @@ struct MainWindowView: View {
         // sees them, so every letter still reaches the terminal.
         .onKeyPress(keys: ["d", "r"]) { press in
             guard press.modifiers.isEmpty,
-                  model.selection?.windowID == nil,
+                  case .pane(let target)? = model.selection,
+                  target.windowID == nil,
                   let session = model.selectedSession,
                   !model.busySessionIDs.contains(session.id)
             else { return .ignored }
@@ -98,8 +108,31 @@ struct MainWindowView: View {
             }
             return .handled
         }
+        // Tab folds the selected group, as in the TUI. On a session it folds
+        // the session's group and moves the selection up to it, so a second
+        // Tab opens the group again.
+        .onKeyPress(keys: [.tab]) { press in
+            guard press.modifiers.isEmpty else { return .ignored }
+            switch model.selection {
+            case .group(let name)?:
+                toggle(name)
+            case .pane?:
+                guard let session = model.selectedSession else { return .ignored }
+                toggle(session.groupName)
+                model.select(.group(session.groupName))
+            case nil:
+                return .ignored
+            }
+            return .handled
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footer
+        }
+    }
+
+    private func toggle(_ group: String) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            model.setGroup(group, expanded: model.collapsedGroups.contains(group))
         }
     }
 
@@ -189,13 +222,52 @@ private struct SidebarSessionRow: View {
                 .transition(.opacity)
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2.5)
-        .background(.primary.opacity(isHovered ? 0.16 : 0), in: .rect(cornerRadius: 6))
-        .contentShape(.rect)
-        .onHover { isHovered = $0 }
-        .pointerStyle(.link)
-        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .modifier(SidebarHover(isHovered: $isHovered))
+    }
+}
+
+/// A group header the selection can land on, with a chevron that folds it.
+private struct GroupRow: View {
+    let name: String
+    let isExpanded: Bool
+    let toggle: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(action: toggle) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: 16, height: 16)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse (Tab)" : "Expand (Tab)")
+            Text(name)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(.secondary)
+        .modifier(SidebarHover(isHovered: $isHovered))
+        .padding(.top, 4)
+    }
+}
+
+/// The hover plate and pointing hand every sidebar row shares.
+private struct SidebarHover: ViewModifier {
+    @Binding var isHovered: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(.primary.opacity(isHovered ? 0.16 : 0), in: .rect(cornerRadius: 6))
+            .contentShape(.rect)
+            .onHover { isHovered = $0 }
+            .pointerStyle(.link)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 }
 
