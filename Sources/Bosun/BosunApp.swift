@@ -16,6 +16,7 @@ struct BosunApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             FocusCommands()
+            SessionCommands(model: model)
         }
 
         MenuBarExtra {

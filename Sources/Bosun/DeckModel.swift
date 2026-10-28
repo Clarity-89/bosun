@@ -21,6 +21,8 @@ final class DeckModel {
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
+    /// Sessions with a lifecycle action in flight; their actions wait for it.
+    private(set) var busySessionIDs: Set<String> = []
     private var refreshTask: Task<Void, Never>?
     private var installTask: Task<Void, Never>?
 
@@ -32,6 +34,9 @@ final class DeckModel {
     @ObservationIgnored private var followerTask: Task<Void, Never>?
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var delayedRefreshTask: Task<Void, Never>?
+    /// The last list with archived rows: a delete must not take a worktree
+    /// that an archived session still works in.
+    @ObservationIgnored private var everySession: [DeckSession] = []
 
     private init() {}
 
@@ -59,6 +64,11 @@ final class DeckModel {
 
     var waitingCount: Int {
         sessions.count(where: { $0.status.needsAttention })
+    }
+
+    var selectedSession: DeckSession? {
+        guard let id = selection?.sessionID else { return nil }
+        return sessions.first { $0.id == id }
     }
 
     /// `sessions` is kept sorted by group, so consecutive rows form a group.
@@ -128,7 +138,8 @@ final class DeckModel {
 
     private func loadSessions() async {
         do {
-            sessions = try await cli.list()
+            everySession = try await cli.list()
+            sessions = everySession
                 .filter { !$0.archived }
                 .sorted(using: [
                     KeyPathComparator(\.groupName, comparator: .localizedStandard),
@@ -199,6 +210,47 @@ final class DeckModel {
         }
     }
 
+    func startSession(_ session: DeckSession) {
+        lifecycle("start", session) { [cli] in try await cli.startSession(id: session.id) }
+    }
+
+    func stopSession(_ session: DeckSession) {
+        lifecycle("stop", session) { [cli] in try await cli.stopSession(id: session.id) }
+    }
+
+    func restartSession(_ session: DeckSession) {
+        lifecycle("restart", session) { [cli] in try await cli.restartSession(id: session.id) }
+    }
+
+    func renameSession(_ session: DeckSession, to title: String) {
+        lifecycle("rename", session) { [cli] in try await cli.renameSession(id: session.id, to: title) }
+    }
+
+    /// `pruneWorktree` is the answer the confirmation showed, so the delete
+    /// does what the user agreed to.
+    func deleteSession(_ session: DeckSession, pruneWorktree: Bool) {
+        lifecycle("delete", session) { [cli] in
+            try await cli.deleteSession(id: session.id, pruneWorktree: pruneWorktree)
+        }
+    }
+
+    func mayPruneWorktree(_ session: DeckSession) -> Bool {
+        session.mayPruneWorktree(among: everySession)
+    }
+
+    /// One action per session at a time; the list reloads after it, so the
+    /// row changes even before the bus reports it. A deleted session's pane
+    /// goes with its tmux client, through `paneExited`.
+    private func lifecycle(_ label: String, _ session: DeckSession, _ operation: @escaping @Sendable () async throws -> Void) {
+        guard busySessionIDs.insert(session.id).inserted else { return }
+        run(label, operation) { [weak self] in
+            logger.info("\(label, privacy: .public) \(session.id, privacy: .public) done")
+            await self?.refresh()
+        } finally: { [weak self] in
+            self?.busySessionIDs.remove(session.id)
+        }
+    }
+
     func paneTitleChanged(sessionID: String, title: String) {
         guard pane?.sessionID == sessionID else { return }
         pane?.title = title
@@ -213,9 +265,15 @@ final class DeckModel {
         logger.info("pane for \(sessionID, privacy: .public) exited")
     }
 
-    private func run(_ label: String, _ operation: @escaping @Sendable () async throws -> Void, then follow: (@MainActor () async -> Void)? = nil) {
+    private func run(
+        _ label: String,
+        _ operation: @escaping @Sendable () async throws -> Void,
+        then follow: (@MainActor () async -> Void)? = nil,
+        finally cleanup: (@MainActor () -> Void)? = nil
+    ) {
         lastError = nil
         Task {
+            defer { cleanup?() }
             do {
                 try await operation()
                 await follow?()

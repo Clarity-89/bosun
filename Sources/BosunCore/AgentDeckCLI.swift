@@ -281,7 +281,7 @@ public actor AgentDeckCLI {
         let error: String
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
+    func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
         try JSONDecoder().decode(type, from: Data(try await run(arguments).stdout.utf8))
     }
 }

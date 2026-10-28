@@ -20,7 +20,7 @@ struct MainWindowView: View {
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if let selected {
+                if let selected = model.selectedSession {
                     Menu {
                         shellActions(for: selected)
                     } label: {
@@ -44,13 +44,8 @@ struct MainWindowView: View {
         }
     }
 
-    private var selected: DeckSession? {
-        guard let id = model.selection?.sessionID else { return nil }
-        return model.sessions.first { $0.id == id }
-    }
-
     private var titleText: String {
-        guard let selected else { return "Bosun" }
+        guard let selected = model.selectedSession else { return "Bosun" }
         guard let pane = model.pane, pane.sessionID == selected.id, !pane.title.isEmpty else { return selected.title }
         return "\(selected.title) · \(pane.title)"
     }
@@ -98,6 +93,8 @@ struct MainWindowView: View {
         shellActions(for: session)
         Divider()
         Button("Open in Ghostty") { model.openInGhostty(session) }
+        Divider()
+        SessionActionItems(model: model, session: session)
     }
 
     /// The TUI's "open shell here" choices: a new window, or a split of
