@@ -17,7 +17,17 @@ struct BosunApp: App {
             CommandGroup(replacing: .newItem) {}
             FocusCommands()
             SessionCommands(model: model)
+            HelpCommands()
         }
+
+        // A panel, which floats while the main window takes the keys and
+        // which reopening the app from the Dock leaves closed.
+        UtilityWindow("Keyboard Shortcuts", id: ShortcutsView.windowID) {
+            ShortcutsView()
+        }
+        .windowResizability(.contentSize)
+        // The Help menu opens it; the View menu item it would add is a second way.
+        .commandsRemoved()
 
         MenuBarExtra {
             MenuView(model: model)
@@ -35,9 +45,7 @@ struct BosunApp: App {
 }
 
 /// Keyboard focus moves between the list and the terminal only on request,
-/// so each direction gets a View menu item. Both shortcuts are unbound in
-/// Ghostty's defaults (⌘⇧T is `undo`), so the surface passes them on to
-/// the menu bar.
+/// so each direction gets a View menu item.
 struct FocusCommands: Commands {
     @FocusedBinding(\.sidebarFocused) private var sidebarFocused
     @FocusedBinding(\.terminalFocusRequest) private var terminalFocusRequest
@@ -45,11 +53,24 @@ struct FocusCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .sidebar) {
             Button("Focus Sidebar") { sidebarFocused = true }
-                .keyboardShortcut("l", modifiers: [.command, .shift])
+                .shortcut(.focusSidebar)
                 .disabled(sidebarFocused == nil)
             Button("Focus Terminal") { terminalFocusRequest? += 1 }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .shortcut(.focusTerminal)
                 .disabled(terminalFocusRequest == nil)
+        }
+    }
+}
+
+/// The cheat sheet, in place of the Help menu's default item: with no help
+/// book, that one only says help is not available.
+struct HelpCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .help) {
+            Button("Keyboard Shortcuts") { openWindow(id: ShortcutsView.windowID) }
+                .shortcut(.cheatSheet)
         }
     }
 }

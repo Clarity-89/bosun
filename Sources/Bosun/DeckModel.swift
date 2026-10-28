@@ -81,6 +81,12 @@ final class DeckModel {
         return sessions.first { $0.id == target.sessionID }
     }
 
+    /// Nil unless a window row is selected.
+    var selectedWindow: SessionWindow? {
+        guard case .pane(let target)? = selection, let windowID = target.windowID else { return nil }
+        return windowsBySession[target.sessionID]?.first { $0.windowID == windowID }
+    }
+
     /// The session the pane shows; nil while it shows none or the list no
     /// longer has it.
     var paneSession: DeckSession? {
@@ -103,6 +109,14 @@ final class DeckModel {
 
     func toggleGroup(_ name: String) {
         collapsedGroups.formSymmetricDifference([name])
+    }
+
+    func foldGroup(_ name: String) {
+        collapsedGroups.insert(name)
+    }
+
+    func unfoldGroup(_ name: String) {
+        collapsedGroups.remove(name)
     }
 
     func start() {
@@ -344,20 +358,19 @@ final class DeckModel {
         lifecycle("delete", session) { [cli] in try await cli.deleteSession(id: session.id) }
     }
 
-    /// Drag and drop within a group. The rows reorder at once; agent-deck
+    /// A row moved by drag or by key. The rows reorder at once; agent-deck
     /// then stores the order, and the list that follows confirms it or,
-    /// after a refusal, puts it back.
-    func moveSession(_ move: SessionMove) {
-        reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
-            try await cli.moveSession(id: move.sessionID, move.placement)
-        }
-    }
-
-    /// Drag and drop of a group header: the group moves with its sessions,
-    /// at once here and then in agent-deck, as for a session.
-    func moveGroup(_ move: GroupMove) {
-        reorder("move group \(move.path)", DeckSession.inDeckOrder(sessions, groupPaths: move.order)) { [cli] in
-            try await cli.moveGroup(path: move.path, move.placement)
+    /// after a refusal, puts it back. A group moves with its sessions.
+    func move(_ move: SidebarMove) {
+        switch move {
+        case .session(let move):
+            reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
+                try await cli.moveSession(id: move.sessionID, move.placement)
+            }
+        case .group(let move):
+            reorder("move group \(move.path)", DeckSession.inDeckOrder(sessions, groupPaths: move.order)) { [cli] in
+                try await cli.moveGroup(path: move.path, move.placement)
+            }
         }
     }
 
@@ -659,6 +672,13 @@ extension DeckSession {
     var groupName: String {
         let name = group.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Ungrouped" : name
+    }
+}
+
+extension SessionWindow {
+    /// tmux names a window after its command, but a rename can clear it.
+    var title: String {
+        name.isEmpty ? "window \(index)" : name
     }
 }
 

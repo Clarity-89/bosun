@@ -26,6 +26,7 @@ struct TerminalHost: NSViewRepresentable {
         let pane = TerminalPane(command: launch.command, environment: launch.environment)
         pane.onTitleChange = onTitleChange
         pane.onProcessExit = onExit
+        pane.yieldsKeyEquivalent = { Shortcut.menuAction(for: $0) != nil }
         return pane
     }
     func updateNSView(_ pane: TerminalPane, context: Context) {

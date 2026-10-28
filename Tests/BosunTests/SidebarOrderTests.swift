@@ -104,4 +104,61 @@ private func session(_ id: String, title: String = "", group: String) -> DeckSes
     func dropThatKeepsTheOrderIsNoMove(source: Int, destination: Int) {
         #expect(SidebarMove(rows: rows, from: [source], to: destination) == nil)
     }
+
+    /// K and J step over a session's window rows to its neighbour.
+    @Test func sessionMovedUpGoesBeforeThePreviousSession() {
+        #expect(SidebarMove(rows: rows, moving: 3, up: true)
+            == .session(SessionMove(sessionID: "s2", placement: .before("s1"), order: ["s2", "s1"])))
+    }
+
+    @Test func sessionMovedDownGoesAfterTheNextSession() {
+        #expect(SidebarMove(rows: rows, moving: 1, up: false)
+            == .session(SessionMove(sessionID: "s1", placement: .after("s2"), order: ["s2", "s1"])))
+    }
+
+    @Test func groupMovedDownGoesAfterTheNextGroup() {
+        #expect(SidebarMove(rows: rows, moving: 0, up: false)
+            == .group(GroupMove(path: "g1", placement: .after("g2"), order: ["g2", "g1"])))
+    }
+
+    /// The first session cannot go up, nor the last down into the next
+    /// group; a group at either end stays; a window row has no order.
+    @Test(arguments: [(1, true), (3, false), (0, true), (4, false), (2, true)])
+    func moveAtAnEndIsNoMove(index: Int, up: Bool) {
+        #expect(SidebarMove(rows: rows, moving: index, up: up) == nil)
+    }
+}
+
+/// j and k over the sidebar's flat rows.
+@Suite struct SidebarStepTests {
+    let rows = SidebarMoveTests().rows
+
+    private static func pane(_ sessionID: String, window: String? = nil) -> SidebarItem {
+        .pane(PaneTarget(sessionID: sessionID, windowID: window))
+    }
+
+    @Test func nextRowCanBeAWindow() {
+        #expect(SidebarRow.step(by: 1, from: Self.pane("s1"), in: rows)?.item == Self.pane("s1", window: "@3"))
+    }
+
+    @Test(arguments: [(-1, SidebarItem.group("g1")), (1, .pane(PaneTarget(sessionID: "t1")))])
+    func stepHoldsAtEitherEnd(offset: Int, selection: SidebarItem) {
+        #expect(SidebarRow.step(by: offset, from: selection, in: rows)?.item == selection)
+    }
+
+    @Test func withoutSelectionJStartsAtTheTopAndKAtTheBottom() {
+        #expect(SidebarRow.step(by: 1, from: nil, in: rows)?.item == .group("g1"))
+        #expect(SidebarRow.step(by: -1, from: nil, in: rows)?.item == Self.pane("t1"))
+    }
+
+    /// A session its folded group hides steps from the group's header, not
+    /// from the top of the list.
+    @Test func hiddenSelectionStepsFromItsGroupHeader() {
+        let folded: [SidebarRow] = [
+            .group(SessionGroup(name: "g1", sessions: [SidebarMoveTests.s1, SidebarMoveTests.s2]), expanded: false),
+            .group(SessionGroup(name: "g2", sessions: [SidebarMoveTests.t1]), expanded: true),
+            .session(SidebarMoveTests.t1),
+        ]
+        #expect(SidebarRow.step(by: 1, from: Self.pane("s2"), in: folded)?.item == .group("g2"))
+    }
 }
