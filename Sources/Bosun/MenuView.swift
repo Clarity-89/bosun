@@ -22,7 +22,7 @@ struct MenuView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Bosun")
                     .font(.headline)
-                Text(model.connection.label)
+                Text(model.connectionLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -72,17 +72,8 @@ struct MenuView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if !model.statusEventsEnabled {
-                Label("Live status events are off", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-            if let error = model.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-            }
+            StatusNotices(model: model)
+                .font(.caption)
             HStack {
                 Button {
                     Task { await model.refresh() }

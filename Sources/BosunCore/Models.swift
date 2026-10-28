@@ -59,6 +59,29 @@ public struct DeckSession: Decodable, Identifiable, Equatable, Sendable {
 public struct EventsStats: Decodable, Sendable {
     public let enabled: Bool
     public let cursor: UInt64
+    /// Nil from agent-deck builds that predate `status_owner`, which also lack
+    /// `notify-daemon install`.
+    public let statusOwner: StatusOwner?
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, cursor
+        case statusOwner = "status_owner"
+    }
+}
+
+/// Who writes a profile's status transitions, and with them the
+/// `session.status` frames Bosun follows; an owner newer than this build
+/// decodes as `other`.
+public enum StatusOwner: String, Decodable, Sendable {
+    case tui
+    case notifyDaemon = "notify-daemon"
+    /// Nothing does, so rows change only when the list is reloaded.
+    case nobody = "none"
+    case other
+
+    public init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
 }
 
 /// `config get <key> --json`, for a boolean key.

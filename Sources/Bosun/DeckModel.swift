@@ -11,7 +11,10 @@ final class DeckModel {
 
     private(set) var sessions: [DeckSession] = []
     private(set) var connection: ConnectionState = .starting
-    private(set) var statusEventsEnabled = false
+    private var statusEventsEnabled = false
+    /// Who publishes status transitions; nil until known, with the bus off,
+    /// or from an agent-deck too old to say.
+    private var statusOwner: StatusOwner?
     private(set) var lastError: String?
     private(set) var selection: PaneTarget?
     private(set) var pane: AttachedPane?
@@ -19,6 +22,7 @@ final class DeckModel {
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
     private var refreshTask: Task<Void, Never>?
+    private var installTask: Task<Void, Never>?
 
     @ObservationIgnored private let cli = AgentDeckCLI(
         agentDeckPath: UserDefaults.standard.string(forKey: "agentDeckPath")
@@ -32,6 +36,26 @@ final class DeckModel {
     private init() {}
 
     var isRefreshing: Bool { refreshTask != nil }
+
+    var isInstallingNotifyDaemon: Bool { installTask != nil }
+
+    /// Why `session.status` frames cannot arrive, while they cannot; rows
+    /// then change only on the 60 s list.
+    var statusFeedGap: StatusFeedGap? {
+        if !statusEventsEnabled {
+            .eventsOff
+        } else if statusOwner == .nobody {
+            .noPublisher
+        } else {
+            nil
+        }
+    }
+
+    /// "Live" only while frames can arrive; a connected follower alone
+    /// proves nothing.
+    var connectionLabel: String {
+        connection == .live && statusFeedGap != nil ? "Updates every 60 s" : connection.label
+    }
 
     var waitingCount: Int {
         sessions.count(where: { $0.status.needsAttention })
@@ -63,7 +87,7 @@ final class DeckModel {
     }
 
     func stop() {
-        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask] {
+        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask] {
             task?.cancel()
         }
     }
@@ -213,6 +237,7 @@ final class DeckModel {
             let stats = try await cli.eventsStats()
             await refresh()
             startReconcileLoop()
+            record(stats)
             if stats.enabled {
                 startFollower(after: stats.cursor)
             } else {
@@ -253,6 +278,7 @@ final class DeckModel {
                 connection = .reconnecting
                 if AgentDeckCLI.isCursorTooOld(error), let stats = try? await cli.eventsStats() {
                     cursor = stats.cursor
+                    record(stats)
                     await refresh()
                     logger.info("follower resynced at \(cursor, privacy: .public)")
                 } else {
@@ -272,9 +298,57 @@ final class DeckModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 if Task.isCancelled { return }
-                await refresh()
+                async let list: Void = refresh()
+                await refreshStatusOwner()
+                await list
             }
         }
+    }
+
+    /// The owner changes as the TUI starts and quits and as the daemon comes
+    /// and goes. A failed check keeps the last answer rather than flashing a
+    /// warning.
+    private func refreshStatusOwner() async {
+        if let stats = try? await cli.eventsStats() {
+            record(stats)
+        }
+    }
+
+    /// With the bus off there is no owner to report: nothing it publishes
+    /// could arrive.
+    private func record(_ stats: EventsStats) {
+        statusOwner = stats.enabled ? stats.statusOwner : nil
+    }
+
+    /// Installs agent-deck's notify daemon, which publishes statuses while no
+    /// TUI runs, then waits for its first pass to take them over. Offered only
+    /// at `.nobody`: an agent-deck without `status_owner` cannot install it.
+    func installNotifyDaemon() {
+        guard statusOwner == .nobody, installTask == nil else { return }
+        lastError = nil
+        installTask = Task {
+            defer { installTask = nil }
+            do {
+                let plist = try await cli.installNotifyDaemon()
+                logger.info("notify daemon installed: \(plist, privacy: .public)")
+                try await awaitNotifyDaemonOwnership()
+            } catch is CancellationError {
+            } catch {
+                lastError = error.localizedDescription
+                logger.error("notify daemon install failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// launchd starts the daemon at once; its first pass, a second or two
+    /// later, is what makes it the owner.
+    private func awaitNotifyDaemonOwnership() async throws {
+        for _ in 0..<10 {
+            try await Task.sleep(for: .seconds(1))
+            await refreshStatusOwner()
+            if statusOwner != .nobody { return }
+        }
+        lastError = "The notify daemon is installed but has not started publishing statuses"
     }
 
     private func apply(_ frame: BusFrame) {
@@ -348,4 +422,12 @@ enum ConnectionState: Equatable, Sendable {
         case .unavailable: "Unavailable"
         }
     }
+}
+
+/// Why no `session.status` frame can arrive.
+enum StatusFeedGap {
+    /// The `macapp.status_events` gate is off.
+    case eventsOff
+    /// No TUI and no notify daemon writes transitions.
+    case noPublisher
 }
