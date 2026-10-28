@@ -20,6 +20,12 @@ struct MainWindowView: View {
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    model.promptNewSession()
+                } label: {
+                    Label("New Session", systemImage: "plus")
+                }
+                .help("New session in the selected group (⌘N)")
                 if let selected = model.selectedSession {
                     Menu {
                         shellActions(for: selected)
@@ -42,6 +48,9 @@ struct MainWindowView: View {
                 .disabled(model.isRefreshing)
             }
         }
+        .sheet(item: Binding(get: { model.newSessionPrompt }, set: { if $0 == nil { model.dismissNewSession() } })) { prompt in
+            NewSessionSheet(model: model, prompt: prompt)
+        }
     }
 
     /// Names what the pane shows, which a selected group row leaves as it was.
@@ -52,31 +61,45 @@ struct MainWindowView: View {
     }
 
     private var sidebar: some View {
-        List(selection: Binding(
+        let rows = sidebarRows
+        return List(selection: Binding(
             get: { model.selection },
             set: { model.select($0) }
         )) {
-            ForEach(model.groups) { group in
-                let expanded = !model.collapsedGroups.contains(group.name)
-                // A row, not a Section header, so arrows and Tab reach it as
-                // they reach a group in the TUI.
-                GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
-                    .tag(SidebarItem.group(group.name))
-                if expanded {
-                    ForEach(group.sessions) { session in
-                        SidebarSessionRow(model: model, session: session)
-                            .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
-                            .contextMenu { sessionMenu(for: session) }
-                        ForEach(model.extraWindows(for: session.id)) { window in
-                            WindowRow(window: window)
-                                .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
-                                .contextMenu {
-                                    Button("Close Window", role: .destructive) {
-                                        model.closeWindow(window, in: session)
-                                    }
-                                }
+            // One flat list with one row per element, so a drag moves the row
+            // it picked up: a group header takes its sessions along, a session
+            // stays in its group, a window stays under its session.
+            ForEach(rows) { row in
+                switch row {
+                case .group(let group, let expanded):
+                    // A row, not a Section header, so arrows and Tab reach it as
+                    // they reach a group in the TUI.
+                    GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
+                        .tag(SidebarItem.group(group.name))
+                        .contextMenu {
+                            Button("New Session…") { model.promptNewSession(inGroup: group.name) }
+                            Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
                         }
-                    }
+                case .session(let session):
+                    SidebarSessionRow(model: model, session: session)
+                        .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
+                        .contextMenu { sessionMenu(for: session) }
+                case .window(let window, let session):
+                    WindowRow(window: window)
+                        .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
+                        .contextMenu {
+                            Button("Close Window", role: .destructive) {
+                                model.closeWindow(window, in: session)
+                            }
+                        }
+                        .moveDisabled(true)
+                }
+            }
+            .onMove { source, destination in
+                switch SidebarMove(rows: rows, from: source, to: destination) {
+                case .group(let move)?: model.moveGroup(move)
+                case .session(let move)?: model.moveSession(move)
+                case nil: break
                 }
             }
         }
@@ -125,6 +148,17 @@ struct MainWindowView: View {
     private func toggle(_ group: String) {
         withAnimation(.easeOut(duration: 0.15)) {
             model.toggleGroup(group)
+        }
+    }
+
+    /// Each group header, then, while it is open, its sessions, each with its
+    /// extra windows under it.
+    private var sidebarRows: [SidebarRow] {
+        model.groups.flatMap { group in
+            let expanded = !model.collapsedGroups.contains(group.name)
+            return [SidebarRow.group(group, expanded: expanded)] + (expanded ? group.sessions : []).flatMap { session in
+                [SidebarRow.session(session)] + model.extraWindows(for: session.id).map { SidebarRow.window($0, of: session) }
+            }
         }
     }
 
@@ -213,9 +247,10 @@ private struct NotRunningPane: View {
     }
 }
 
-/// A sidebar row: highlighted on hover, with Rename and Delete fading in at
-/// the trailing edge so the common actions need no context menu. They take
-/// room only while shown, so the subtitle uses the full width otherwise.
+/// A sidebar row: highlighted on hover, with Rename, Delete and the drag
+/// handle fading in at the trailing edge so the common actions need no
+/// context menu. They take room only while shown, so the subtitle uses the
+/// full width otherwise.
 @MainActor
 private struct SidebarSessionRow: View {
     let model: DeckModel
@@ -224,6 +259,7 @@ private struct SidebarSessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            DragHandle(isVisible: isHovered)
             SessionRow(session: session)
             Spacer(minLength: 0)
             if isHovered {
@@ -243,7 +279,8 @@ private struct SidebarSessionRow: View {
     }
 }
 
-/// A group header the selection can land on, with a chevron that folds it.
+/// A group header the selection can land on, with the handle that drags it
+/// with its sessions and a chevron that folds it.
 private struct GroupRow: View {
     let name: String
     let isExpanded: Bool
@@ -252,6 +289,7 @@ private struct GroupRow: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            DragHandle(isVisible: isHovered)
             Button(action: toggle) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -342,12 +380,41 @@ struct SessionRow: View {
     }
 }
 
+/// The grip that says a row can be dragged, with the open hand and a
+/// tooltip, shown on hover. It keeps its room while hidden, so the row never
+/// shifts; the whole row drags, not only the grip.
+private struct DragHandle: View {
+    static let width: CGFloat = 10
+    let isVisible: Bool
+
+    var body: some View {
+        Grid(horizontalSpacing: 2, verticalSpacing: 2) {
+            ForEach(0..<3, id: \.self) { _ in
+                GridRow {
+                    Circle().frame(width: 2.5, height: 2.5)
+                    Circle().frame(width: 2.5, height: 2.5)
+                }
+            }
+        }
+        .foregroundStyle(.tertiary)
+        .frame(width: Self.width, height: 16)
+        .contentShape(.rect)
+        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible)
+        .pointerStyle(.grabIdle)
+        .help("Drag to reorder")
+    }
+}
+
 /// An extra tmux window of a session, indented under its session row.
 struct WindowRow: View {
     let window: SessionWindow
 
     var body: some View {
         HStack(spacing: 8) {
+            // The session row's drag handle column, so the window stays
+            // indented under the session.
+            Color.clear.frame(width: DragHandle.width, height: 0)
             Image(systemName: "terminal")
                 .font(.caption)
                 .foregroundStyle(.secondary)

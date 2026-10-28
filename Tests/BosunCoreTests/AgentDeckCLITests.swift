@@ -147,4 +147,16 @@ import Testing
         }
         #expect(error?.localizedDescription == "Error: encode stats: broken pipe")
     }
+
+    /// Some refusals ignore `--json` and print a plain line on stdout, as
+    /// `add` does for a directory that does not exist.
+    @Test func plainStdoutErrorIsTheReason() {
+        let result = ProcessResult(
+            command: "agent-deck add --json -t bosun-11-gone -g tmp /tmp/bosun-11-does-not-exist",
+            status: 1, stdout: "Error: path does not exist: /tmp/bosun-11-does-not-exist\n", stderr: ""
+        )
+        #expect(throws: AgentDeckCLIError.reported("path does not exist: /tmp/bosun-11-does-not-exist")) {
+            try AgentDeckCLI.checkReported(result)
+        }
+    }
 }

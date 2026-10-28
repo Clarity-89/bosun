@@ -1,8 +1,15 @@
 import Foundation
 
-/// `session stop|restart|remove` and `rename`. A refusal arrives as
+/// `session start|stop|restart|remove` and `rename`. A refusal arrives as
 /// `AgentDeckCLIError.reported` with agent-deck's own message.
 extension AgentDeckCLI {
+    /// For a session that has never run, which has no tmux session for
+    /// `session start` to refuse. No wait for the tool's own session id:
+    /// Bosun never reads it, and the hooks still record it.
+    public func startSession(id: String) async throws {
+        _ = try await run(["session", "start", id, "--no-wait", "--json"])
+    }
+
     public func stopSession(id: String) async throws {
         _ = try await run(["session", "stop", id, "--json"])
     }

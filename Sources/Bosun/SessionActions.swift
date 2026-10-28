@@ -66,12 +66,21 @@ enum SessionPrompts {
     }
 }
 
-/// The Session menu acts on the session selected in the main window.
+/// The Session menu creates in the selected row's group and acts on the
+/// session selected in the main window.
 struct SessionCommands: Commands {
     let model: DeckModel
 
     var body: some Commands {
         CommandMenu("Session") {
+            Group {
+                Button("New Session…") { model.promptNewSession() }
+                    .keyboardShortcut("n")
+                Button("Quick Session") { model.quickCreateSession() }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+            .disabled(model.newSessionPrompt != nil)
+            Divider()
             SessionActionItems(model: model, session: model.selectedSession)
         }
     }
