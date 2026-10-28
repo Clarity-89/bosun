@@ -45,6 +45,12 @@ public struct DeckGroup: Identifiable, Equatable, Sendable {
     public let label: String
 
     public var id: String { path }
+
+    /// `path` when `groups` lists it, else the first group's; `path` as it
+    /// is when there is no list to go by.
+    public static func listedPath(_ path: String, in groups: [DeckGroup]) -> String {
+        groups.isEmpty || groups.contains { $0.path == path } ? path : groups[0].path
+    }
 }
 
 extension AgentDeckCLI {
@@ -57,8 +63,7 @@ extension AgentDeckCLI {
     public func addSession(_ request: NewSessionRequest) async throws -> String {
         // A worktree is a `git worktree add`, which in a large repository
         // runs well past the 30 s every other command gets.
-        let result = try await run(Self.addArguments(request), timeout: .seconds(300))
-        return try JSONDecoder().decode(AddReply.self, from: Data(result.stdout.utf8)).id
+        try await decode(AddReply.self, Self.addArguments(request), timeout: .seconds(300)).id
     }
 
     static func addArguments(_ request: NewSessionRequest) -> [String] {

@@ -286,7 +286,8 @@ public actor AgentDeckCLI {
         let error: String
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, _ arguments: [String]) async throws -> T {
-        try JSONDecoder().decode(type, from: Data(try await run(arguments).stdout.utf8))
+    /// `run`, then the JSON on stdout as `type`.
+    func decode<T: Decodable>(_ type: T.Type, _ arguments: [String], timeout: Duration = .seconds(30)) async throws -> T {
+        try JSONDecoder().decode(type, from: Data(try await run(arguments, timeout: timeout).stdout.utf8))
     }
 }

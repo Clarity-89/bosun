@@ -32,5 +32,6 @@ let package = Package(
         ),
         .executableTarget(name: "Bosun", dependencies: ["BosunCore", "BosunTerminal"]),
         .testTarget(name: "BosunCoreTests", dependencies: ["BosunCore"]),
+        .testTarget(name: "BosunTests", dependencies: ["Bosun", "BosunCore"]),
     ]
 )

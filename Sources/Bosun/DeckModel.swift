@@ -25,6 +25,10 @@ final class DeckModel {
     private(set) var busySessionIDs: Set<String> = []
     /// The New Session dialog while it is open.
     private(set) var newSessionPrompt: NewSessionPrompt?
+    /// agent-deck's groups as `group list` last reported them, the empty
+    /// ones the sidebar never shows included: the sidebar's order and the
+    /// New Session dialog's choices.
+    private(set) var deckGroups: [DeckGroup] = []
     /// Bosun's own: agent-deck keeps the TUI's expanded groups in its
     /// database, with no CLI to read or set them.
     private(set) var collapsedGroups = Set(UserDefaults.standard.stringArray(forKey: "collapsedGroups") ?? []) {
@@ -41,7 +45,7 @@ final class DeckModel {
     @ObservationIgnored private var followerTask: Task<Void, Never>?
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var delayedRefreshTask: Task<Void, Never>?
-    @ObservationIgnored private var isMovingGroup = false
+    @ObservationIgnored private var isReordering = false
 
     private init() {}
 
@@ -155,12 +159,15 @@ final class DeckModel {
 
     private func loadSessions() async {
         do {
-            // Without the group order (a failed `group list`) each group's
-            // rows still end up together.
+            // Without the group order (a failed `group list`) the last one
+            // still keeps each group's rows together.
             async let listed = cli.list()
             async let groupOrder = cli.groups()
             let visible = try await listed.filter { !$0.archived }
-            sessions = DeckSession.inDeckOrder(visible, groups: (try? await groupOrder) ?? [])
+            if let groups = try? await groupOrder {
+                deckGroups = groups
+            }
+            sessions = DeckSession.inDeckOrder(visible, groupPaths: deckGroups.map(\.path))
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
             // A session deleted while not running has no tmux client whose
@@ -215,41 +222,25 @@ final class DeckModel {
     }
 
     /// Opens the New Session dialog on the group it creates in: `groupName`,
-    /// else the selected row's.
+    /// else the selected row's. A list runs alongside, so a group made
+    /// elsewhere since the last one reaches the dialog's picker.
     func promptNewSession(inGroup groupName: String? = nil) {
         newSessionPrompt = newSessionDefaults(inGroup: groupName)
+        Task { await refresh() }
     }
 
     func dismissNewSession() {
         newSessionPrompt = nil
     }
 
-    /// Every group agent-deck has, including the empty ones the sidebar
-    /// never shows.
-    func loadGroups() async throws -> [DeckGroup] {
-        try await cli.groups()
-    }
-
     /// The dialog's defaults without the dialog, and a title agent-deck
     /// generates.
     func quickCreateSession(inGroup groupName: String? = nil) {
         let defaults = newSessionDefaults(inGroup: groupName)
-        lastError = nil
-        Task {
-            do {
-                var groupPath = defaults.groupPath
-                // As in the dialog: with no group to go by, the first one agent-deck lists.
-                if groupPath.isEmpty {
-                    groupPath = try await cli.groups().first?.path ?? ""
-                }
-                try await createSession(NewSessionRequest(
-                    directory: defaults.directory, groupPath: groupPath, command: defaults.command, quick: true
-                ))
-            } catch {
-                lastError = error.localizedDescription
-                logger.error("quick session failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        let request = NewSessionRequest(
+            directory: defaults.directory, groupPath: defaults.groupPath, command: defaults.command, quick: true
+        )
+        run("quick session") { [weak self] in try await self?.createSession(request) }
     }
 
     /// Adds the session, starts it and attaches it in the pane. A refused add
@@ -279,10 +270,11 @@ final class DeckModel {
         }
     }
 
-    /// The group is `groupName`, else the selected row's. The directory is
-    /// the selected session's when it is in that group, else one of the
-    /// group's sessions', else home. The command is the last one a session
-    /// was created with, `omp` at first.
+    /// The group is `groupName`, else the selected row's; one agent-deck no
+    /// longer lists gives way to the first it does. The directory is the
+    /// selected session's when it is in that group, else one of the group's
+    /// sessions', else home. The command is the last one a session was
+    /// created with, `omp` at first.
     private func newSessionDefaults(inGroup groupName: String?) -> NewSessionPrompt {
         let selected = selectedSession
         var groupName = groupName ?? selected?.groupName
@@ -293,7 +285,7 @@ final class DeckModel {
             ?? sessions.first { $0.groupName == groupName }
         let directory = member?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
         return NewSessionPrompt(
-            groupPath: member?.group ?? "",
+            groupPath: DeckGroup.listedPath(member?.group ?? "", in: deckGroups),
             directory: (directory as NSString).abbreviatingWithTildeInPath,
             command: UserDefaults.standard.string(forKey: Self.lastCommandKey) ?? "omp"
         )
@@ -356,49 +348,30 @@ final class DeckModel {
     /// then stores the order, and the list that follows confirms it or,
     /// after a refusal, puts it back.
     func moveSession(_ move: SessionMove) {
-        guard busySessionIDs.insert(move.sessionID).inserted else { return }
-        let rank = Dictionary(uniqueKeysWithValues: move.order.enumerated().map { ($1, $0) })
-        // A group's rows are consecutive; reorder them where they are.
-        let indices = sessions.indices.filter { rank[sessions[$0].id] != nil }
-        let reordered = indices.map { sessions[$0] }.sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
-        for (index, session) in zip(indices, reordered) {
-            sessions[index] = session
-        }
-        lastError = nil
-        Task {
-            defer { busySessionIDs.remove(move.sessionID) }
-            do {
-                try await cli.moveSession(id: move.sessionID, move.placement)
-                logger.info("moved \(move.sessionID, privacy: .public)")
-            } catch {
-                lastError = error.localizedDescription
-                logger.error("move \(move.sessionID, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            }
-            await refresh()
+        reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
+            try await cli.moveSession(id: move.sessionID, move.placement)
         }
     }
 
     /// Drag and drop of a group header: the group moves with its sessions,
-    /// at once here and then in agent-deck, as for a session. One group
-    /// move at a time: each rewrites every sibling group's position.
+    /// at once here and then in agent-deck, as for a session.
     func moveGroup(_ move: GroupMove) {
-        guard !isMovingGroup else { return }
-        isMovingGroup = true
-        let rank = Dictionary(move.order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
-        sessions = sessions.enumerated()
-            .sorted { (rank[$0.element.group] ?? rank.count, $0.offset) < (rank[$1.element.group] ?? rank.count, $1.offset) }
-            .map(\.element)
-        lastError = nil
-        Task {
-            defer { isMovingGroup = false }
-            do {
-                try await cli.moveGroup(path: move.path, move.placement)
-                logger.info("moved group \(move.path, privacy: .public)")
-            } catch {
-                lastError = error.localizedDescription
-                logger.error("move group \(move.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            }
-            await refresh()
+        reorder("move group \(move.path)", DeckSession.inDeckOrder(sessions, groupPaths: move.order)) { [cli] in
+            try await cli.moveGroup(path: move.path, move.placement)
+        }
+    }
+
+    /// One move at a time: each rewrites the positions around the moved
+    /// row. The list after it, refused or not, settles the sidebar.
+    private func reorder(_ label: String, _ ordered: [DeckSession], _ operation: @escaping @Sendable () async throws -> Void) {
+        guard !isReordering else { return }
+        isReordering = true
+        sessions = ordered
+        run(label, operation) {
+            logger.info("\(label, privacy: .public) done")
+        } finally: { [weak self] in
+            await self?.refresh()
+            self?.isReordering = false
         }
     }
 
@@ -455,11 +428,10 @@ final class DeckModel {
         _ label: String,
         _ operation: @escaping @Sendable () async throws -> Void,
         then follow: (@MainActor () async -> Void)? = nil,
-        finally cleanup: (@MainActor () -> Void)? = nil
+        finally cleanup: (@MainActor () async -> Void)? = nil
     ) {
         lastError = nil
         Task {
-            defer { cleanup?() }
             do {
                 try await operation()
                 await follow?()
@@ -467,6 +439,7 @@ final class DeckModel {
                 lastError = error.localizedDescription
                 logger.error("\(label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             }
+            await cleanup?()
         }
     }
 

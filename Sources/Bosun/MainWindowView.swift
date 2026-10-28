@@ -96,7 +96,7 @@ struct MainWindowView: View {
                 }
             }
             .onMove { source, destination in
-                switch SidebarMove(rows: rows.map(\.kind), from: source, to: destination) {
+                switch SidebarMove(rows: rows, from: source, to: destination) {
                 case .group(let move)?: model.moveGroup(move)
                 case .session(let move)?: model.moveSession(move)
                 case nil: break
@@ -377,29 +377,6 @@ struct SessionRow: View {
             return "\(tool) · \(session.status.label) · \(substate)"
         }
         return "\(tool) · \(session.status.label)"
-    }
-}
-
-/// A sidebar row: a group header, a session, or one of its extra windows.
-private enum SidebarRow: Identifiable {
-    case group(SessionGroup, expanded: Bool)
-    case session(DeckSession)
-    case window(SessionWindow, of: DeckSession)
-
-    var id: String {
-        switch self {
-        case .group(let group, _): "group:\(group.name)"
-        case .session(let session): session.id
-        case .window(let window, let session): "\(session.id)/\(window.windowID)"
-        }
-    }
-
-    var kind: SidebarRowKind {
-        switch self {
-        case .group(let group, _): .group(path: group.path)
-        case .session(let session): .session(id: session.id, group: session.group)
-        case .window: .window
-        }
     }
 }
 

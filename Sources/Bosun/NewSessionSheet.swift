@@ -9,8 +9,6 @@ import SwiftUI
 struct NewSessionSheet: View {
     let model: DeckModel
 
-    /// Nil while loading.
-    @State private var groups: [DeckGroup]?
     @State private var groupPath: String
     @State private var title = ""
     @State private var directory: String
@@ -74,48 +72,27 @@ struct NewSessionSheet: View {
             .padding(16)
         }
         .frame(width: 540)
-        .task { await loadGroups() }
+        // The list behind the dialog goes on; a group that vanished from it
+        // gives way to the first, as when the dialog opened.
+        .onChange(of: model.deckGroups) { _, groups in
+            groupPath = DeckGroup.listedPath(groupPath, in: groups)
+        }
     }
 
-    /// The popup is laid out while the list loads too, hidden under a
-    /// pulsing skeleton of its size, so the row never changes height.
     @ViewBuilder
     private var groupPicker: some View {
-        LabeledContent("Group") {
-            if groups?.isEmpty == true {
+        if model.deckGroups.isEmpty {
+            LabeledContent("Group") {
                 Text("agent-deck's default")
                     .foregroundStyle(.secondary)
-            } else if groups == nil {
-                groupMenu
-                    .hidden()
-                    .overlay {
-                        // Time-driven, not an animation: an animation also
-                        // carries the row's layout as the sheet settles, and
-                        // the skeleton slides into place.
-                        TimelineView(.animation) { context in
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(.tertiary)
-                                .opacity(0.75 + 0.25 * cos(context.date.timeIntervalSinceReferenceDate * .pi / 0.8))
-                        }
-                    }
-            } else {
-                groupMenu
             }
-        }
-    }
-
-    private var groupMenu: some View {
-        Picker("Group", selection: $groupPath) {
-            if let groups {
-                ForEach(groups) { group in
+        } else {
+            Picker("Group", selection: $groupPath) {
+                ForEach(model.deckGroups) { group in
                     Text(group.label).tag(group.path)
                 }
-            } else {
-                // Sizes the skeleton like the popup it stands in for.
-                Text(groupPath.isEmpty ? "Loading" : groupPath).tag(groupPath)
             }
         }
-        .labelsHidden()
     }
 
     private var folderName: String {
@@ -139,21 +116,6 @@ struct NewSessionSheet: View {
     private var canCreate: Bool {
         !directory.trimmingCharacters(in: .whitespaces).isEmpty
             && (!worktree || !branch.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
-    }
-
-    /// Selects the group the dialog opened on; any other, a group that is
-    /// gone or none, falls back to the first.
-    private func loadGroups() async {
-        do {
-            let loaded = try await model.loadGroups()
-            if !loaded.contains(where: { $0.path == groupPath }) {
-                groupPath = loaded.first?.path ?? ""
-            }
-            groups = loaded
-        } catch {
-            groups = []
-            self.error = error.localizedDescription
-        }
     }
 
     private func chooseDirectory() {

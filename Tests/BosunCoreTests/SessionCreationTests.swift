@@ -73,3 +73,24 @@ import Testing
         #expect(groups.map(\.label) == ["My Sessions", "Backend", "Backend › API"])
     }
 }
+
+/// Which group the New Session dialog and Quick Session start on.
+@Suite struct ListedPathTests {
+    static let groups = [DeckGroup(path: "my", label: "My"), DeckGroup(path: "work", label: "Work")]
+
+    @Test func aListedGroupStays() {
+        #expect(DeckGroup.listedPath("work", in: Self.groups) == "work")
+    }
+
+    /// "Ungrouped" has no path, and a group can be gone since the last list.
+    @Test(arguments: ["", "old"])
+    func anUnlistedGroupGivesWayToTheFirst(path: String) {
+        #expect(DeckGroup.listedPath(path, in: Self.groups) == "my")
+    }
+
+    /// With no list to go by (a failed `group list`), the row's own group
+    /// is still the best guess.
+    @Test func noListKeepsThePath() {
+        #expect(DeckGroup.listedPath("work", in: []) == "work")
+    }
+}
