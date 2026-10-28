@@ -31,34 +31,16 @@ extension AgentDeckCLI {
         _ = try await run(["rename", id, title, "--json"])
     }
 
-    /// Stops the session's processes and removes it from agent-deck; with
-    /// `pruneWorktree`, also deletes its git worktree, uncommitted changes
-    /// included. The agent's own conversation files are kept.
-    public func deleteSession(id: String, pruneWorktree: Bool) async throws {
-        _ = try await run(["session", "remove", id, "--force", "--json"] + (pruneWorktree ? ["--prune-worktree"] : []))
+    /// Stops the session's processes, deletes its git worktree, uncommitted
+    /// changes included, and removes it from agent-deck. agent-deck keeps a
+    /// worktree another session still works in; the agent's own conversation
+    /// files are kept either way.
+    public func deleteSession(id: String) async throws {
+        _ = try await run(["session", "remove", id, "--force", "--prune-worktree", "--json"])
     }
 }
 
 private struct RestartReply: Decodable {
     let skipped: Bool?
     let reason: String?
-}
-
-extension SessionStatus {
-    /// Whether the session has a process to stop or restart; a stopped or
-    /// failed one can only be started.
-    public var hasProcess: Bool {
-        self != .stopped && self != .error
-    }
-}
-
-extension DeckSession {
-    /// Whether deleting this session may delete its git worktree too: not
-    /// while another session, archived ones included, works in the same
-    /// directory, since its uncommitted changes would go as well. The TUI's
-    /// delete keeps a shared worktree the same way.
-    public func mayPruneWorktree(among sessions: [DeckSession]) -> Bool {
-        let path = (self.path as NSString).standardizingPath
-        return !sessions.contains { $0.id != id && ($0.path as NSString).standardizingPath == path }
-    }
 }

@@ -81,58 +81,49 @@ struct MainWindowView: View {
         }
         .listStyle(.sidebar)
         .focused($sidebarFocused)
-        // Arrow keys keep navigating the list; Return folds a group, as in
-        // the TUI, or hands the keyboard to the attached terminal.
-        .onKeyPress(.return) {
-            if case .group(let name)? = model.selection {
-                toggle(name)
-                return .handled
-            }
-            guard model.pane != nil else { return .ignored }
-            terminalFocusRequest += 1
-            return .handled
-        }
-        // The TUI's keys, d to delete and r to rename. Only the focused list
-        // sees them, so every letter still reaches the terminal.
-        .onKeyPress(keys: ["d", "r"]) { press in
-            guard press.modifiers.isEmpty,
-                  case .pane(let target)? = model.selection,
-                  target.windowID == nil,
-                  let session = model.selectedSession,
-                  !model.busySessionIDs.contains(session.id)
-            else { return .ignored }
-            if press.key == "d" {
-                SessionPrompts.confirmDelete(session, model: model)
-            } else {
-                SessionPrompts.rename(session, model: model)
-            }
-            return .handled
-        }
-        // Tab folds the selected group, as in the TUI. On a session it folds
-        // the session's group and moves the selection up to it, so a second
-        // Tab opens the group again.
-        .onKeyPress(keys: [.tab]) { press in
-            guard press.modifiers.isEmpty else { return .ignored }
-            switch model.selection {
-            case .group(let name)?:
-                toggle(name)
-            case .pane?:
-                guard let session = model.selectedSession else { return .ignored }
-                toggle(session.groupName)
-                model.select(.group(session.groupName))
-            case nil:
-                return .ignored
-            }
-            return .handled
+        // Only the focused list sees these keys, so every letter still
+        // reaches the terminal.
+        .onKeyPress(keys: [.return, .tab, "d", "r"]) { press in
+            press.modifiers.isEmpty ? handle(press.key) : .ignored
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footer
         }
     }
 
+    /// The TUI's keys. Return folds a group, or hands the keyboard to the
+    /// attached terminal. Tab folds the selected group; on a session it folds
+    /// the session's group and moves the selection up to it, so a second Tab
+    /// opens the group again. d deletes and r renames the selected session.
+    private func handle(_ key: KeyEquivalent) -> KeyPress.Result {
+        switch (key, model.selection) {
+        case (.return, .group(let name)?), (.tab, .group(let name)?):
+            toggle(name)
+        case (.return, _):
+            guard model.pane != nil else { return .ignored }
+            terminalFocusRequest += 1
+        case (.tab, .pane?):
+            guard let session = model.selectedSession else { return .ignored }
+            toggle(session.groupName)
+            model.select(.group(session.groupName))
+        case ("d", .pane(let target)?), ("r", .pane(let target)?):
+            guard target.windowID == nil, let session = model.selectedSession,
+                  !model.busySessionIDs.contains(session.id)
+            else { return .ignored }
+            if key == "d" {
+                SessionPrompts.confirmDelete(session, model: model)
+            } else {
+                SessionPrompts.rename(session, model: model)
+            }
+        default:
+            return .ignored
+        }
+        return .handled
+    }
+
     private func toggle(_ group: String) {
         withAnimation(.easeOut(duration: 0.15)) {
-            model.setGroup(group, expanded: model.collapsedGroups.contains(group))
+            model.toggleGroup(group)
         }
     }
 
@@ -288,7 +279,7 @@ private struct RowActionButton: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isHovered ? (destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.primary)) : AnyShapeStyle(.secondary))
+        .foregroundStyle(isHovered ? (destructive ? Color.red : .primary) : .secondary)
         .background(.primary.opacity(isHovered ? 0.22 : 0), in: .rect(cornerRadius: 5))
         .onHover { isHovered = $0 }
         .pointerStyle(.link)
@@ -305,9 +296,7 @@ struct SessionRow: View {
                 .fill(session.status.color)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.title)
-                    .foregroundStyle(Color.primary)
-                    .lineLimit(1)
+                Text(session.title).lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -39,9 +39,6 @@ final class DeckModel {
     @ObservationIgnored private var followerTask: Task<Void, Never>?
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var delayedRefreshTask: Task<Void, Never>?
-    /// The last list with archived rows: a delete must not take a worktree
-    /// that an archived session still works in.
-    @ObservationIgnored private var everySession: [DeckSession] = []
 
     private init() {}
 
@@ -90,12 +87,8 @@ final class DeckModel {
         return groups
     }
 
-    func setGroup(_ name: String, expanded: Bool) {
-        if expanded {
-            collapsedGroups.remove(name)
-        } else {
-            collapsedGroups.insert(name)
-        }
+    func toggleGroup(_ name: String) {
+        collapsedGroups.formSymmetricDifference([name])
     }
 
     func start() {
@@ -152,8 +145,7 @@ final class DeckModel {
 
     private func loadSessions() async {
         do {
-            everySession = try await cli.list()
-            sessions = everySession
+            sessions = try await cli.list()
                 .filter { !$0.archived }
                 .sorted(using: [
                     KeyPathComparator(\.groupName, comparator: .localizedStandard),
@@ -241,16 +233,8 @@ final class DeckModel {
         lifecycle("rename", session) { [cli] in try await cli.renameSession(id: session.id, to: title) }
     }
 
-    /// `pruneWorktree` is the answer the confirmation showed, so the delete
-    /// does what the user agreed to.
-    func deleteSession(_ session: DeckSession, pruneWorktree: Bool) {
-        lifecycle("delete", session) { [cli] in
-            try await cli.deleteSession(id: session.id, pruneWorktree: pruneWorktree)
-        }
-    }
-
-    func mayPruneWorktree(_ session: DeckSession) -> Bool {
-        session.mayPruneWorktree(among: everySession)
+    func deleteSession(_ session: DeckSession) {
+        lifecycle("delete", session) { [cli] in try await cli.deleteSession(id: session.id) }
     }
 
     /// One action per session at a time; the list reloads after it, so the

@@ -32,6 +32,12 @@ public enum SessionStatus: String, Decodable, Sendable {
     public var needsAttention: Bool {
         self == .waiting || self == .error
     }
+
+    /// Whether the session has a process to stop or restart; a stopped or
+    /// failed one can only be started.
+    public var hasProcess: Bool {
+        self != .stopped && self != .error
+    }
 }
 
 /// One row of `list --json`. Optionality follows the Go struct's `omitempty`:
