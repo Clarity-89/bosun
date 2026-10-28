@@ -253,12 +253,13 @@ public actor AgentDeckCLI {
     /// Runs the resolved agent-deck in its child environment. A failing
     /// `--json` command is `AgentDeckCLIError.reported`; any other non-zero
     /// exit is `SubprocessError.exited`.
-    func run(_ arguments: [String]) async throws -> ProcessResult {
+    func run(_ arguments: [String], timeout: Duration = .seconds(30)) async throws -> ProcessResult {
         let binary = try await binary()
         let result = try await Subprocess.run(
             executable: binary.path,
             arguments: arguments,
-            environment: Self.childEnvironment(binaryDirectory: binary.directory)
+            environment: Self.childEnvironment(binaryDirectory: binary.directory),
+            timeout: timeout
         )
         try Self.checkReported(result)
         return result
@@ -266,12 +267,16 @@ public actor AgentDeckCLI {
 
     /// A failing `--json` command exits non-zero with its reason as
     /// `{"success": false, "error": …}` on stdout, where the stderr-based
-    /// `checkSucceeded` would not look.
+    /// `checkSucceeded` would not look. Some refusals skip the JSON and print
+    /// a plain `Error: …` line there instead.
     static func checkReported(_ result: ProcessResult) throws {
-        if !result.succeeded,
-           let failure = try? JSONDecoder().decode(Failure.self, from: Data(result.stdout.utf8)),
-           !failure.success {
+        guard !result.succeeded else { return }
+        if let failure = try? JSONDecoder().decode(Failure.self, from: Data(result.stdout.utf8)), !failure.success {
             throw AgentDeckCLIError.reported(failure.error)
+        }
+        let firstLine = result.stdout.split(whereSeparator: \.isNewline).first ?? ""
+        if result.stderr.isEmpty, firstLine.hasPrefix("Error: ") {
+            throw AgentDeckCLIError.reported(String(firstLine.dropFirst("Error: ".count)))
         }
         try result.checkSucceeded()
     }

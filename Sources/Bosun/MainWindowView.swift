@@ -20,6 +20,12 @@ struct MainWindowView: View {
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    model.promptNewSession()
+                } label: {
+                    Label("New Session", systemImage: "plus")
+                }
+                .help("New session in the selected group (⌘N)")
                 if let selected = model.selectedSession {
                     Menu {
                         shellActions(for: selected)
@@ -42,6 +48,9 @@ struct MainWindowView: View {
                 .disabled(model.isRefreshing)
             }
         }
+        .sheet(item: Binding(get: { model.newSessionPrompt }, set: { if $0 == nil { model.dismissNewSession() } })) { prompt in
+            NewSessionSheet(model: model, prompt: prompt)
+        }
     }
 
     /// Names what the pane shows, which a selected group row leaves as it was.
@@ -62,6 +71,10 @@ struct MainWindowView: View {
                 // they reach a group in the TUI.
                 GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
                     .tag(SidebarItem.group(group.name))
+                    .contextMenu {
+                        Button("New Session…") { model.promptNewSession(inGroup: group.name) }
+                        Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
+                    }
                 if expanded {
                     ForEach(group.sessions) { session in
                         SidebarSessionRow(model: model, session: session)

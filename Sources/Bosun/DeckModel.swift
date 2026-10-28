@@ -23,6 +23,8 @@ final class DeckModel {
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
     /// Sessions with a lifecycle action in flight; their actions wait for it.
     private(set) var busySessionIDs: Set<String> = []
+    /// The New Session dialog while it is open.
+    private(set) var newSessionPrompt: NewSessionPrompt?
     /// Bosun's own: agent-deck keeps the TUI's expanded groups in its
     /// database, with no CLI to read or set them.
     private(set) var collapsedGroups = Set(UserDefaults.standard.stringArray(forKey: "collapsedGroups") ?? []) {
@@ -211,6 +213,93 @@ final class DeckModel {
         logger.info("attached \(sessionID, privacy: .public) in window")
         Task { await loadAllWindows() }
     }
+
+    /// Opens the New Session dialog on the group it creates in: `groupName`,
+    /// else the selected row's.
+    func promptNewSession(inGroup groupName: String? = nil) {
+        newSessionPrompt = newSessionDefaults(inGroup: groupName)
+    }
+
+    func dismissNewSession() {
+        newSessionPrompt = nil
+    }
+
+    /// Every group agent-deck has, including the empty ones the sidebar
+    /// never shows.
+    func loadGroups() async throws -> [DeckGroup] {
+        try await cli.groups()
+    }
+
+    /// The dialog's defaults without the dialog, and a title agent-deck
+    /// generates.
+    func quickCreateSession(inGroup groupName: String? = nil) {
+        let defaults = newSessionDefaults(inGroup: groupName)
+        lastError = nil
+        Task {
+            do {
+                var groupPath = defaults.groupPath
+                // As in the dialog: with no group to go by, the first one agent-deck lists.
+                if groupPath.isEmpty {
+                    groupPath = try await cli.groups().first?.path ?? ""
+                }
+                try await createSession(NewSessionRequest(
+                    directory: defaults.directory, groupPath: groupPath, command: defaults.command, quick: true
+                ))
+            } catch {
+                lastError = error.localizedDescription
+                logger.error("quick session failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Adds the session, starts it and attaches it in the pane. A refused add
+    /// throws; after a refused start the pane offers Restart and the footer
+    /// says why.
+    func createSession(_ request: NewSessionRequest) async throws {
+        let sessionID = try await cli.addSession(request)
+        UserDefaults.standard.set(request.command.trimmingCharacters(in: .whitespaces), forKey: Self.lastCommandKey)
+        logger.info("created \(sessionID, privacy: .public)")
+        var startError: String?
+        do {
+            try await cli.startSession(id: sessionID)
+        } catch {
+            startError = error.localizedDescription
+            logger.error("start \(sessionID, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        }
+        await refresh()
+        if let group = sessions.first(where: { $0.id == sessionID })?.groupName {
+            collapsedGroups.remove(group)
+        }
+        selection = .pane(PaneTarget(sessionID: sessionID))
+        if let startError {
+            pane = .notRunning(sessionID: sessionID)
+            lastError = startError
+        } else {
+            attach(sessionID)
+        }
+    }
+
+    /// The group is `groupName`, else the selected row's. The directory is
+    /// the selected session's when it is in that group, else one of the
+    /// group's sessions', else home. The command is the last one a session
+    /// was created with, `omp` at first.
+    private func newSessionDefaults(inGroup groupName: String?) -> NewSessionPrompt {
+        let selected = selectedSession
+        var groupName = groupName ?? selected?.groupName
+        if groupName == nil, case .group(let name)? = selection {
+            groupName = name
+        }
+        let member = selected.flatMap { $0.groupName == groupName ? $0 : nil }
+            ?? sessions.first { $0.groupName == groupName }
+        let directory = member?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        return NewSessionPrompt(
+            groupPath: member?.group ?? "",
+            directory: (directory as NSString).abbreviatingWithTildeInPath,
+            command: UserDefaults.standard.string(forKey: Self.lastCommandKey) ?? "omp"
+        )
+    }
+
+    private static let lastCommandKey = "newSessionCommand"
 
     /// A session's windows after the first, which runs the agent.
     func extraWindows(for sessionID: String) -> ArraySlice<SessionWindow> {
@@ -503,6 +592,15 @@ struct PaneTarget: Hashable {
 enum SidebarItem: Hashable {
     case group(String)
     case pane(PaneTarget)
+}
+
+/// The New Session dialog's starting values.
+struct NewSessionPrompt: Identifiable {
+    let id = UUID()
+    /// A group's path; empty when nothing selected names a group.
+    let groupPath: String
+    let directory: String
+    let command: String
 }
 
 /// What the pane shows for a session.
