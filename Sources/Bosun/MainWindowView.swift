@@ -259,6 +259,7 @@ private struct SidebarSessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            DragHandle(isVisible: isHovered)
             SessionRow(session: session)
             Spacer(minLength: 0)
             if isHovered {
@@ -269,7 +270,6 @@ private struct SidebarSessionRow: View {
                     RowActionButton(systemImage: "trash", help: "Delete (d)", destructive: true) {
                         SessionPrompts.confirmDelete(session, model: model)
                     }
-                    DragHandle()
                 }
                 .disabled(model.busySessionIDs.contains(session.id))
                 .transition(.opacity)
@@ -279,8 +279,8 @@ private struct SidebarSessionRow: View {
     }
 }
 
-/// A group header the selection can land on, with a chevron that folds it
-/// and, on hover, the handle that drags it with its sessions.
+/// A group header the selection can land on, with the handle that drags it
+/// with its sessions and a chevron that folds it.
 private struct GroupRow: View {
     let name: String
     let isExpanded: Bool
@@ -289,6 +289,7 @@ private struct GroupRow: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            DragHandle(isVisible: isHovered)
             Button(action: toggle) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -302,10 +303,6 @@ private struct GroupRow: View {
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
             Spacer(minLength: 0)
-            if isHovered {
-                DragHandle()
-                    .transition(.opacity)
-            }
         }
         .foregroundStyle(.secondary)
         .modifier(SidebarHover(isHovered: $isHovered))
@@ -406,17 +403,29 @@ private enum SidebarRow: Identifiable {
     }
 }
 
-/// Says a row can be dragged: the grip, the open hand over it, a tooltip.
-/// The whole row drags, not only the grip.
+/// The grip that says a row can be dragged, with the open hand and a
+/// tooltip, shown on hover. It keeps its room while hidden, so the row never
+/// shifts; the whole row drags, not only the grip.
 private struct DragHandle: View {
+    static let width: CGFloat = 10
+    let isVisible: Bool
+
     var body: some View {
-        Image(systemName: "line.3.horizontal")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.tertiary)
-            .frame(width: 18, height: 22)
-            .contentShape(.rect)
-            .pointerStyle(.grabIdle)
-            .help("Drag to reorder")
+        Grid(horizontalSpacing: 2, verticalSpacing: 2) {
+            ForEach(0..<3, id: \.self) { _ in
+                GridRow {
+                    Circle().frame(width: 2.5, height: 2.5)
+                    Circle().frame(width: 2.5, height: 2.5)
+                }
+            }
+        }
+        .foregroundStyle(.tertiary)
+        .frame(width: Self.width, height: 16)
+        .contentShape(.rect)
+        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible)
+        .pointerStyle(.grabIdle)
+        .help("Drag to reorder")
     }
 }
 
@@ -426,6 +435,9 @@ struct WindowRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // The session row's drag handle column, so the window stays
+            // indented under the session.
+            Color.clear.frame(width: DragHandle.width, height: 0)
             Image(systemName: "terminal")
                 .font(.caption)
                 .foregroundStyle(.secondary)
