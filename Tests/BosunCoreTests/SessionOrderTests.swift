@@ -45,27 +45,82 @@ import Testing
     }
 }
 
-/// A drag in a group's sidebar rows: which session moved and the visible
-/// neighbour it now sits by. nil rows are window rows, which stay under
-/// their session.
-@Suite struct SessionMoveTests {
-    let rows: [String?] = ["s1", nil, "s2", "s3"]
+/// A drag in the sidebar's flat rows: group headers, their sessions, and
+/// the window rows under a session.
+@Suite struct SidebarMoveTests {
+    let rows: [SidebarRowKind] = [
+        .group(path: "g1"),
+        .session(id: "s1", group: "g1"),
+        .window,
+        .session(id: "s2", group: "g1"),
+        .group(path: "g2"),
+        .session(id: "t1", group: "g2"),
+    ]
 
-    @Test func draggedToTheTopGoesBeforeTheFirst() throws {
-        let move = try #require(SessionMove(rows: rows, from: [3], to: 0))
-        #expect(move == SessionMove(sessionID: "s3", placement: .before("s1"), order: ["s3", "s1", "s2"]))
+    @Test func sessionDraggedToTheTopOfItsGroupGoesBeforeTheFirst() {
+        #expect(SidebarMove(rows: rows, from: [3], to: 1)
+            == .session(SessionMove(sessionID: "s2", placement: .before("s1"), order: ["s2", "s1"])))
     }
 
-    @Test func draggedToTheEndGoesAfterTheLast() throws {
-        let move = try #require(SessionMove(rows: rows, from: [0], to: 4))
-        #expect(move == SessionMove(sessionID: "s1", placement: .after("s3"), order: ["s2", "s3", "s1"]))
+    @Test func sessionDraggedPastItsNeighbourGoesAfterIt() {
+        #expect(SidebarMove(rows: rows, from: [1], to: 4)
+            == .session(SessionMove(sessionID: "s1", placement: .after("s2"), order: ["s2", "s1"])))
     }
 
-    /// Dropping in place, or between a session and its own windows, leaves
-    /// the sessions as they were: nothing to store.
-    @Test(arguments: [(2, 2), (2, 3), (2, 1)])
+    /// Under another group's header, or above every header, a session would
+    /// change group; a reorder cannot do that.
+    @Test(arguments: [6, 0])
+    func sessionDroppedOutsideItsGroupIsNoMove(destination: Int) {
+        #expect(SidebarMove(rows: rows, from: [1], to: destination) == nil)
+    }
+
+    @Test func headerDraggedToTheTopGoesBeforeTheFirstGroup() {
+        #expect(SidebarMove(rows: rows, from: [4], to: 0)
+            == .group(GroupMove(path: "g2", placement: .before("g1"), order: ["g2", "g1"])))
+    }
+
+    @Test func headerDraggedToTheEndGoesAfterTheLastGroup() {
+        #expect(SidebarMove(rows: rows, from: [0], to: 6)
+            == .group(GroupMove(path: "g1", placement: .after("g2"), order: ["g2", "g1"])))
+    }
+
+    /// A header dropped among its own sessions, or a window row, changes no
+    /// order.
+    @Test(arguments: [(0, 2), (2, 0)])
     func dropThatKeepsTheOrderIsNoMove(source: Int, destination: Int) {
-        #expect(SessionMove(rows: rows, from: [source], to: destination) == nil)
+        #expect(SidebarMove(rows: rows, from: [source], to: destination) == nil)
+    }
+}
+
+/// `group reorder <path> --position <n>` leaves the group at index `n` among
+/// its siblings (`handleGroupReorder`). `group list` order here; `empty` has
+/// no sessions, so the sidebar never shows it.
+@Suite struct GroupPositionTests {
+    static let groups = ["my", "empty", "backend", "backend/api", "front"]
+
+    static func topLevel(moving path: String, _ placement: RowPlacement) -> [String]? {
+        guard let n = AgentDeckCLI.groupPosition(moving: path, placement, in: groups) else { return nil }
+        var rest = ["my", "empty", "backend", "front"].filter { $0 != path }
+        rest.insert(path, at: min(n, rest.count))
+        return rest
+    }
+
+    @Test func hiddenGroupsDoNotShiftTheDrop() {
+        #expect(Self.topLevel(moving: "front", .after("my")) == ["my", "front", "empty", "backend"])
+        #expect(Self.topLevel(moving: "front", .before("backend")) == ["my", "empty", "front", "backend"])
+    }
+
+    /// The sidebar shows `backend/api` as its own section under `backend`.
+    @Test func neighbourInASubgroupStandsForItsTopLevelGroup() {
+        #expect(Self.topLevel(moving: "my", .after("backend/api")) == ["empty", "backend", "my", "front"])
+    }
+
+    @Test func besideItsOwnSubgroupAGroupStaysPut() {
+        #expect(Self.topLevel(moving: "backend", .after("backend/api")) == ["my", "empty", "backend", "front"])
+    }
+
+    @Test func subgroupCannotMoveToAnotherLevel() {
+        #expect(AgentDeckCLI.groupPosition(moving: "backend/api", .after("front"), in: Self.groups) == nil)
     }
 }
 
@@ -79,12 +134,8 @@ import Testing
         return rest
     }
 
-    static func place(_ id: String, _ placement: SessionPlacement, in list: [String]) -> [String] {
-        let neighbour: String, after: Bool
-        switch placement {
-        case .after(let other): (neighbour, after) = (other, true)
-        case .before(let other): (neighbour, after) = (other, false)
-        }
+    static func place(_ id: String, _ placement: RowPlacement, in list: [String]) -> [String] {
+        let (neighbour, after) = placement.neighbour
         let n = AgentDeckCLI.orderPosition(
             moving: list.firstIndex(of: id)!, neighbour: list.firstIndex(of: neighbour)!, after: after
         )

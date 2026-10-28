@@ -41,6 +41,7 @@ final class DeckModel {
     @ObservationIgnored private var followerTask: Task<Void, Never>?
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var delayedRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var isMovingGroup = false
 
     private init() {}
 
@@ -377,6 +378,30 @@ final class DeckModel {
         }
     }
 
+    /// Drag and drop of a group header: the group moves with its sessions,
+    /// at once here and then in agent-deck, as for a session. One group
+    /// move at a time: each rewrites every sibling group's position.
+    func moveGroup(_ move: GroupMove) {
+        guard !isMovingGroup else { return }
+        isMovingGroup = true
+        let rank = Dictionary(move.order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        sessions = sessions.enumerated()
+            .sorted { (rank[$0.element.group] ?? rank.count, $0.offset) < (rank[$1.element.group] ?? rank.count, $1.offset) }
+            .map(\.element)
+        lastError = nil
+        Task {
+            defer { isMovingGroup = false }
+            do {
+                try await cli.moveGroup(path: move.path, move.placement)
+                logger.info("moved group \(move.path, privacy: .public)")
+            } catch {
+                lastError = error.localizedDescription
+                logger.error("move group \(move.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            }
+            await refresh()
+        }
+    }
+
     /// One action per session at a time; the list reloads after it, so the
     /// row changes even before the bus reports it. `done` runs once it
     /// succeeds, before the reload. A deleted session's pane goes with its
@@ -600,6 +625,8 @@ struct SessionGroup: Identifiable {
     let name: String
     var sessions: [DeckSession]
     var id: String { name }
+    /// The agent-deck path its sessions share; empty for "Ungrouped".
+    var path: String { sessions.first?.group ?? "" }
 }
 
 /// What the pane shows: a session, optionally one of its extra tmux windows.

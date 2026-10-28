@@ -61,46 +61,45 @@ struct MainWindowView: View {
     }
 
     private var sidebar: some View {
-        List(selection: Binding(
+        let rows = sidebarRows
+        return List(selection: Binding(
             get: { model.selection },
             set: { model.select($0) }
         )) {
-            ForEach(model.groups) { group in
-                let expanded = !model.collapsedGroups.contains(group.name)
-                // A row, not a Section header, so arrows and Tab reach it as
-                // they reach a group in the TUI.
-                GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
-                    .tag(SidebarItem.group(group.name))
-                    .contextMenu {
-                        Button("New Session…") { model.promptNewSession(inGroup: group.name) }
-                        Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
-                    }
-                if expanded {
-                    let rows = sidebarRows(of: group)
-                    // One row per element, so a drag moves exactly the row it
-                    // picked up; a session's windows follow it on the next list.
-                    ForEach(rows) { row in
-                        switch row {
-                        case .session(let session):
-                            SidebarSessionRow(model: model, session: session)
-                                .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
-                                .contextMenu { sessionMenu(for: session) }
-                        case .window(let window, let session):
-                            WindowRow(window: window)
-                                .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
-                                .contextMenu {
-                                    Button("Close Window", role: .destructive) {
-                                        model.closeWindow(window, in: session)
-                                    }
-                                }
-                                .moveDisabled(true)
+            // One flat list with one row per element, so a drag moves the row
+            // it picked up: a group header takes its sessions along, a session
+            // stays in its group, a window stays under its session.
+            ForEach(rows) { row in
+                switch row {
+                case .group(let group, let expanded):
+                    // A row, not a Section header, so arrows and Tab reach it as
+                    // they reach a group in the TUI.
+                    GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
+                        .tag(SidebarItem.group(group.name))
+                        .contextMenu {
+                            Button("New Session…") { model.promptNewSession(inGroup: group.name) }
+                            Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
                         }
-                    }
-                    .onMove { source, destination in
-                        if let move = SessionMove(rows: rows.map(\.sessionID), from: source, to: destination) {
-                            model.moveSession(move)
+                case .session(let session):
+                    SidebarSessionRow(model: model, session: session)
+                        .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
+                        .contextMenu { sessionMenu(for: session) }
+                case .window(let window, let session):
+                    WindowRow(window: window)
+                        .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
+                        .contextMenu {
+                            Button("Close Window", role: .destructive) {
+                                model.closeWindow(window, in: session)
+                            }
                         }
-                    }
+                        .moveDisabled(true)
+                }
+            }
+            .onMove { source, destination in
+                switch SidebarMove(rows: rows.map(\.kind), from: source, to: destination) {
+                case .group(let move)?: model.moveGroup(move)
+                case .session(let move)?: model.moveSession(move)
+                case nil: break
                 }
             }
         }
@@ -152,9 +151,14 @@ struct MainWindowView: View {
         }
     }
 
-    private func sidebarRows(of group: SessionGroup) -> [SessionListRow] {
-        group.sessions.flatMap { session in
-            [SessionListRow.session(session)] + model.extraWindows(for: session.id).map { SessionListRow.window($0, of: session) }
+    /// Each group header, then, while it is open, its sessions, each with its
+    /// extra windows under it.
+    private var sidebarRows: [SidebarRow] {
+        model.groups.flatMap { group in
+            let expanded = !model.collapsedGroups.contains(group.name)
+            return [SidebarRow.group(group, expanded: expanded)] + (expanded ? group.sessions : []).flatMap { session in
+                [SidebarRow.session(session)] + model.extraWindows(for: session.id).map { SidebarRow.window($0, of: session) }
+            }
         }
     }
 
@@ -243,9 +247,10 @@ private struct NotRunningPane: View {
     }
 }
 
-/// A sidebar row: highlighted on hover, with Rename and Delete fading in at
-/// the trailing edge so the common actions need no context menu. They take
-/// room only while shown, so the subtitle uses the full width otherwise.
+/// A sidebar row: highlighted on hover, with Rename, Delete and the drag
+/// handle fading in at the trailing edge so the common actions need no
+/// context menu. They take room only while shown, so the subtitle uses the
+/// full width otherwise.
 @MainActor
 private struct SidebarSessionRow: View {
     let model: DeckModel
@@ -264,6 +269,7 @@ private struct SidebarSessionRow: View {
                     RowActionButton(systemImage: "trash", help: "Delete (d)", destructive: true) {
                         SessionPrompts.confirmDelete(session, model: model)
                     }
+                    DragHandle()
                 }
                 .disabled(model.busySessionIDs.contains(session.id))
                 .transition(.opacity)
@@ -273,7 +279,8 @@ private struct SidebarSessionRow: View {
     }
 }
 
-/// A group header the selection can land on, with a chevron that folds it.
+/// A group header the selection can land on, with a chevron that folds it
+/// and, on hover, the handle that drags it with its sessions.
 private struct GroupRow: View {
     let name: String
     let isExpanded: Bool
@@ -295,6 +302,10 @@ private struct GroupRow: View {
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
             Spacer(minLength: 0)
+            if isHovered {
+                DragHandle()
+                    .transition(.opacity)
+            }
         }
         .foregroundStyle(.secondary)
         .modifier(SidebarHover(isHovered: $isHovered))
@@ -372,21 +383,40 @@ struct SessionRow: View {
     }
 }
 
-/// A row under a group: a session, or one of its extra windows.
-private enum SessionListRow: Identifiable {
+/// A sidebar row: a group header, a session, or one of its extra windows.
+private enum SidebarRow: Identifiable {
+    case group(SessionGroup, expanded: Bool)
     case session(DeckSession)
     case window(SessionWindow, of: DeckSession)
 
     var id: String {
         switch self {
+        case .group(let group, _): "group:\(group.name)"
         case .session(let session): session.id
         case .window(let window, let session): "\(session.id)/\(window.windowID)"
         }
     }
 
-    /// Nil for a window row, which a drag cannot move.
-    var sessionID: String? {
-        if case .session(let session) = self { session.id } else { nil }
+    var kind: SidebarRowKind {
+        switch self {
+        case .group(let group, _): .group(path: group.path)
+        case .session(let session): .session(id: session.id, group: session.group)
+        case .window: .window
+        }
+    }
+}
+
+/// Says a row can be dragged: the grip, the open hand over it, a tooltip.
+/// The whole row drags, not only the grip.
+private struct DragHandle: View {
+    var body: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .frame(width: 18, height: 22)
+            .contentShape(.rect)
+            .pointerStyle(.grabIdle)
+            .help("Drag to reorder")
     }
 }
 
