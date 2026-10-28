@@ -2,9 +2,10 @@ import AppKit
 import BosunCore
 import SwiftUI
 
-/// Start, or Stop and Restart, then Rename and Delete: the same items in a
-/// row's context menu and the Session menu. Nil while nothing is selected,
-/// which leaves the items visible but disabled, as macOS menus do.
+/// Stop and Restart, then Rename and Delete: the same items in a row's
+/// context menu and the Session menu. A stopped session has nothing to stop;
+/// Restart starts it. Nil while nothing is selected, which leaves the items
+/// visible but disabled, as macOS menus do.
 @MainActor
 struct SessionActionItems: View {
     let model: DeckModel
@@ -12,12 +13,10 @@ struct SessionActionItems: View {
 
     var body: some View {
         Group {
-            if session?.status.hasProcess == false {
-                Button("Start", action: perform(model.startSession))
-            } else {
+            if session?.status != .stopped {
                 Button("Stop", action: perform(model.stopSession))
-                Button("Restart", action: perform(model.restartSession))
             }
+            Button("Restart", action: perform(model.restartSession))
             Divider()
             Button("Rename…", action: perform { SessionPrompts.rename($0, model: model) })
             Button("Delete…", role: .destructive, action: perform { SessionPrompts.confirmDelete($0, model: model) })

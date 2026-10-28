@@ -17,7 +17,7 @@ final class DeckModel {
     private var statusOwner: StatusOwner?
     private(set) var lastError: String?
     private(set) var selection: SidebarItem?
-    private(set) var pane: AttachedPane?
+    private(set) var pane: SessionPane?
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
@@ -72,6 +72,13 @@ final class DeckModel {
     var selectedSession: DeckSession? {
         guard case .pane(let target)? = selection else { return nil }
         return sessions.first { $0.id == target.sessionID }
+    }
+
+    /// The session the pane shows; nil while it shows none or the list no
+    /// longer has it.
+    var paneSession: DeckSession? {
+        guard let pane else { return nil }
+        return sessions.first { $0.id == pane.sessionID }
     }
 
     /// `sessions` is kept sorted by group, so consecutive rows form a group.
@@ -154,6 +161,11 @@ final class DeckModel {
                 ])
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
+            // A session deleted while not running has no tmux client whose
+            // exit would close its pane.
+            if case .notRunning(let sessionID)? = pane, !sessions.contains(where: { $0.id == sessionID }) {
+                closePane()
+            }
             await loadAllWindows()
         } catch is CancellationError {
         } catch {
@@ -164,8 +176,12 @@ final class DeckModel {
 
     /// Shows the target in the pane. Attaching runs `agent-deck session
     /// attach`, a tmux client, so the agent keeps running when the pane goes
-    /// away; a window row first switches the session's current window, as
-    /// the TUI's window rows do. A group row leaves the pane as it is.
+    /// away. A stopped session gets Restart instead, as its attach would exit
+    /// at once. Every other status attaches: `error` can be an agent that is
+    /// alive but blocked, and an attach that finds nothing falls back to
+    /// Restart through `paneExited`. A window row first switches the
+    /// session's current window, as the TUI's window rows do. A group row
+    /// leaves the pane as it is.
     func select(_ item: SidebarItem?) {
         selection = item
         guard let item else {
@@ -176,13 +192,23 @@ final class DeckModel {
         if let windowID = target.windowID {
             run("select window") { [cli] in try await cli.selectWindow(windowID: windowID) }
         }
-        guard pane?.sessionID != target.sessionID else { return }
+        // Only a terminal is kept; a pane offering Restart tries again, as
+        // the row may have caught up with the session.
+        guard pane?.attached?.sessionID != target.sessionID else { return }
+        if sessions.first(where: { $0.id == target.sessionID })?.status == .stopped {
+            pane = .notRunning(sessionID: target.sessionID)
+        } else {
+            attach(target.sessionID)
+        }
+    }
+
+    private func attach(_ sessionID: String) {
         guard let binary else {
             lastError = "agent-deck is still starting"
             return
         }
-        pane = AttachedPane(sessionID: target.sessionID, launch: binary.attachLaunch(sessionID: target.sessionID))
-        logger.info("attached \(target.sessionID, privacy: .public) in window")
+        pane = .attached(AttachedPane(sessionID: sessionID, launch: binary.attachLaunch(sessionID: sessionID)))
+        logger.info("attached \(sessionID, privacy: .public) in window")
         Task { await loadAllWindows() }
     }
 
@@ -217,16 +243,16 @@ final class DeckModel {
         }
     }
 
-    func startSession(_ session: DeckSession) {
-        lifecycle("start", session) { [cli] in try await cli.startSession(id: session.id) }
-    }
-
     func stopSession(_ session: DeckSession) {
         lifecycle("stop", session) { [cli] in try await cli.stopSession(id: session.id) }
     }
 
+    /// Restart also starts a stopped session; a pane offering it attaches
+    /// what it started.
     func restartSession(_ session: DeckSession) {
-        lifecycle("restart", session) { [cli] in try await cli.restartSession(id: session.id) }
+        lifecycle("restart", session, { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
+            if case .notRunning(session.id)? = self?.pane { self?.attach(session.id) }
+        }
     }
 
     func renameSession(_ session: DeckSession, to title: String) {
@@ -238,12 +264,20 @@ final class DeckModel {
     }
 
     /// One action per session at a time; the list reloads after it, so the
-    /// row changes even before the bus reports it. A deleted session's pane
-    /// goes with its tmux client, through `paneExited`.
-    private func lifecycle(_ label: String, _ session: DeckSession, _ operation: @escaping @Sendable () async throws -> Void) {
+    /// row changes even before the bus reports it. `done` runs once it
+    /// succeeds, before the reload. A deleted session's pane goes with its
+    /// tmux client, through `paneExited`, or with the list that no longer
+    /// has it.
+    private func lifecycle(
+        _ label: String,
+        _ session: DeckSession,
+        _ operation: @escaping @Sendable () async throws -> Void,
+        then done: (@MainActor () -> Void)? = nil
+    ) {
         guard busySessionIDs.insert(session.id).inserted else { return }
         run(label, operation) { [weak self] in
             logger.info("\(label, privacy: .public) \(session.id, privacy: .public) done")
+            done?()
             await self?.refresh()
         } finally: { [weak self] in
             self?.busySessionIDs.remove(session.id)
@@ -251,17 +285,31 @@ final class DeckModel {
     }
 
     func paneTitleChanged(sessionID: String, title: String) {
-        guard pane?.sessionID == sessionID else { return }
-        pane?.title = title
+        guard case .attached(var attached)? = pane, attached.sessionID == sessionID else { return }
+        attached.title = title
+        pane = .attached(attached)
     }
 
-    /// The tmux client ended (Ctrl-Q detach or the session stopped); the
-    /// agent itself is untouched, only the pane is gone.
-    func paneExited(sessionID: String) {
-        guard pane?.sessionID == sessionID else { return }
+    /// The tmux client ended. A Ctrl-Q detach or a stop closes the pane; the
+    /// agent itself is untouched. An attach that ended at once found nothing
+    /// to attach to, whatever the row said, so the pane offers to restart the
+    /// session and the list catches up.
+    func paneExited(sessionID: String, exit: ProcessExit) {
+        guard pane?.attached?.sessionID == sessionID else { return }
+        switch exit {
+        case .normal:
+            closePane()
+            logger.info("pane for \(sessionID, privacy: .public) exited")
+        case .abnormal:
+            pane = .notRunning(sessionID: sessionID)
+            logger.info("attach to \(sessionID, privacy: .public) ended at once")
+            Task { await refresh() }
+        }
+    }
+
+    private func closePane() {
         pane = nil
         if case .pane = selection { selection = nil }
-        logger.info("pane for \(sessionID, privacy: .public) exited")
     }
 
     private func run(
@@ -455,6 +503,26 @@ struct PaneTarget: Hashable {
 enum SidebarItem: Hashable {
     case group(String)
     case pane(PaneTarget)
+}
+
+/// What the pane shows for a session.
+enum SessionPane {
+    /// Its terminal.
+    case attached(AttachedPane)
+    /// Restart, while the session is not running.
+    case notRunning(sessionID: String)
+
+    var sessionID: String {
+        switch self {
+        case .attached(let attached): attached.sessionID
+        case .notRunning(let sessionID): sessionID
+        }
+    }
+
+    /// Nil while the session is not running.
+    var attached: AttachedPane? {
+        if case .attached(let attached) = self { attached } else { nil }
+    }
 }
 
 /// The session attached in the pane and the title its terminal reports.
