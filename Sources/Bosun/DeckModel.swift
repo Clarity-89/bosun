@@ -154,13 +154,12 @@ final class DeckModel {
 
     private func loadSessions() async {
         do {
-            sessions = try await cli.list()
-                .filter { !$0.archived }
-                .sorted(using: [
-                    KeyPathComparator(\.groupName, comparator: .localizedStandard),
-                    KeyPathComparator(\.title, comparator: .localizedStandard),
-                    KeyPathComparator(\.id),
-                ])
+            // Without the group order (a failed `group list`) each group's
+            // rows still end up together.
+            async let listed = cli.list()
+            async let groupOrder = cli.groups()
+            let visible = try await listed.filter { !$0.archived }
+            sessions = DeckSession.inDeckOrder(visible, groups: (try? await groupOrder) ?? [])
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
             // A session deleted while not running has no tmux client whose
