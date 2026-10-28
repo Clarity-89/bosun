@@ -4,6 +4,15 @@ import os
 
 private let logger = Logger(subsystem: "com.bosun.Bosun", category: "TerminalPane")
 
+/// How a pane's command ended, by the engine's test.
+public enum ProcessExit: Sendable {
+    case normal
+    /// Within `abnormal-command-exit-runtime`: the command never got going.
+    /// On macOS the engine sees no exit code (its `login` wrapper hides it),
+    /// so the runtime is the whole test.
+    case abnormal
+}
+
 /// One embedded terminal running one command. The surface is created when
 /// the view first lands in a window (libghostty needs the window's backing
 /// scale) and freed with the view.
@@ -11,16 +20,7 @@ private let logger = Logger(subsystem: "com.bosun.Bosun", category: "TerminalPan
 public final class TerminalPane: NSView {
     public var onTitleChange: ((String) -> Void)?
     /// The command ended or the engine closed the surface; the view is done.
-    public var onProcessExit: ((Exit) -> Void)?
-
-    /// How the command ended, by the engine's test.
-    public enum Exit: Sendable {
-        case normal
-        /// Within `abnormal-command-exit-runtime`: the command never got
-        /// going. On macOS the engine sees no exit code (its `login` wrapper
-        /// hides it), so the runtime is the whole test.
-        case abnormal
-    }
+    public var onProcessExit: ((ProcessExit) -> Void)?
 
     private let command: String
     private let environment: [String: String]

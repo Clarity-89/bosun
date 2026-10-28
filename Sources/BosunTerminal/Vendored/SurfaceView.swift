@@ -34,7 +34,7 @@ class SurfaceView: NSView {
     // BOSUN: the action router records terminal-reported state here instead
     // of fanning out through NotificationCenter; the host observes via closures.
     var onTitleChange: ((String) -> Void)?
-    var onProcessExit: ((TerminalPane.Exit) -> Void)?
+    var onProcessExit: ((ProcessExit) -> Void)?
 
     func applyTitle(_ value: String) {
         title = value

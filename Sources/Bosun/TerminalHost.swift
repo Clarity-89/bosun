@@ -10,7 +10,7 @@ struct TerminalHost: NSViewRepresentable {
     /// Monotonic; each new value moves keyboard focus into the terminal.
     let focusRequest: Int
     let onTitleChange: (String) -> Void
-    let onExit: (TerminalPane.Exit) -> Void
+    let onExit: (ProcessExit) -> Void
 
     final class Coordinator {
         var handledFocusRequest: Int

@@ -46,8 +46,8 @@ struct MainWindowView: View {
 
     /// Names what the pane shows, which a selected group row leaves as it was.
     private var titleText: String {
-        guard let pane = model.pane, let shown = model.sessions.first(where: { $0.id == pane.sessionID }) else { return "Bosun" }
-        guard let title = pane.attached?.title, !title.isEmpty else { return shown.title }
+        guard let shown = model.paneSession else { return "Bosun" }
+        guard let title = model.pane?.attached?.title, !title.isEmpty else { return shown.title }
         return "\(shown.title) · \(title)"
     }
 
@@ -160,19 +160,16 @@ struct MainWindowView: View {
 
     @ViewBuilder
     private var detail: some View {
-        switch model.pane {
-        case .attached(let pane)?:
+        if case .attached(let pane)? = model.pane {
             TerminalHost(launch: pane.launch, focusRequest: terminalFocusRequest) { title in
                 model.paneTitleChanged(sessionID: pane.sessionID, title: title)
             } onExit: { exit in
                 model.paneExited(sessionID: pane.sessionID, exit: exit)
             }
             .id(pane.sessionID)
-        case .notRunning(let sessionID, let error)?:
-            if let session = model.sessions.first(where: { $0.id == sessionID }) {
-                NotRunningPane(model: model, session: session, error: error)
-            }
-        case nil:
+        } else if let session = model.paneSession {
+            NotRunningPane(model: model, session: session)
+        } else {
             ContentUnavailableView(
                 "Select a session",
                 systemImage: "rectangle.stack",
@@ -193,28 +190,21 @@ struct MainWindowView: View {
     }
 }
 
-/// The pane of a session that is not running: Start and Restart, and
-/// agent-deck's reason when the last of them failed.
+/// The pane of a session that is not running: Restart, which also starts a
+/// stopped session.
 @MainActor
 private struct NotRunningPane: View {
     let model: DeckModel
     let session: DeckSession
-    let error: String?
 
     var body: some View {
         let busy = model.busySessionIDs.contains(session.id)
         ContentUnavailableView {
             Label(session.title, systemImage: "stop.circle")
         } description: {
-            // A retry in flight makes the last failure stale.
-            if let error, !busy {
-                Text(error).foregroundStyle(.red)
-            } else {
-                Text("The session is not running.")
-            }
+            Text("The session is not running.")
         } actions: {
             HStack {
-                Button("Start") { model.startSession(session) }
                 Button("Restart") { model.restartSession(session) }
                 if busy { ProgressView().controlSize(.small) }
             }
