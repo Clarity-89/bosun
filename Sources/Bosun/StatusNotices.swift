@@ -35,6 +35,7 @@ private struct NotifyDaemonOffer: View {
                 .foregroundStyle(.orange)
             Button(model.isInstallingNotifyDaemon ? "Installing Notify Daemon…" : "Install Notify Daemon…", action: confirm)
                 .buttonStyle(.link)
+                .pointerStyle(.link)
                 .disabled(model.isInstallingNotifyDaemon)
         }
     }

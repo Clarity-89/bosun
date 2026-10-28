@@ -18,15 +18,18 @@ struct SessionActionItems: View {
                 Button("Restart") { if let session { model.restartSession(session) } }
             }
             Divider()
-            Button("Rename…") { if let session { rename(session) } }
-            Button("Delete…", role: .destructive) { if let session { confirmDelete(session) } }
+            Button("Rename…") { if let session { SessionPrompts.rename(session, model: model) } }
+            Button("Delete…", role: .destructive) { if let session { SessionPrompts.confirmDelete(session, model: model) } }
         }
         .disabled(session.map { model.busySessionIDs.contains($0.id) } ?? true)
     }
+}
 
-    /// NSAlert, like the notify daemon offer: it presents the same from a
-    /// context menu as from the menu bar.
-    private func rename(_ session: DeckSession) {
+/// NSAlert, like the notify daemon offer: the menus and the row's hover
+/// buttons present the same prompt.
+@MainActor
+enum SessionPrompts {
+    static func rename(_ session: DeckSession, model: DeckModel) {
         let alert = NSAlert()
         alert.messageText = "Rename “\(session.title)”"
         let field = NSTextField(string: session.title)
@@ -42,7 +45,7 @@ struct SessionActionItems: View {
         model.renameSession(session, to: title)
     }
 
-    private func confirmDelete(_ session: DeckSession) {
+    static func confirmDelete(_ session: DeckSession, model: DeckModel) {
         let pruneWorktree = model.mayPruneWorktree(session)
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -50,7 +53,10 @@ struct SessionActionItems: View {
         alert.informativeText = pruneWorktree
             ? "This stops all of its processes, deletes its git worktree if it has one, uncommitted changes included, and removes it from agent-deck. The agent's own conversation files are kept."
             : "This stops all of its processes and removes it from agent-deck. Its directory is kept because another session works in it. The agent's own conversation files are kept."
-        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        // Not marked destructive: NSAlert then withholds Return from it, and
+        // d then Return must delete, as d then y does in the TUI. The warning
+        // style and the text carry the risk; Escape still cancels.
+        alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }

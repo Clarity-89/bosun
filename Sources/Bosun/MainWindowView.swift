@@ -58,7 +58,7 @@ struct MainWindowView: View {
             ForEach(model.groups) { group in
                 Section(group.name) {
                     ForEach(group.sessions) { session in
-                        SessionRow(session: session)
+                        SidebarSessionRow(model: model, session: session)
                             .tag(PaneTarget(sessionID: session.id))
                             .contextMenu { sessionMenu(for: session) }
                         ForEach(model.extraWindows(for: session.id)) { window in
@@ -81,6 +81,21 @@ struct MainWindowView: View {
         .onKeyPress(.return) {
             guard model.pane != nil else { return .ignored }
             terminalFocusRequest += 1
+            return .handled
+        }
+        // The TUI's keys, d to delete and r to rename. Only the focused list
+        // sees them, so every letter still reaches the terminal.
+        .onKeyPress(keys: ["d", "r"]) { press in
+            guard press.modifiers.isEmpty,
+                  model.selection?.windowID == nil,
+                  let session = model.selectedSession,
+                  !model.busySessionIDs.contains(session.id)
+            else { return .ignored }
+            if press.key == "d" {
+                SessionPrompts.confirmDelete(session, model: model)
+            } else {
+                SessionPrompts.rename(session, model: model)
+            }
             return .handled
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -145,6 +160,66 @@ struct MainWindowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(.bar)
+    }
+}
+
+/// A sidebar row: highlighted on hover, with Rename and Delete fading in at
+/// the trailing edge so the common actions need no context menu. The buttons
+/// keep their space while hidden, so the title never shifts under the pointer.
+@MainActor
+private struct SidebarSessionRow: View {
+    let model: DeckModel
+    let session: DeckSession
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            SessionRow(session: session)
+            Spacer(minLength: 0)
+            HStack(spacing: 4) {
+                RowActionButton(systemImage: "pencil", help: "Rename (r)") {
+                    SessionPrompts.rename(session, model: model)
+                }
+                RowActionButton(systemImage: "trash", help: "Delete (d)", destructive: true) {
+                    SessionPrompts.confirmDelete(session, model: model)
+                }
+            }
+            .opacity(isHovered ? 1 : 0)
+            .allowsHitTesting(isHovered)
+            .disabled(model.busySessionIDs.contains(session.id))
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(.primary.opacity(isHovered ? 0.16 : 0), in: .rect(cornerRadius: 6))
+        .contentShape(.rect)
+        .onHover { isHovered = $0 }
+        .pointerStyle(.link)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+}
+
+/// A borderless icon button with its own hover plate and the pointing hand,
+/// like a link; a destructive one turns red under the pointer.
+private struct RowActionButton: View {
+    let systemImage: String
+    let help: String
+    var destructive = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 24, height: 22)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHovered ? (destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.primary)) : AnyShapeStyle(.secondary))
+        .background(.primary.opacity(isHovered ? 0.22 : 0), in: .rect(cornerRadius: 5))
+        .onHover { isHovered = $0 }
+        .pointerStyle(.link)
+        .help(help)
     }
 }
 
