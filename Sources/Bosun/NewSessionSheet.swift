@@ -77,20 +77,40 @@ struct NewSessionSheet: View {
         .task { await loadGroups() }
     }
 
+    /// The popup is laid out while the list loads too, hidden under a
+    /// pulsing skeleton of its size, so the row never changes height.
     @ViewBuilder
     private var groupPicker: some View {
-        if let groups, !groups.isEmpty {
-            Picker("Group", selection: $groupPath) {
+        LabeledContent("Group") {
+            if groups?.isEmpty == true {
+                Text("agent-deck's default")
+                    .foregroundStyle(.secondary)
+            } else if groups == nil {
+                groupMenu
+                    .hidden()
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(.quaternary)
+                            .phaseAnimator([1, 0.4]) { $0.opacity($1) } animation: { _ in .easeInOut(duration: 0.8) }
+                    }
+            } else {
+                groupMenu
+            }
+        }
+    }
+
+    private var groupMenu: some View {
+        Picker("Group", selection: $groupPath) {
+            if let groups {
                 ForEach(groups) { group in
                     Text(group.label).tag(group.path)
                 }
-            }
-        } else {
-            LabeledContent("Group") {
-                Text(groups == nil ? "Loading…" : "agent-deck's default")
-                    .foregroundStyle(.secondary)
+            } else {
+                // Sizes the skeleton like the popup it stands in for.
+                Text(groupPath.isEmpty ? "Loading" : groupPath).tag(groupPath)
             }
         }
+        .labelsHidden()
     }
 
     private var folderName: String {
