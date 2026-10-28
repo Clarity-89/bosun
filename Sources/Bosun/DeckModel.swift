@@ -111,6 +111,14 @@ final class DeckModel {
         collapsedGroups.formSymmetricDifference([name])
     }
 
+    func foldGroup(_ name: String) {
+        collapsedGroups.insert(name)
+    }
+
+    func unfoldGroup(_ name: String) {
+        collapsedGroups.remove(name)
+    }
+
     func start() {
         guard !started else { return }
         started = true
@@ -350,20 +358,19 @@ final class DeckModel {
         lifecycle("delete", session) { [cli] in try await cli.deleteSession(id: session.id) }
     }
 
-    /// Drag and drop within a group. The rows reorder at once; agent-deck
+    /// A row moved by drag or by key. The rows reorder at once; agent-deck
     /// then stores the order, and the list that follows confirms it or,
-    /// after a refusal, puts it back.
-    func moveSession(_ move: SessionMove) {
-        reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
-            try await cli.moveSession(id: move.sessionID, move.placement)
-        }
-    }
-
-    /// Drag and drop of a group header: the group moves with its sessions,
-    /// at once here and then in agent-deck, as for a session.
-    func moveGroup(_ move: GroupMove) {
-        reorder("move group \(move.path)", DeckSession.inDeckOrder(sessions, groupPaths: move.order)) { [cli] in
-            try await cli.moveGroup(path: move.path, move.placement)
+    /// after a refusal, puts it back. A group moves with its sessions.
+    func move(_ move: SidebarMove) {
+        switch move {
+        case .session(let move):
+            reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
+                try await cli.moveSession(id: move.sessionID, move.placement)
+            }
+        case .group(let move):
+            reorder("move group \(move.path)", DeckSession.inDeckOrder(sessions, groupPaths: move.order)) { [cli] in
+                try await cli.moveGroup(path: move.path, move.placement)
+            }
         }
     }
 

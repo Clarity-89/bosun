@@ -67,7 +67,7 @@ enum SidebarRow: Identifiable {
     /// TUI's j and k move. A session or window a folded group hides counts
     /// as its group's header; with no selection, j starts at the top and k
     /// at the bottom.
-    static func row(_ offset: Int, from selection: SidebarItem?, in rows: [SidebarRow]) -> SidebarRow? {
+    static func step(by offset: Int, from selection: SidebarItem?, in rows: [SidebarRow]) -> SidebarRow? {
         guard !rows.isEmpty else { return nil }
         let index = rows.firstIndex { $0.item == selection } ?? rows.firstIndex { row in
             guard case .group(let group, _) = row, case .pane(let target)? = selection else { return false }

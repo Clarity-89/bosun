@@ -26,7 +26,7 @@ struct MainWindowView: View {
                 } label: {
                     Label("New Session", systemImage: "plus")
                 }
-                .help("New session in the selected group (\(Shortcut.newSession.menu?.label ?? ""))")
+                .help("New session in the selected group (\(Shortcut.newSession.menuLabel))")
                 if let selected = model.selectedSession {
                     Menu {
                         ShellActionItems(model: model, session: selected)
@@ -76,7 +76,7 @@ struct MainWindowView: View {
                     case .group(let group, let expanded):
                         // A row, not a Section header, so arrows and Tab reach it as
                         // they reach a group in the TUI.
-                        GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
+                        GroupRow(name: group.name, isExpanded: expanded) { animated { model.toggleGroup(group.name) } }
                             .tag(row.item)
                             .contextMenu {
                                 Button("New Session…") { model.promptNewSession(inGroup: group.name) }
@@ -99,11 +99,7 @@ struct MainWindowView: View {
                     }
                 }
                 .onMove { source, destination in
-                    switch SidebarMove(rows: rows, from: source, to: destination) {
-                    case .group(let move)?: model.moveGroup(move)
-                    case .session(let move)?: model.moveSession(move)
-                    case nil: break
-                    }
+                    if let move = SidebarMove(rows: rows, from: source, to: destination) { model.move(move) }
                 }
             }
             .listStyle(.sidebar)
@@ -125,32 +121,32 @@ struct MainWindowView: View {
     /// its cursor. Return folds a group, or hands the keyboard to the
     /// attached terminal. Tab folds the selected group; on a session it folds
     /// the session's group and moves the selection up to it, so a second Tab
-    /// opens the group again. A key with nothing to do on the row is still
-    /// handled, so the list never type-selects by it.
+    /// opens the group again. The session actions do what the Session menu's
+    /// items do, on the selected row's session. A key with nothing to do on
+    /// the row is still handled, so the list never type-selects by it.
     private func perform(_ action: Shortcut, rows: [SidebarRow], scroll proxy: ScrollViewProxy) -> KeyPress.Result {
+        // The session actions wait out an action in flight, as the menu items do.
+        let session = model.selectedSession.flatMap { model.busySessionIDs.contains($0.id) ? nil : $0 }
         switch (action, model.selection) {
         case (.moveDown, let selection), (.moveUp, let selection):
-            guard let row = SidebarRow.row(action == .moveDown ? 1 : -1, from: selection, in: rows) else { break }
+            guard let row = SidebarRow.step(by: action == .moveDown ? 1 : -1, from: selection, in: rows) else { break }
             model.select(row.item)
             proxy.scrollTo(row.id)
         case (.reorderUp, let selection), (.reorderDown, let selection):
-            guard let index = rows.firstIndex(where: { $0.item == selection }) else { break }
-            switch SidebarMove(rows: rows, moving: index, up: action == .reorderUp) {
-            case .group(let move)?: model.moveGroup(move)
-            case .session(let move)?: model.moveSession(move)
-            case nil: break
-            }
-        case (.toggleGroup, .group(let name)?), (.focusTerminal, .group(let name)?):
-            toggle(name)
+            guard let index = rows.firstIndex(where: { $0.item == selection }),
+                  let move = SidebarMove(rows: rows, moving: index, up: action == .reorderUp) else { break }
+            model.move(move)
+        case (.toggleGroup, .group(let name)?), (.activate, .group(let name)?):
+            animated { model.toggleGroup(name) }
         case (.foldGroup, .group(let name)?):
-            if !model.collapsedGroups.contains(name) { toggle(name) }
+            animated { model.foldGroup(name) }
         case (.unfoldGroup, .group(let name)?):
-            if model.collapsedGroups.contains(name) { toggle(name) }
+            animated { model.unfoldGroup(name) }
         case (.toggleGroup, .pane?), (.foldGroup, .pane?):
             guard let group = model.selectedSession?.groupName else { break }
-            if action == .toggleGroup || !model.collapsedGroups.contains(group) { toggle(group) }
+            animated { if action == .toggleGroup { model.toggleGroup(group) } else { model.foldGroup(group) } }
             model.select(.group(group))
-        case (.focusTerminal, _):
+        case (.activate, _):
             guard model.pane?.attached != nil else { return .ignored }
             terminalFocusRequest += 1
         case (.newSession, _):
@@ -159,19 +155,33 @@ struct MainWindowView: View {
             model.quickCreateSession()
         case (.cheatSheet, _):
             openWindow(id: ShortcutsView.windowID)
-        case (.rename, _), (.restart, _), (.stop, _), (.delete, _), (.splitSideBySide, _), (.openInGhostty, _):
-            guard let session = model.selectedSession, !model.busySessionIDs.contains(session.id) else { break }
-            action.run(on: session, window: model.selectedWindow, model: model)
-        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.focusSidebar, _):
+        case (.rename, _):
+            if let session { SessionPrompts.rename(session, model: model) }
+        case (.restart, _):
+            if let session { model.restartSession(session) }
+        case (.stop, _):
+            if let session, session.status != .stopped { SessionPrompts.confirmStop(session, model: model) }
+        case (.delete, _):
+            guard let session else { break }
+            if let window = model.selectedWindow {
+                SessionPrompts.confirmClose(window, in: session, model: model)
+            } else {
+                SessionPrompts.confirmDelete(session, model: model)
+            }
+        case (.splitSideBySide, _):
+            if let session { model.split(session, .sideBySide) }
+        case (.openInGhostty, _):
+            if let session { model.openInGhostty(session) }
+        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.focusTerminal, _), (.focusSidebar, _):
+            // Nothing to do on this row; the last two have no list key.
             break
         }
         return .handled
     }
 
-    private func toggle(_ group: String) {
-        withAnimation(.easeOut(duration: 0.15)) {
-            model.toggleGroup(group)
-        }
+    /// A fold, from the chevron and the keys alike.
+    private func animated(_ change: () -> Void) {
+        withAnimation(.easeOut(duration: 0.15), change)
     }
 
     /// Each group header, then, while it is open, its sessions, each with its
@@ -257,10 +267,10 @@ private struct SidebarSessionRow: View {
             Spacer(minLength: 0)
             if isHovered {
                 HStack(spacing: 4) {
-                    RowActionButton(systemImage: "pencil", help: "Rename (r)") {
+                    RowActionButton(systemImage: "pencil", help: "Rename (\(Shortcut.rename.listKeyLabel))") {
                         SessionPrompts.rename(session, model: model)
                     }
-                    RowActionButton(systemImage: "trash", help: "Delete (d)", destructive: true) {
+                    RowActionButton(systemImage: "trash", help: "Delete (\(Shortcut.delete.listKeyLabel))", destructive: true) {
                         SessionPrompts.confirmDelete(session, model: model)
                     }
                 }
@@ -291,7 +301,7 @@ private struct GroupRow: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help(isExpanded ? "Collapse (Tab)" : "Expand (Tab)")
+            .help("\(isExpanded ? "Collapse" : "Expand") (\(Shortcut.toggleGroup.listKeyLabel))")
             Text(name)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)

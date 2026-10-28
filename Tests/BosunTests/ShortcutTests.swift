@@ -7,31 +7,25 @@ private struct Trigger: Hashable, CustomStringConvertible {
     let modifiers: Set<String>
     let key: String
 
+    /// The modifiers off the front, then the key, which may itself be `+`.
     init(ghostty: Substring) {
-        (modifiers, key) = Self.peel(ghostty)
-    }
-
-    /// A `+list-keybinds` line, `super+n=new_window`: its trigger and its
-    /// action's name, arguments dropped.
-    static func keybind(_ line: Substring) -> (Trigger, String) {
-        // The key may itself be `=`, so the action starts at the first `=`
-        // past the key's first character.
-        let rest = line.dropFirst(line.count - peel(line).key.count)
-        let separator = rest.dropFirst().firstIndex(of: "=")!
-        let action = line[line.index(after: separator)...].prefix { $0 != ":" }
-        return (Trigger(ghostty: line[..<separator]), String(action))
-    }
-
-    /// The modifiers off the front, then the rest; the key may itself be
-    /// `+` or `=`.
-    private static func peel(_ text: Substring) -> (modifiers: Set<String>, key: String) {
-        var rest = text
+        var rest = ghostty
         var modifiers: Set<String> = []
         while let modifier = ["super", "ctrl", "alt", "shift"].first(where: { rest.hasPrefix("\($0)+") }) {
             modifiers.insert(modifier)
             rest = rest.dropFirst(modifier.count + 1)
         }
-        return (modifiers, String(rest))
+        self.modifiers = modifiers
+        key = String(rest)
+    }
+
+    /// A `+list-keybinds` line, `super+n=new_window`: its trigger and its
+    /// action's name, arguments dropped. The key may itself be `=`; no
+    /// action carries one, so the last `=` separates them.
+    static func keybind(_ line: Substring) -> (Trigger, String) {
+        let separator = line.lastIndex(of: "=")!
+        let action = line[line.index(after: separator)...].prefix { $0 != ":" }
+        return (Trigger(ghostty: line[..<separator]), String(action))
     }
 
     init(_ shortcut: KeyboardShortcut) {
@@ -187,7 +181,7 @@ private let appMenuItems = "super+h super+alt+h super+m super+x super+ctrl+s sup
         ("N", .shift, .quickSession),
         ("n", .capsLock, .newSession),
         ("?", .shift, .cheatSheet),
-        (.return, [], .focusTerminal),
+        (.return, [], .activate),
         (.return, .shift, .openInGhostty),
         ("j", [], .moveDown),
     ] as [(KeyEquivalent, EventModifiers, Shortcut)])
@@ -204,6 +198,17 @@ private let appMenuItems = "super+h super+alt+h super+m super+x super+ctrl+s sup
     ] as [(KeyEquivalent, EventModifiers)])
     func modifiedKeyIsNotAListKey(key: KeyEquivalent, modifiers: EventModifiers) {
         #expect(Shortcut.listAction(key: key, modifiers: modifiers) == nil)
+    }
+
+    /// Shift stays a modifier on a key that types nothing, AppKit's
+    /// function keys included: a shifted arrow must never match an
+    /// unshifted list key. A typed character carries its own Shift.
+    @Test(arguments: [
+        (KeyEquivalent.return, false), (.tab, false), (.upArrow, false), (.home, false),
+        ("N", true), ("?", true), (.space, true),
+    ] as [(KeyEquivalent, Bool)])
+    func shiftRidesOnTypedCharactersOnly(key: KeyEquivalent, typesCharacter: Bool) {
+        #expect(key.typesCharacter == typesCharacter)
     }
 
     /// The pane hands these to the menu bar; AppKit reports Shift in the

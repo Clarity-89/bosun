@@ -3,7 +3,8 @@ import SwiftUI
 
 /// Every keyboard shortcut Bosun has, in one table: the menus bind from it,
 /// the session list handles from it and the cheat sheet lists it, so none
-/// of the three can drift from the others.
+/// of the three can drift from the others. The table holds the keys; what
+/// an action does lives with its menu item and in the list's `perform`.
 ///
 /// `listKey` is the TUI's key for the action and works while the session
 /// list has focus, so a letter never reaches the terminal. `menu` works
@@ -14,7 +15,7 @@ import SwiftUI
 /// checks that against Ghostty's defaults.
 enum Shortcut: CaseIterable {
     case moveDown, moveUp
-    case toggleGroup, foldGroup, unfoldGroup
+    case activate, toggleGroup, foldGroup, unfoldGroup
     case reorderUp, reorderDown
     case newSession, quickSession
     case rename, restart, stop, delete
@@ -29,16 +30,18 @@ enum Shortcut: CaseIterable {
 
     var section: Section {
         switch self {
-        case .moveDown, .moveUp, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: .sessionList
+        case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: .sessionList
         case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty: .sessions
         case .focusTerminal, .focusSidebar, .cheatSheet: .window
         }
     }
 
+    /// What the action does, as the cheat sheet puts it.
     var title: String {
         switch self {
         case .moveDown: "Select the next row"
         case .moveUp: "Select the previous row"
+        case .activate: "Focus the terminal; on a group, fold or unfold it"
         case .toggleGroup: "Fold or unfold the group"
         case .foldGroup: "Fold the group; from a session, select its group"
         case .unfoldGroup: "Unfold the group"
@@ -48,7 +51,7 @@ enum Shortcut: CaseIterable {
         case .quickSession: "Quick session, with the dialog's defaults"
         case .rename: "Rename the session…"
         case .restart: "Restart the session, or start a stopped one"
-        case .stop: "Stop the session"
+        case .stop: "Stop the session…"
         case .delete: "Delete the session, or close the selected window…"
         case .splitSideBySide: "Open a shell beside the session's agent"
         case .openInGhostty: "Open the session in a Ghostty window"
@@ -63,6 +66,7 @@ enum Shortcut: CaseIterable {
         switch self {
         case .moveDown: "j"
         case .moveUp: "k"
+        case .activate, .openInGhostty: .return
         case .toggleGroup: .tab
         case .foldGroup: "h"
         case .unfoldGroup: "l"
@@ -75,9 +79,8 @@ enum Shortcut: CaseIterable {
         case .stop: "D"
         case .delete: "d"
         case .splitSideBySide: "H"
-        case .openInGhostty, .focusTerminal: .return
-        case .focusSidebar: nil
         case .cheatSheet: "?"
+        case .focusTerminal, .focusSidebar: nil
         }
     }
 
@@ -93,22 +96,20 @@ enum Shortcut: CaseIterable {
         }
     }
 
-    /// The list key as the cheat sheet shows it, with the other key that
-    /// does the same.
-    var listKeyLabel: String? {
+    /// The list key as the cheat sheet shows it, with the arrow key the
+    /// list takes for the same move; empty where the list has no key.
+    var listKeyLabel: String {
         switch self {
         case .moveDown: "j / ↓"
         case .moveUp: "k / ↑"
-        case .toggleGroup: "⇥ / ↩"
-        case .openInGhostty: "⇧↩"
-        default: listKey.map(\.symbol)
+        default: listKey.map { (listKeyShifted ? "⇧" : "") + $0.symbol } ?? ""
         }
     }
 
     /// The menu bar's shortcut; nil for an action only the list has a key for.
     var menu: KeyboardShortcut? {
         switch self {
-        case .moveDown, .moveUp, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: nil
+        case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: nil
         case .newSession: KeyboardShortcut("n")
         case .quickSession: KeyboardShortcut("n", modifiers: [.command, .shift])
         case .rename: KeyboardShortcut("r")
@@ -122,6 +123,9 @@ enum Shortcut: CaseIterable {
         case .cheatSheet: KeyboardShortcut("/")
         }
     }
+
+    /// The menu shortcut as a menu prints it; empty where there is none.
+    var menuLabel: String { menu?.label ?? "" }
 
     static let listKeys = Set(allCases.compactMap(\.listKey))
 
@@ -184,46 +188,9 @@ extension KeyEquivalent {
     }
 
     /// Whether the key types a character, which then carries Shift: N, ?.
-    /// Return and Tab do not.
+    /// Return, Tab, ⌫ and Escape are ASCII controls; AppKit puts the other
+    /// function keys (arrows, Home, F1…) in the Private Use Area, U+F700 up.
     var typesCharacter: Bool {
-        character.unicodeScalars.allSatisfy { $0.properties.generalCategory != .control }
-    }
-}
-
-/// The cheat sheet, from the same table the keys use.
-struct ShortcutsView: View {
-    static let windowID = "shortcuts"
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 6) {
-                GridRow {
-                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-                    Text("In the list")
-                    Text("Anywhere")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                ForEach(Shortcut.Section.allCases, id: \.self) { section in
-                    Text(section.rawValue)
-                        .font(.headline)
-                        .padding(.top, 8)
-                    ForEach(Shortcut.allCases.filter { $0.section == section }, id: \.self) { action in
-                        GridRow {
-                            Text(action.title)
-                            Text(action.listKeyLabel ?? "")
-                            Text(action.menu?.label ?? "")
-                        }
-                    }
-                }
-            }
-            Text("List keys work while the session list has focus; \(Shortcut.focusSidebar.menu?.label ?? "") puts it there. The others work anywhere in the window, the terminal included.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 420, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(20)
-        .fixedSize()
+        character.unicodeScalars.allSatisfy { ![.control, .privateUse].contains($0.properties.generalCategory) }
     }
 }

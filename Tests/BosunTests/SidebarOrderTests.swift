@@ -138,17 +138,17 @@ private func session(_ id: String, title: String = "", group: String) -> DeckSes
     }
 
     @Test func nextRowCanBeAWindow() {
-        #expect(SidebarRow.row(1, from: Self.pane("s1"), in: rows)?.item == Self.pane("s1", window: "@3"))
+        #expect(SidebarRow.step(by: 1, from: Self.pane("s1"), in: rows)?.item == Self.pane("s1", window: "@3"))
     }
 
     @Test(arguments: [(-1, SidebarItem.group("g1")), (1, .pane(PaneTarget(sessionID: "t1")))])
     func stepHoldsAtEitherEnd(offset: Int, selection: SidebarItem) {
-        #expect(SidebarRow.row(offset, from: selection, in: rows)?.item == selection)
+        #expect(SidebarRow.step(by: offset, from: selection, in: rows)?.item == selection)
     }
 
     @Test func withoutSelectionJStartsAtTheTopAndKAtTheBottom() {
-        #expect(SidebarRow.row(1, from: nil, in: rows)?.item == .group("g1"))
-        #expect(SidebarRow.row(-1, from: nil, in: rows)?.item == Self.pane("t1"))
+        #expect(SidebarRow.step(by: 1, from: nil, in: rows)?.item == .group("g1"))
+        #expect(SidebarRow.step(by: -1, from: nil, in: rows)?.item == Self.pane("t1"))
     }
 
     /// A session its folded group hides steps from the group's header, not
@@ -159,6 +159,6 @@ private func session(_ id: String, title: String = "", group: String) -> DeckSes
             .group(SessionGroup(name: "g2", sessions: [SidebarMoveTests.t1]), expanded: true),
             .session(SidebarMoveTests.t1),
         ]
-        #expect(SidebarRow.row(1, from: Self.pane("s2"), in: folded)?.item == .group("g2"))
+        #expect(SidebarRow.step(by: 1, from: Self.pane("s2"), in: folded)?.item == .group("g2"))
     }
 }
