@@ -17,7 +17,7 @@ struct MainWindowView: View {
             detail
         }
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
-        .focusedSceneValue(\.terminalFocusRequest, model.pane?.attached == nil ? nil : $terminalFocusRequest)
+        .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil ? nil : $terminalFocusRequest)
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -57,7 +57,7 @@ struct MainWindowView: View {
     /// Names what the pane shows, which a selected group row leaves as it was.
     private var titleText: String {
         guard let shown = model.paneSession else { return "Bosun" }
-        guard let title = model.pane?.attached?.title, !title.isEmpty else { return shown.title }
+        guard let title = model.attachedPane?.title, !title.isEmpty else { return shown.title }
         return "\(shown.title) · \(title)"
     }
 
@@ -159,7 +159,7 @@ struct MainWindowView: View {
             animated { if action == .toggleGroup { model.toggleGroup(group) } else { model.foldGroup(group) } }
             model.select(.group(group))
         case (.activate, _):
-            guard model.pane?.attached != nil else { return .ignored }
+            guard model.attachedPane != nil else { return .ignored }
             terminalFocusRequest += 1
         case (.newSession, _):
             model.promptNewSession()
@@ -207,23 +207,36 @@ struct MainWindowView: View {
         }
     }
 
-    @ViewBuilder
+    /// Every live pane stays in the view tree, hidden unless shown, so its
+    /// tmux client outlives a switch and showing it again is instant.
     private var detail: some View {
-        if case .attached(let pane)? = model.pane {
-            TerminalHost(launch: pane.launch, focusRequest: terminalFocusRequest) { title in
-                model.paneTitleChanged(sessionID: pane.sessionID, title: title)
-            } onExit: { exit in
-                model.paneExited(sessionID: pane.sessionID, exit: exit)
+        let shown = model.attachedPane?.id
+        return ZStack {
+            ForEach(model.livePanes) { live in
+                TerminalHost(
+                    launch: live.launch,
+                    isShown: live.id == shown,
+                    awaitsInput: model.sizeYieldingPaneIDs.contains(live.id),
+                    focusRequest: terminalFocusRequest
+                ) { title in
+                    model.paneTitleChanged(paneID: live.id, title: title)
+                } onInput: {
+                    model.paneReceivedInput(paneID: live.id)
+                } onExit: { exit in
+                    model.paneExited(paneID: live.id, exit: exit)
+                }
             }
-            .id(pane.sessionID)
-        } else if let session = model.paneSession {
-            NotRunningPane(model: model, session: session)
-        } else {
-            ContentUnavailableView(
-                "Select a session",
-                systemImage: "rectangle.stack",
-                description: Text(model.engineError ?? "The session attaches here, inside Bosun.")
-            )
+            if shown == nil {
+                if let session = model.paneSession {
+                    NotRunningPane(model: model, session: session)
+                } else {
+                    ContentUnavailableView(
+                        "Select a session",
+                        systemImage: "rectangle.stack",
+                        description: Text(model.engineError ?? "The session attaches here, inside Bosun.")
+                    )
+                }
+            }
         }
     }
 

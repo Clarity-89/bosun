@@ -21,7 +21,22 @@ final class DeckModel {
     private var statusOwner: StatusOwner?
     private(set) var lastError: String?
     private(set) var selection: SidebarItem?
-    private(set) var pane: SessionPane?
+    private(set) var pane: SessionPane? {
+        didSet {
+            if let hidden = oldValue?.attachedSessionID, hidden != pane?.attachedSessionID { yieldSize(ofHidden: hidden) }
+        }
+    }
+    /// Panes whose tmux client leaves its window's size to the other
+    /// clients: the hidden ones, and the shown one while someone else is on
+    /// its window, until you type or click in it. tmux gives a window one
+    /// size, and agent-deck's `window-size latest` gives it to the client
+    /// used last, so showing a session in Bosun would shrink the TUI's.
+    private(set) var sizeYieldingPaneIDs: Set<UUID> = []
+    /// Five terminals stay attached, so switching back to a recent session
+    /// shows it at once; each costs a tmux client and a hidden surface.
+    private var recent = RecentPanes(limit: 5)
+    @ObservationIgnored private var viewSequence = 0
+    @ObservationIgnored private var attachingSessionIDs: Set<String> = []
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
@@ -98,6 +113,15 @@ final class DeckModel {
         return sessions.first { $0.id == pane.sessionID }
     }
 
+    /// Every attached terminal, shown or kept for a quick switch back.
+    var livePanes: [AttachedPane] { recent.panes }
+
+    /// The terminal the pane shows; nil while it shows Restart or nothing.
+    var attachedPane: AttachedPane? {
+        guard case .attached(let sessionID)? = pane else { return nil }
+        return recent.pane(for: sessionID)
+    }
+
     /// `sessions` is kept sorted by group, so consecutive rows form a group.
     var groups: [SessionGroup] {
         var groups: [SessionGroup] = []
@@ -139,6 +163,9 @@ final class DeckModel {
         for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask] {
             task?.cancel()
         }
+        // A view ends with its tmux client, and the clients end with Bosun;
+        // this also ends one created but never attached.
+        cli.killViewsWithoutWaiting(recent.panes.compactMap(\.view))
     }
 
     /// One `list --json` at a time: it runs a status pass, and a slower call
@@ -194,6 +221,7 @@ final class DeckModel {
             if case .notRunning(let sessionID)? = pane, !sessions.contains(where: { $0.id == sessionID }) {
                 closePane()
             }
+            dropStalePanes()
             await loadAllWindows()
         } catch is CancellationError {
         } catch {
@@ -203,14 +231,14 @@ final class DeckModel {
         }
     }
 
-    /// Shows the target in the pane. Attaching runs `agent-deck session
-    /// attach`, a tmux client, so the agent keeps running when the pane goes
-    /// away. A stopped session gets Restart instead, as its attach would exit
-    /// at once. Every other status attaches: `error` can be an agent that is
-    /// alive but blocked, and an attach that finds nothing falls back to
-    /// Restart through `paneExited`. A window row first switches the
-    /// session's current window, as the TUI's window rows do. A group row
-    /// leaves the pane as it is.
+    /// Shows the target in the pane. A session shown lately is still
+    /// attached and shows at once. Otherwise a new tmux client attaches, on
+    /// Bosun's own view of the session, so the agent keeps running when the
+    /// pane goes away. A stopped session gets Restart instead, as its attach
+    /// would exit at once. Every other status attaches: `error` can be an
+    /// agent that is alive but blocked, and an attach that finds nothing
+    /// falls back to Restart through `paneExited`. A group row leaves the
+    /// pane as it is.
     func select(_ item: SidebarItem?) {
         selection = item
         guard let item else {
@@ -218,27 +246,136 @@ final class DeckModel {
             return
         }
         guard case .pane(let target) = item else { return }
-        if let windowID = target.windowID {
-            run("select window") { [cli] in try await cli.selectWindow(windowID: windowID) }
-        }
-        // Only a terminal is kept; a pane offering Restart tries again, as
-        // the row may have caught up with the session.
-        guard pane?.attached?.sessionID != target.sessionID else { return }
-        if sessions.first(where: { $0.id == target.sessionID })?.status == .stopped {
+        if let live = recent.touch(target.sessionID) {
+            pane = .attached(sessionID: target.sessionID)
+            show(target.windowID, in: live)
+        } else if sessions.first(where: { $0.id == target.sessionID })?.status == .stopped {
             pane = .notRunning(sessionID: target.sessionID)
         } else {
-            attach(target.sessionID)
+            attach(target)
         }
     }
 
-    private func attach(_ sessionID: String) {
+    /// A window row's window, or the agent's for the session row, selected
+    /// in the pane's view so no other client moves. Without a view a window
+    /// row moves the session's current window for every client, as the
+    /// TUI's window rows do.
+    private func show(_ windowID: String?, in live: AttachedPane) {
+        if let view = live.view {
+            run("select window") { [cli] in try await cli.selectWindow(windowID, inView: view) } then: { [weak self] in
+                await self?.settleSize(of: live)
+            }
+        } else if let windowID {
+            run("select window") { [cli] in try await cli.selectWindow(windowID: windowID) }
+        }
+    }
+
+    /// The shown pane sizes its window unless someone else is on it; then
+    /// it leaves the size alone until you type or click in it.
+    private func settleSize(of live: AttachedPane) async {
+        guard let view = live.view else { return }
+        let yields = await cli.someoneElseOnWindow(ofView: view)
+        guard attachedPane?.id == live.id else { return }
+        if yields { sizeYieldingPaneIDs.insert(live.id) } else { sizeYieldingPaneIDs.remove(live.id) }
+        await cli.setSizesWindow(!yields, view: view)
+    }
+
+    private func yieldSize(ofHidden sessionID: String) {
+        guard let hidden = recent.pane(for: sessionID), let view = hidden.view else { return }
+        sizeYieldingPaneIDs.insert(hidden.id)
+        Task { [cli] in await cli.setSizesWindow(false, view: view) }
+    }
+
+    /// Typing or clicking in a pane makes it the client used last, so it
+    /// takes its window's size, as agent-deck's `window-size latest` has it.
+    func paneReceivedInput(paneID: UUID) {
+        guard sizeYieldingPaneIDs.remove(paneID) != nil, let view = recent.panes.first(where: { $0.id == paneID })?.view else { return }
+        Task { [cli] in await cli.setSizesWindow(true, view: view) }
+    }
+
+    /// Opens a pane for the target and keeps it with the recent ones,
+    /// unless the selection moved on while tmux answered.
+    private func attach(_ target: PaneTarget) {
         guard let binary else {
             lastError = "agent-deck is still starting"
             return
         }
-        pane = .attached(AttachedPane(sessionID: sessionID, launch: binary.attachLaunch(sessionID: sessionID)))
-        logger.info("attached \(sessionID, privacy: .public) in window")
-        Task { await loadAllWindows() }
+        let sessionID = target.sessionID
+        guard attachingSessionIDs.insert(sessionID).inserted else { return }
+        let tmuxSession = sessions.first { $0.id == sessionID }?.tmuxSession
+        viewSequence += 1
+        let view = ViewSession.name(sequence: viewSequence)
+        Task {
+            let (live, yieldsSize) = await openPane(sessionID: sessionID, tmuxSession: tmuxSession, view: view, window: target.windowID, binary: binary)
+            attachingSessionIDs.remove(sessionID)
+            guard case .pane(let now)? = selection, now.sessionID == sessionID else {
+                end(live)
+                return
+            }
+            for leaving in recent.add(live) {
+                end(leaving)
+            }
+            if yieldsSize { sizeYieldingPaneIDs.insert(live.id) }
+            pane = .attached(sessionID: sessionID)
+            if now.windowID != target.windowID { show(now.windowID, in: live) }
+            logger.info("attached \(sessionID, privacy: .public) in window, view \(live.view ?? "none", privacy: .public)")
+            await loadAllWindows()
+        }
+    }
+
+    /// A view grouped with the session, showing the target's window before
+    /// the client attaches, and attaching with `ignore-size` when someone
+    /// else is on that window. A session tmux's default server does not have
+    /// attaches through agent-deck instead, which knows its socket.
+    private func openPane(
+        sessionID: String, tmuxSession: String?, view: String, window: String?, binary: AgentDeckBinary
+    ) async -> (AttachedPane, yieldsSize: Bool) {
+        if let tmuxSession {
+            do {
+                try await cli.createView(view, grouping: tmuxSession)
+                try? await cli.selectWindow(window, inView: view)
+                let yields = await cli.someoneElseOnWindow(ofView: view)
+                let launch = try cli.viewAttachLaunch(view, yieldsSize: yields)
+                return (AttachedPane(sessionID: sessionID, tmuxSession: tmuxSession, view: view, launch: launch), yields)
+            } catch {
+                await cli.killView(view)
+                logger.info("no view of \(tmuxSession, privacy: .public), attaching through agent-deck: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if let window {
+            try? await cli.selectWindow(windowID: window)
+        }
+        return (AttachedPane(sessionID: sessionID, tmuxSession: tmuxSession, view: nil, launch: binary.attachLaunch(sessionID: sessionID)), false)
+    }
+
+    /// Its terminal goes with it once it leaves `recent`; the view would
+    /// otherwise hold on to windows agent-deck has let go.
+    private func end(_ pane: AttachedPane) {
+        sizeYieldingPaneIDs.remove(pane.id)
+        guard let view = pane.view else { return }
+        Task { [cli] in await cli.killView(view) }
+    }
+
+    /// Ends the panes whose session went away, stopped, or came back under
+    /// another tmux name. Where the pane showed one, it offers Restart, or
+    /// attaches the session again after a rename.
+    private func dropStalePanes() {
+        for stale in recent.removeStale(given: sessions) {
+            end(stale)
+            guard case .attached(stale.sessionID)? = pane else { continue }
+            guard let session = sessions.first(where: { $0.id == stale.sessionID }) else {
+                closePane()
+                continue
+            }
+            if session.status == .stopped {
+                pane = .notRunning(sessionID: session.id)
+            } else if case .pane(let target)? = selection, target.sessionID == session.id {
+                pane = nil
+                attach(target)
+            } else {
+                pane = nil
+            }
+        }
     }
 
     /// Opens the New Session dialog on the group it creates in: `groupName`,
@@ -286,7 +423,7 @@ final class DeckModel {
             pane = .notRunning(sessionID: sessionID)
             lastError = startError
         } else {
-            attach(sessionID)
+            attach(PaneTarget(sessionID: sessionID))
         }
     }
 
@@ -318,22 +455,29 @@ final class DeckModel {
         (windowsBySession[sessionID] ?? []).dropFirst()
     }
 
-    /// "Open shell here" as a new tmux window in the session's directory.
+    /// "Open shell here" as a new tmux window in the session's directory,
+    /// shown in Bosun's view while other clients stay on their window.
     func newShellWindow(in session: DeckSession) {
-        guard let tmuxSession = session.tmuxSession else { return }
+        guard let target = shellTarget(session) else { return }
         run("new window") { [cli] in
-            try await cli.newShellWindow(tmuxSession: tmuxSession, workingDirectory: session.path)
+            try await cli.newShellWindow(tmuxSession: target, workingDirectory: session.path)
         } then: { [weak self] in
             await self?.loadAllWindows()
         }
     }
 
-    /// "Open shell here" as a split of the session's active window.
+    /// "Open shell here" as a split of the window Bosun shows.
     func split(_ session: DeckSession, _ direction: SplitDirection) {
-        guard let tmuxSession = session.tmuxSession else { return }
+        guard let target = shellTarget(session) else { return }
         run("split") { [cli] in
-            try await cli.splitShellPane(tmuxSession: tmuxSession, direction: direction, workingDirectory: session.path)
+            try await cli.splitShellPane(tmuxSession: target, direction: direction, workingDirectory: session.path)
         }
+    }
+
+    /// The session's view when Bosun has one, whose current window is the
+    /// one Bosun shows; else agent-deck's session.
+    private func shellTarget(_ session: DeckSession) -> String? {
+        recent.pane(for: session.id)?.view ?? session.tmuxSession
     }
 
     func closeWindow(_ window: SessionWindow, in session: DeckSession) {
@@ -352,7 +496,7 @@ final class DeckModel {
     /// what it started.
     func restartSession(_ session: DeckSession) {
         lifecycle("restart", session, { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
-            if case .notRunning(session.id)? = self?.pane { self?.attach(session.id) }
+            if case .notRunning(session.id)? = self?.pane { self?.attach(PaneTarget(sessionID: session.id)) }
         }
     }
 
@@ -415,25 +559,25 @@ final class DeckModel {
         }
     }
 
-    func paneTitleChanged(sessionID: String, title: String) {
-        guard case .attached(var attached)? = pane, attached.sessionID == sessionID else { return }
-        attached.title = title
-        pane = .attached(attached)
+    func paneTitleChanged(paneID: UUID, title: String) {
+        recent.setTitle(title, of: paneID)
     }
 
-    /// The tmux client ended. A Ctrl-Q detach or a stop closes the pane; the
+    /// The tmux client ended. A tmux detach or a stop closes the pane; the
     /// agent itself is untouched. An attach that ended at once found nothing
     /// to attach to, whatever the row said, so the pane offers to restart the
-    /// session and the list catches up.
-    func paneExited(sessionID: String, exit: ProcessExit) {
-        guard pane?.attached?.sessionID == sessionID else { return }
+    /// session and the list catches up. A hidden pane just goes.
+    func paneExited(paneID: UUID, exit: ProcessExit) {
+        guard let ended = recent.remove(paneID) else { return }
+        end(ended)
+        guard case .attached(ended.sessionID)? = pane else { return }
         switch exit {
         case .normal:
             closePane()
-            logger.info("pane for \(sessionID, privacy: .public) exited")
+            logger.info("pane for \(ended.sessionID, privacy: .public) exited")
         case .abnormal:
-            pane = .notRunning(sessionID: sessionID)
-            logger.info("attach to \(sessionID, privacy: .public) ended at once")
+            pane = .notRunning(sessionID: ended.sessionID)
+            logger.info("attach to \(ended.sessionID, privacy: .public) ended at once")
             Task { await refresh() }
         }
     }
@@ -467,6 +611,7 @@ final class DeckModel {
             let binary = try await cli.binary()
             self.binary = binary
             logger.info("using \(binary.path, privacy: .public) v\(binary.version, privacy: .public)")
+            await cli.killOrphanViews()
             statusEventsEnabled = try await cli.statusEventsEnabled()
             // Cursor before the list: anything published in between is
             // replayed onto the fresh list instead of being missed.
@@ -599,6 +744,7 @@ final class DeckModel {
         // The bus carries no substate, and the old one described the previous status.
         sessions[index].substate = nil
         logger.info("status \(frame.sessionID, privacy: .public) -> \(change.to.rawValue, privacy: .public)")
+        if change.to == .stopped { dropStalePanes() }
     }
 
     /// A frame for a session the list does not know yet (created since the
@@ -650,29 +796,21 @@ struct NewSessionPrompt: Identifiable {
 
 /// What the pane shows for a session.
 enum SessionPane {
-    /// Its terminal.
-    case attached(AttachedPane)
+    /// Its terminal, one of the live panes.
+    case attached(sessionID: String)
     /// Restart, while the session is not running.
     case notRunning(sessionID: String)
 
     var sessionID: String {
         switch self {
-        case .attached(let attached): attached.sessionID
-        case .notRunning(let sessionID): sessionID
+        case .attached(let sessionID), .notRunning(let sessionID): sessionID
         }
     }
 
-    /// Nil while the session is not running.
-    var attached: AttachedPane? {
-        if case .attached(let attached) = self { attached } else { nil }
+    /// Nil while it offers Restart.
+    var attachedSessionID: String? {
+        if case .attached(let sessionID) = self { sessionID } else { nil }
     }
-}
-
-/// The session attached in the pane and the title its terminal reports.
-struct AttachedPane {
-    let sessionID: String
-    let launch: AttachLaunch
-    var title = ""
 }
 
 extension DeckSession {

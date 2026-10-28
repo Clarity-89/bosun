@@ -24,11 +24,15 @@ public final class TerminalPane: NSView {
     /// Whether a ⌘ key belongs to the app's menu bar, which then gets it
     /// before the engine's keybinds do; nil leaves every key to the engine.
     public var yieldsKeyEquivalent: ((NSEvent) -> Bool)?
+    /// A key typed, or a click or scroll, in the terminal, once
+    /// `setAwaitsInput(true)` asked for it; ⌘ keys are the menu bar's.
+    public var onInput: (() -> Void)?
 
     private let command: String
     private let environment: [String: String]
     private let surfaceView = SurfaceView(frame: .zero)
     private var started = false
+    private var inputMonitor: Any?
 
     /// libghostty runs `command` as `sh -c "exec <command>"` through `login`.
     /// `environment` is added to the child's, with `TERM_PROGRAM` naming Bosun.
@@ -77,10 +81,53 @@ public final class TerminalPane: NSView {
         window?.makeFirstResponder(surfaceView)
     }
 
+    /// A hidden pane keeps its command running but draws nothing and gives
+    /// up the keyboard, which would otherwise type into a terminal no one
+    /// sees.
+    public func setShown(_ shown: Bool) {
+        guard isHidden == shown else { return }
+        isHidden = !shown
+        if !shown, let window, window.firstResponder === surfaceView {
+            window.makeFirstResponder(nil)
+        }
+        // The engine's flag means visible (`ghostty_surface_set_occlusion` in
+        // apprt/embedded.zig), whatever the vendored wrapper calls it.
+        surfaceView.surfaceController?.setOcclusion(shown)
+    }
+
+    /// Watches for the next input in the terminal and reports it through
+    /// `onInput`, then stops; a monitor runs only while asked for.
+    public func setAwaitsInput(_ awaits: Bool) {
+        guard awaits != (inputMonitor != nil) else { return }
+        if let inputMonitor {
+            NSEvent.removeMonitor(inputMonitor)
+            self.inputMonitor = nil
+            return
+        }
+        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]) { [weak self] event in
+            MainActor.assumeIsolated {
+                if let self, self.isInput(event) {
+                    self.setAwaitsInput(false)
+                    self.onInput?()
+                }
+            }
+            return event
+        }
+    }
+
+    private func isInput(_ event: NSEvent) -> Bool {
+        guard !isHidden, let window, event.window === window else { return false }
+        if event.type == .keyDown {
+            return window.firstResponder === surfaceView && !event.modifierFlags.contains(.command)
+        }
+        return surfaceView.bounds.contains(surfaceView.convert(event.locationInWindow, from: nil))
+    }
+
     /// Frees the engine surface now. It also dies with the view, but a
     /// dismantled pane may linger before deallocation; this ends the tmux
     /// client at once.
     public func teardown() {
+        setAwaitsInput(false)
         surfaceView.teardownSurface()
     }
 

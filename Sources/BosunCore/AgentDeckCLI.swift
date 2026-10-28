@@ -41,8 +41,9 @@ public struct AgentDeckBinary: Sendable {
     var directory: String { URL(fileURLWithPath: path).deletingLastPathComponent().path }
 }
 
-/// Command line and environment for an embedded `session attach`: a tmux
-/// client, so the agent keeps running when the pane goes away.
+/// Command line and environment for an embedded tmux client, on Bosun's
+/// view of a session or through `session attach`, so the agent keeps
+/// running when the pane goes away.
 public struct AttachLaunch: Sendable {
     public let command: String
     public let environment: [String: String]

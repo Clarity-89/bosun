@@ -57,18 +57,22 @@ extension AgentDeckCLI {
         return SessionWindow.parse(listOutput: result.stdout)
     }
 
-    /// Mirrors the TUI's "open shell here" as a new window.
+    /// Mirrors the TUI's "open shell here" as a new window. `tmuxSession` is
+    /// the agent-deck session or Bosun's view of it, which then shows the
+    /// window while other clients stay where they are.
     public func newShellWindow(tmuxSession: String, workingDirectory: String?) async throws {
-        try await openShell(["new-window", "-t", tmuxSession], workingDirectory: workingDirectory)
+        try await openShell(["new-window", "-t", "=\(tmuxSession):"], workingDirectory: workingDirectory)
     }
 
-    /// Mirrors the TUI's "open shell here" as a split of the active window.
+    /// Mirrors the TUI's "open shell here" as a split of the active window
+    /// of `tmuxSession`, the agent-deck session or Bosun's view of it.
     public func splitShellPane(tmuxSession: String, direction: SplitDirection, workingDirectory: String?) async throws {
-        try await openShell(["split-window", direction.tmuxFlag, "-t", tmuxSession], workingDirectory: workingDirectory)
+        try await openShell(["split-window", direction.tmuxFlag, "-t", "=\(tmuxSession):"], workingDirectory: workingDirectory)
     }
 
     /// tmux's current window is per session; every client attached to the
-    /// session follows this switch, as with the TUI's window rows.
+    /// session follows this switch, as with the TUI's window rows. Bosun's
+    /// own panes select in their view instead (`selectWindow(_:inView:)`).
     public func selectWindow(windowID: String) async throws {
         try await tmux(["select-window", "-t", windowID]).checkSucceeded()
     }
@@ -89,12 +93,18 @@ extension AgentDeckCLI {
     /// tmux as the agent-deck binary's children see it: PATH lookup in the
     /// child environment, which already includes the package-manager
     /// prefixes a GUI launch would otherwise miss.
-    private func tmux(_ arguments: [String]) async throws -> ProcessResult {
-        let environment = Self.childEnvironment(binaryDirectory: nil)
-        let tmux = (environment["PATH"] ?? "").split(separator: ":").lazy
+    func tmux(_ arguments: [String]) async throws -> ProcessResult {
+        try await Subprocess.run(
+            executable: try Self.tmuxPath(), arguments: arguments,
+            environment: Self.childEnvironment(binaryDirectory: nil), timeout: .seconds(10)
+        )
+    }
+
+    static func tmuxPath() throws -> String {
+        let path = (childEnvironment(binaryDirectory: nil)["PATH"] ?? "").split(separator: ":").lazy
             .map { "\($0)/tmux" }
             .first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let tmux else { throw SubprocessError.launchFailed(command: "tmux", reason: "not found on PATH") }
-        return try await Subprocess.run(executable: tmux, arguments: arguments, environment: environment, timeout: .seconds(10))
+        guard let path else { throw SubprocessError.launchFailed(command: "tmux", reason: "not found on PATH") }
+        return path
     }
 }
