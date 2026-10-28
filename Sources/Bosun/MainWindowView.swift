@@ -20,7 +20,7 @@ struct MainWindowView: View {
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if let selected {
+                if let selected = model.selectedSession {
                     Menu {
                         shellActions(for: selected)
                     } label: {
@@ -44,15 +44,10 @@ struct MainWindowView: View {
         }
     }
 
-    private var selected: DeckSession? {
-        guard let id = model.selection?.sessionID else { return nil }
-        return model.sessions.first { $0.id == id }
-    }
-
+    /// Names what the pane shows, which a selected group row leaves as it was.
     private var titleText: String {
-        guard let selected else { return "Bosun" }
-        guard let pane = model.pane, pane.sessionID == selected.id, !pane.title.isEmpty else { return selected.title }
-        return "\(selected.title) · \(pane.title)"
+        guard let pane = model.pane, let shown = model.sessions.first(where: { $0.id == pane.sessionID }) else { return "Bosun" }
+        return pane.title.isEmpty ? shown.title : "\(shown.title) · \(pane.title)"
     }
 
     private var sidebar: some View {
@@ -61,14 +56,19 @@ struct MainWindowView: View {
             set: { model.select($0) }
         )) {
             ForEach(model.groups) { group in
-                Section(group.name) {
+                let expanded = !model.collapsedGroups.contains(group.name)
+                // A row, not a Section header, so arrows and Tab reach it as
+                // they reach a group in the TUI.
+                GroupRow(name: group.name, isExpanded: expanded) { toggle(group.name) }
+                    .tag(SidebarItem.group(group.name))
+                if expanded {
                     ForEach(group.sessions) { session in
-                        SessionRow(session: session)
-                            .tag(PaneTarget(sessionID: session.id))
+                        SidebarSessionRow(model: model, session: session)
+                            .tag(SidebarItem.pane(PaneTarget(sessionID: session.id)))
                             .contextMenu { sessionMenu(for: session) }
                         ForEach(model.extraWindows(for: session.id)) { window in
                             WindowRow(window: window)
-                                .tag(PaneTarget(sessionID: session.id, windowID: window.windowID))
+                                .tag(SidebarItem.pane(PaneTarget(sessionID: session.id, windowID: window.windowID)))
                                 .contextMenu {
                                     Button("Close Window", role: .destructive) {
                                         model.closeWindow(window, in: session)
@@ -81,15 +81,49 @@ struct MainWindowView: View {
         }
         .listStyle(.sidebar)
         .focused($sidebarFocused)
-        // Arrow keys keep navigating the list; Return hands the keyboard to
-        // the attached terminal.
-        .onKeyPress(.return) {
-            guard model.pane != nil else { return .ignored }
-            terminalFocusRequest += 1
-            return .handled
+        // Only the focused list sees these keys, so every letter still
+        // reaches the terminal.
+        .onKeyPress(keys: [.return, .tab, "d", "r"]) { press in
+            press.modifiers.isEmpty ? handle(press.key) : .ignored
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footer
+        }
+    }
+
+    /// The TUI's keys. Return folds a group, or hands the keyboard to the
+    /// attached terminal. Tab folds the selected group; on a session it folds
+    /// the session's group and moves the selection up to it, so a second Tab
+    /// opens the group again. d deletes and r renames the selected session.
+    private func handle(_ key: KeyEquivalent) -> KeyPress.Result {
+        switch (key, model.selection) {
+        case (.return, .group(let name)?), (.tab, .group(let name)?):
+            toggle(name)
+        case (.return, _):
+            guard model.pane != nil else { return .ignored }
+            terminalFocusRequest += 1
+        case (.tab, .pane?):
+            guard let session = model.selectedSession else { return .ignored }
+            toggle(session.groupName)
+            model.select(.group(session.groupName))
+        case ("d", .pane(let target)?), ("r", .pane(let target)?):
+            guard target.windowID == nil, let session = model.selectedSession,
+                  !model.busySessionIDs.contains(session.id)
+            else { return .ignored }
+            if key == "d" {
+                SessionPrompts.confirmDelete(session, model: model)
+            } else {
+                SessionPrompts.rename(session, model: model)
+            }
+        default:
+            return .ignored
+        }
+        return .handled
+    }
+
+    private func toggle(_ group: String) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            model.toggleGroup(group)
         }
     }
 
@@ -98,6 +132,8 @@ struct MainWindowView: View {
         shellActions(for: session)
         Divider()
         Button("Open in Ghostty") { model.openInGhostty(session) }
+        Divider()
+        SessionActionItems(model: model, session: session)
     }
 
     /// The TUI's "open shell here" choices: a new window, or a split of
@@ -151,6 +187,106 @@ struct MainWindowView: View {
     }
 }
 
+/// A sidebar row: highlighted on hover, with Rename and Delete fading in at
+/// the trailing edge so the common actions need no context menu. They take
+/// room only while shown, so the subtitle uses the full width otherwise.
+@MainActor
+private struct SidebarSessionRow: View {
+    let model: DeckModel
+    let session: DeckSession
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            SessionRow(session: session)
+            Spacer(minLength: 0)
+            if isHovered {
+                HStack(spacing: 4) {
+                    RowActionButton(systemImage: "pencil", help: "Rename (r)") {
+                        SessionPrompts.rename(session, model: model)
+                    }
+                    RowActionButton(systemImage: "trash", help: "Delete (d)", destructive: true) {
+                        SessionPrompts.confirmDelete(session, model: model)
+                    }
+                }
+                .disabled(model.busySessionIDs.contains(session.id))
+                .transition(.opacity)
+            }
+        }
+        .modifier(SidebarHover(isHovered: $isHovered))
+    }
+}
+
+/// A group header the selection can land on, with a chevron that folds it.
+private struct GroupRow: View {
+    let name: String
+    let isExpanded: Bool
+    let toggle: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(action: toggle) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: 16, height: 16)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse (Tab)" : "Expand (Tab)")
+            Text(name)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(.secondary)
+        .modifier(SidebarHover(isHovered: $isHovered))
+        .padding(.top, 4)
+    }
+}
+
+/// The hover plate and pointing hand every sidebar row shares.
+private struct SidebarHover: ViewModifier {
+    @Binding var isHovered: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(.primary.opacity(isHovered ? 0.16 : 0), in: .rect(cornerRadius: 6))
+            .contentShape(.rect)
+            .onHover { isHovered = $0 }
+            .pointerStyle(.link)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+}
+
+/// A borderless icon button with its own hover plate and the pointing hand,
+/// like a link; a destructive one turns red under the pointer.
+private struct RowActionButton: View {
+    let systemImage: String
+    let help: String
+    var destructive = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 24, height: 22)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHovered ? (destructive ? Color.red : .primary) : .secondary)
+        .background(.primary.opacity(isHovered ? 0.22 : 0), in: .rect(cornerRadius: 5))
+        .onHover { isHovered = $0 }
+        .pointerStyle(.link)
+        .help(help)
+    }
+}
+
 struct SessionRow: View {
     let session: DeckSession
 
@@ -167,7 +303,8 @@ struct SessionRow: View {
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 2)
+        // The full text when the row is too narrow for it.
+        .help("\(session.title)\n\(subtitle)")
     }
 
     private var subtitle: String {
