@@ -89,9 +89,14 @@ struct NewSessionSheet: View {
                 groupMenu
                     .hidden()
                     .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(.quaternary)
-                            .phaseAnimator([1, 0.4]) { $0.opacity($1) } animation: { _ in .easeInOut(duration: 0.8) }
+                        // Time-driven, not an animation: an animation also
+                        // carries the row's layout as the sheet settles, and
+                        // the skeleton slides into place.
+                        TimelineView(.animation) { context in
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(.tertiary)
+                                .opacity(0.75 + 0.25 * cos(context.date.timeIntervalSinceReferenceDate * .pi / 0.8))
+                        }
                     }
             } else {
                 groupMenu
