@@ -162,10 +162,15 @@ private let appMenuItems = "super+h super+alt+h super+m super+x super+ctrl+s sup
         #expect(!appMenuItems.contains(trigger), "a standard menu item holds \(trigger)")
     }
 
-    /// A menu key equivalent without ⌘ would take that key from the terminal.
+    /// A menu key equivalent without ⌘ takes that key from the terminal. ⌃Q
+    /// alone may: agent-deck's tmux binding swallows it in every session but
+    /// its own, Bosun's views included.
     @Test(arguments: Shortcut.allCases.filter { $0.menu != nil })
     func menuShortcutHoldsCommand(_ action: Shortcut) throws {
-        #expect(try #require(action.menu).modifiers.contains(.command))
+        let menu = try #require(action.menu)
+        if !menu.modifiers.contains(.command) {
+            #expect(Trigger(menu) == Trigger(ghostty: "ctrl+q"))
+        }
     }
 
     @Test func noTwoActionsShareAKey() {
@@ -218,6 +223,7 @@ private let appMenuItems = "super+h super+alt+h super+m super+x super+ctrl+s sup
         ("N", [.command, .shift], .quickSession),
         ("\u{7F}", [.command, .option], .delete),
         ("/", .command, .cheatSheet),
+        ("q", .control, .toggleSessionList),
         ("n", [.command, .capsLock], .newSession),
     ] as [(String, EventModifiers, Shortcut)])
     func menuKeyReachesTheMenuBar(key: String, modifiers: EventModifiers, action: Shortcut) {

@@ -7,17 +7,30 @@ struct MainWindowView: View {
     @FocusState private var sidebarFocused: Bool
     /// Monotonic; TerminalHost moves first responder into the pane on each new value.
     @State private var terminalFocusRequest = 0
+    /// The session list's toolbar button and ⌃Q both hide and show it.
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
         } detail: {
             detail
         }
+        // The keyboard follows the list, as ⌃Q in the TUI goes back to its
+        // list: into it as it shows, into the terminal as it hides.
+        .onChange(of: columnVisibility) { _, visibility in
+            if visibility == .detailOnly {
+                if model.attachedPane != nil { terminalFocusRequest += 1 }
+            } else {
+                // The list takes focus once it is back in the window.
+                Task { sidebarFocused = true }
+            }
+        }
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
         .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil ? nil : $terminalFocusRequest)
+        .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
         .navigationTitle(titleText)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -184,8 +197,8 @@ struct MainWindowView: View {
             if let session { model.split(session, .sideBySide) }
         case (.openInGhostty, _):
             if let session { model.openInGhostty(session) }
-        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.focusTerminal, _), (.focusSidebar, _):
-            // Nothing to do on this row; the last two have no list key.
+        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.toggleSessionList, _), (.focusTerminal, _), (.focusSidebar, _):
+            // Nothing to do on this row; the last three have no list key.
             break
         }
         return .handled
@@ -382,9 +395,7 @@ struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(session.status.color)
-                .frame(width: 8, height: 8)
+            StatusBadge(status: session.status)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title).lineLimit(1)
                 Text(subtitle)
@@ -454,20 +465,5 @@ struct WindowRow: View {
         }
         .padding(.leading, 16)
         .padding(.vertical, 1)
-    }
-}
-
-extension SessionStatus {
-    var color: Color {
-        switch self {
-        case .running: .blue
-        case .waiting: .orange
-        case .idle: .green
-        case .error: .red
-        case .stopped: .gray
-        case .starting: .yellow
-        case .queued: .indigo
-        case .unknown: .secondary
-        }
     }
 }

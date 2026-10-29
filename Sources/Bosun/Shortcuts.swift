@@ -20,7 +20,7 @@ enum Shortcut: CaseIterable {
     case newSession, quickSession
     case rename, restart, stop, delete
     case splitSideBySide, openInGhostty
-    case focusTerminal, focusSidebar, cheatSheet
+    case toggleSessionList, focusTerminal, focusSidebar, cheatSheet
 
     enum Section: String, CaseIterable {
         case sessionList = "Session list"
@@ -32,7 +32,7 @@ enum Shortcut: CaseIterable {
         switch self {
         case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: .sessionList
         case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty: .sessions
-        case .focusTerminal, .focusSidebar, .cheatSheet: .window
+        case .toggleSessionList, .focusTerminal, .focusSidebar, .cheatSheet: .window
         }
     }
 
@@ -55,6 +55,7 @@ enum Shortcut: CaseIterable {
         case .delete: "Delete the session, or close the selected window…"
         case .splitSideBySide: "Open a shell beside the session's agent"
         case .openInGhostty: "Open the session in a Ghostty window"
+        case .toggleSessionList: "Hide or show the session list"
         case .focusTerminal: "Focus the terminal"
         case .focusSidebar: "Focus the session list"
         case .cheatSheet: "Show these shortcuts"
@@ -80,7 +81,7 @@ enum Shortcut: CaseIterable {
         case .delete: "d"
         case .splitSideBySide: "H"
         case .cheatSheet: "?"
-        case .focusTerminal, .focusSidebar: nil
+        case .toggleSessionList, .focusTerminal, .focusSidebar: nil
         }
     }
 
@@ -118,6 +119,10 @@ enum Shortcut: CaseIterable {
         case .delete: KeyboardShortcut(.delete, modifiers: [.command, .option])
         case .splitSideBySide: KeyboardShortcut("h", modifiers: [.command, .shift])
         case .openInGhostty: KeyboardShortcut("o", modifiers: [.command, .shift])
+        // The TUI's key for its list. No ⌘: agent-deck's tmux binding
+        // already swallows ⌃Q outside its own sessions, so in Bosun's views
+        // the terminal never had it.
+        case .toggleSessionList: KeyboardShortcut("q", modifiers: .control)
         case .focusTerminal: KeyboardShortcut("e", modifiers: [.command, .shift])
         case .focusSidebar: KeyboardShortcut("l", modifiers: [.command, .shift])
         case .cheatSheet: KeyboardShortcut("/")
