@@ -29,6 +29,8 @@ final class DeckModel {
     private var recent = RecentPanes(limit: 5)
     /// What wants you, by Bosun's own count.
     let attention = AttentionCenter()
+    /// GitHub: the Inbox tab, and each session's branch, pull request and issue.
+    let inbox = InboxCenter()
     /// Counts notification clicks, so the window puts the keyboard in the
     /// terminal of the session shown.
     private(set) var revealRequests = 0
@@ -166,6 +168,7 @@ final class DeckModel {
             task?.cancel()
         }
         attention.stop()
+        inbox.stop()
     }
 
     /// One `list --json` at a time: it runs a status pass, and a slower call
@@ -220,6 +223,8 @@ final class DeckModel {
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
             attention.listed(sessions, previous: previous)
+            inbox.listed(sessions)
+            inbox.start()
             dropStalePanes(loneViews: await cli.loneViews())
             await loadAllWindows()
             if let (sessionID, windowID) = pendingReveal {

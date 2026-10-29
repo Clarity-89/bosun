@@ -4,11 +4,12 @@ import SwiftUI
 
 /// A session's actions, the same in its row's context menu and the Session
 /// menu: a shell here, Open in Ghostty, Stop and Restart, Mark as Unread,
-/// then Rename and Delete, each with its shortcut. A stopped session has
-/// nothing to stop; Restart starts it. With a window row selected, the
-/// items act on the window's session, and Delete closes the window
-/// instead, as d does on the TUI's window rows. Nil while nothing is
-/// selected, which leaves the items visible but disabled, as macOS menus do.
+/// the issue it works on, then Rename and Delete, each with its shortcut.
+/// A stopped session has nothing to stop; Restart starts it. With a window
+/// row selected, the items act on the window's session, and Delete closes
+/// the window instead, as d does on the TUI's window rows. Nil while
+/// nothing is selected, which leaves the items visible but disabled, as
+/// macOS menus do.
 @MainActor
 struct SessionActionItems: View {
     let model: DeckModel
@@ -27,6 +28,11 @@ struct SessionActionItems: View {
             Button("Restart", action: perform(session, model.restartSession)).shortcut(.restart)
             Divider()
             Button("Mark as Unread", action: perform(session) { model.attention.markUnread(sessionID: $0.id) })
+            Divider()
+            Button("Link to Issue…", action: perform(session) { SessionPrompts.linkIssue($0, model: model) })
+            if let session, model.inbox.links[session.id] != nil {
+                Button("Remove Issue Link", action: perform(session) { model.inbox.unlink(session: $0.id) })
+            }
             Divider()
             Button("Rename…", action: perform(session) { SessionPrompts.rename($0, model: model) }).shortcut(.rename)
             if let window {
@@ -92,6 +98,32 @@ enum SessionPrompts {
         let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title != session.title else { return }
         model.renameSession(session, to: title)
+    }
+
+    /// Your link wins over what Bosun works out, in Bosun only: GitHub is
+    /// not told. `#12` means the session's repository, a fork's upstream.
+    static func linkIssue(_ session: DeckSession, model: DeckModel) {
+        let github = model.inbox[session.id]
+        let alert = NSAlert()
+        alert.messageText = "Link “\(session.title)” to an issue"
+        alert.informativeText = github?.issueRepo.map { "An issue URL, owner/repo#12, or #12 in \($0)." } ?? "An issue URL or owner/repo#12."
+        let field = NSTextField(string: github?.issue.map { $0.ref.description } ?? "")
+        field.placeholderString = "https://github.com/owner/repo/issues/12"
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Link")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let ref = IssueRef(parsing: field.stringValue, defaultRepo: github?.issueRepo) else {
+            let error = NSAlert()
+            error.messageText = "That is not an issue"
+            error.informativeText = "“\(field.stringValue)” names no GitHub issue Bosun can find."
+            error.runModal()
+            return
+        }
+        model.inbox.link(ref, toSession: session.id)
     }
 
     static func confirmDelete(_ session: DeckSession, model: DeckModel) {

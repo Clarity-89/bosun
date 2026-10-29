@@ -140,10 +140,6 @@ extension AgentDeckCLI {
     }
 
     static func tmuxPath() throws -> String {
-        let path = (childEnvironment(binaryDirectory: nil)["PATH"] ?? "").split(separator: ":").lazy
-            .map { "\($0)/tmux" }
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let path else { throw SubprocessError.launchFailed(command: "tmux", reason: "not found on PATH") }
-        return path
+        try executablePath(named: "tmux")
     }
 }

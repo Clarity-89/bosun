@@ -1,0 +1,130 @@
+@preconcurrency import Foundation
+
+public enum GitHubCLIError: Error, LocalizedError, Equatable, Sendable {
+    case notInstalled
+    case signedOut
+    case failed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notInstalled: "GitHub CLI (gh) is not installed"
+        case .signedOut: "GitHub CLI is not signed in; run gh auth login"
+        case .failed(let message): message
+        }
+    }
+}
+
+/// GitHub through `gh api graphql`, which owns the sign-in: Bosun keeps no
+/// token of its own.
+public struct GitHubCLI: Sendable {
+    public init() {}
+
+    /// Two requests at once: as one, GitHub's gateway times out.
+    public func inbox() async throws -> GitHubInbox {
+        async let pullRequests = run(GitHubQueries.inboxPullRequests)
+        async let issues = run(GitHubQueries.inboxIssues)
+        return try GitHubInbox(pullRequestsGraphQL: try await pullRequests, issuesGraphQL: try await issues)
+    }
+
+    /// Each branch's pull requests, in the order given.
+    public func pullRequests(forBranches branches: [(branch: String, repos: [RepoSlug])]) async throws -> [[GitHubPullRequest]] {
+        guard !branches.isEmpty else { return [] }
+        return try GitHubQueries.decodePullRequests(
+            try await run(GitHubQueries.pullRequests(forBranches: branches)), forBranches: branches
+        )
+    }
+
+    public func issues(_ refs: [IssueRef]) async throws -> [GitHubIssue?] {
+        guard !refs.isEmpty else { return [] }
+        return try GitHubQueries.decodeIssues(try await run(GitHubQueries.issues(refs)), count: refs.count)
+    }
+
+    /// gh exits non-zero when GitHub answers with errors, partial data
+    /// included; any JSON on stdout goes to the decoder, which keeps what
+    /// came.
+    private func run(_ request: GraphQLRequest) async throws -> Data {
+        guard let gh = try? AgentDeckCLI.executablePath(named: "gh") else { throw GitHubCLIError.notInstalled }
+        let result = try await Subprocess.run(
+            executable: gh, arguments: request.arguments, environment: Self.environment(), timeout: .seconds(30)
+        )
+        if result.stdout.first == "{" {
+            return Data(result.stdout.utf8)
+        }
+        let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if detail.contains("gh auth login") || detail.contains("not logged") || detail.contains("HTTP 401") {
+            throw GitHubCLIError.signedOut
+        }
+        throw GitHubCLIError.failed(detail.isEmpty ? "gh exited with status \(result.status)" : detail)
+    }
+
+    /// The agent-deck child environment, plus whatever tells gh which host
+    /// and token to use when the launching environment has it.
+    static func environment(inherited: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        var environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil, inherited: inherited)
+        for key in ["GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR", "GH_ENTERPRISE_TOKEN"] {
+            if let value = inherited[key], !value.isEmpty { environment[key] = value }
+        }
+        environment["GH_PROMPT_DISABLED"] = "1"
+        return environment
+    }
+}
+
+public enum GitRepo {
+    /// The branch of the work tree at `path` and where it pushes; nil when
+    /// `path` is not in one. Reads refs only, never the index: `git status`
+    /// takes seconds on a large repository.
+    public static func info(path: String) async -> GitRepoInfo? {
+        guard let head = await git(path, ["rev-parse", "--abbrev-ref", "HEAD"]) else { return nil }
+        async let origin = git(path, ["remote", "get-url", "origin"])
+        async let upstream = git(path, ["remote", "get-url", "upstream"])
+        async let originHead = git(path, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        async let ahead = git(path, ["rev-list", "--count", "@{upstream}..HEAD"])
+        let defaultBranch = await originHead.map { $0.hasPrefix("origin/") ? String($0.dropFirst("origin/".count)) : $0 }
+        var unpushed = await ahead.flatMap { Int($0) }
+        if unpushed == nil, let defaultBranch {
+            unpushed = await git(path, ["rev-list", "--count", "origin/\(defaultBranch)..HEAD"]).flatMap { Int($0) }
+        }
+        let repos = [await origin, await upstream].compactMap { $0.flatMap(RepoSlug.init(remoteURL:)) }
+        return GitRepoInfo(
+            branch: head == "HEAD" ? nil : head,
+            defaultBranch: defaultBranch,
+            repos: repos.reduce(into: []) { if !$0.contains($1) { $0.append($1) } },
+            unpushed: unpushed
+        )
+    }
+
+    /// Trimmed stdout, nil on any failure.
+    private static func git(_ path: String, _ arguments: [String]) async -> String? {
+        guard let executable = try? AgentDeckCLI.executablePath(named: "git") else { return nil }
+        var environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil)
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        guard let result = try? await Subprocess.run(
+            executable: executable, arguments: ["-C", path] + arguments, environment: environment, timeout: .seconds(5)
+        ), result.succeeded else { return nil }
+        let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return output.isEmpty ? nil : output
+    }
+}
+
+extension OmpLog {
+    /// The issue in the first prompt of omp's newest run in `path`, the run
+    /// a session's pane most likely shows. Reads the log's first MiB only:
+    /// the first user message comes right after its header.
+    public static func firstIssue(
+        forWorkingDirectory path: String,
+        home: String = FileManager.default.homeDirectoryForCurrentUser.path
+    ) -> IssueRef? {
+        let directory = directory(forWorkingDirectory: path, home: home)
+        let fileManager = FileManager.default
+        guard let names = try? fileManager.contentsOfDirectory(atPath: directory) else { return nil }
+        let newest = names.lazy.filter { $0.hasSuffix(".jsonl") }.map { "\(directory)/\($0)" }
+            .compactMap { path in
+                (try? fileManager.attributesOfItem(atPath: path)[.modificationDate] as? Date).map { (path, $0) }
+            }
+            .max { $0.1 < $1.1 }
+        guard let newest, let handle = FileHandle(forReadingAtPath: newest.0) else { return nil }
+        defer { try? handle.close() }
+        return firstIssue(inLog: (try? handle.read(upToCount: 1 << 20)) ?? Data())
+    }
+}

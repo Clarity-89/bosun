@@ -55,7 +55,7 @@ struct MenuView: View {
                     ForEach(model.groups) { group in
                         Section {
                             ForEach(group.sessions) { session in
-                                MenuSessionRow(session: session, attention: model.attention[session]) {
+                                MenuSessionRow(session: session, attention: model.attention[session], github: model.inbox[session.id]) {
                                     openInWindow(session)
                                 }
                             }
@@ -108,12 +108,13 @@ struct MenuView: View {
 private struct MenuSessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
+    let github: SessionGitHub?
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack {
-                SessionRow(session: session, attention: attention)
+                SessionRow(session: session, attention: attention, github: github)
                 Spacer(minLength: 4)
                 Image(systemName: "terminal")
                     .font(.caption)
