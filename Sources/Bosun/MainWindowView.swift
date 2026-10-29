@@ -3,6 +3,8 @@ import SwiftUI
 
 @MainActor
 struct MainWindowView: View {
+    static let windowID = "main"
+
     @Bindable var model: DeckModel
     @FocusState private var sidebarFocused: Bool
     /// Monotonic; TerminalHost moves first responder into the pane on each new value.
@@ -27,6 +29,9 @@ struct MainWindowView: View {
                 // The list takes focus once it is back in the window.
                 Task { sidebarFocused = true }
             }
+        }
+        .onChange(of: model.revealRequests) {
+            terminalFocusRequest += 1
         }
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
         .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil ? nil : $terminalFocusRequest)
@@ -197,8 +202,8 @@ struct MainWindowView: View {
             if let session { model.split(session, .sideBySide) }
         case (.openInGhostty, _):
             if let session { model.openInGhostty(session) }
-        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.toggleSessionList, _), (.focusTerminal, _), (.focusSidebar, _):
-            // Nothing to do on this row; the last three have no list key.
+        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.toggleSessionList, _), (.focusTerminal, _), (.focusSidebar, _), (.settings, _):
+            // Nothing to do on this row; the last four have no list key.
             break
         }
         return .handled
@@ -299,7 +304,7 @@ private struct SidebarSessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session)
+            SessionRow(session: session, attention: model.attention(for: session))
             Spacer(minLength: 0)
             if isHovered {
                 HStack(spacing: 4) {
@@ -390,18 +395,30 @@ private struct RowActionButton: View {
     }
 }
 
+/// Bold with a dot while something in the session is unread; an open
+/// question turns its status dot orange.
 struct SessionRow: View {
     let session: DeckSession
+    let attention: SessionAttention
 
     var body: some View {
         HStack(spacing: 8) {
-            StatusBadge(status: session.status)
+            StatusBadge(status: session.status, asks: attention.asks)
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.title).lineLimit(1)
+                Text(session.title)
+                    .fontWeight(attention.unread ? .semibold : nil)
+                    .lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+            }
+            if attention.unread {
+                Spacer(minLength: 4)
+                Circle()
+                    .fill(.tint)
+                    .frame(width: 7, height: 7)
+                    .accessibilityLabel("Unread")
             }
         }
         // The full text when the row is too narrow for it.
@@ -410,6 +427,9 @@ struct SessionRow: View {
 
     private var subtitle: String {
         let tool = session.tool.isEmpty ? "agent" : session.tool
+        if let summary = attention.summary {
+            return "\(tool) · \(summary)"
+        }
         if let substate = session.substate {
             return "\(tool) · \(session.status.label) · \(substate)"
         }

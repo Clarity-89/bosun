@@ -3,12 +3,12 @@ import BosunCore
 import SwiftUI
 
 /// A session's actions, the same in its row's context menu and the Session
-/// menu: a shell here, Open in Ghostty, Stop and Restart, then Rename and
-/// Delete, each with its shortcut. A stopped session has nothing to stop;
-/// Restart starts it. With a window row selected, the items act on the
-/// window's session, and Delete closes the window instead, as d does on
-/// the TUI's window rows. Nil while nothing is selected, which leaves the
-/// items visible but disabled, as macOS menus do.
+/// menu: a shell here, Open in Ghostty, Stop and Restart, Mark as Unread,
+/// then Rename and Delete, each with its shortcut. A stopped session has
+/// nothing to stop; Restart starts it. With a window row selected, the
+/// items act on the window's session, and Delete closes the window
+/// instead, as d does on the TUI's window rows. Nil while nothing is
+/// selected, which leaves the items visible but disabled, as macOS menus do.
 @MainActor
 struct SessionActionItems: View {
     let model: DeckModel
@@ -25,6 +25,8 @@ struct SessionActionItems: View {
                 Button("Stop…", action: perform(session) { SessionPrompts.confirmStop($0, model: model) }).shortcut(.stop)
             }
             Button("Restart", action: perform(session, model.restartSession)).shortcut(.restart)
+            Divider()
+            Button("Mark as Unread", action: perform(session, model.markUnread))
             Divider()
             Button("Rename…", action: perform(session) { SessionPrompts.rename($0, model: model) }).shortcut(.rename)
             if let window {

@@ -36,6 +36,19 @@ import Testing
         #expect(session.tmuxSession == "agentdeck_omp_a288e826")
         #expect(session.substate == nil)
         #expect(session.archived == false)
+        #expect(session.lastActivityAt == Date(timeIntervalSince1970: 1_790_328_084))
+    }
+
+    /// Go writes RFC3339Nano: no fraction, or up to nine digits of one.
+    @Test(arguments: [
+        ("2026-09-25T12:21:24+03:00", 1_790_328_084.0),
+        ("2026-10-26T07:25:43.08408Z", 1_792_999_543.084),
+        ("2026-10-26T07:25:43.123456789Z", 1_792_999_543.123),
+        ("2026-10-26T07:25:43.5Z", 1_792_999_543.5),
+    ])
+    func readsGoTimestamps(text: String, seconds: Double) throws {
+        let date = try #require(Date(rfc3339: text))
+        #expect(abs(date.timeIntervalSince1970 - seconds) < 0.001)
     }
 
     @Test func unknownStatusDoesNotFailTheWholeList() throws {
@@ -52,7 +65,6 @@ import Testing
         """
         let session = try JSONDecoder().decode(DeckSession.self, from: Data(json.utf8))
         #expect(session.status == .waiting)
-        #expect(session.status.needsAttention)
     }
 
     @Test func missingTmuxSessionIsAbsentNotAnError() throws {
@@ -76,6 +88,7 @@ import Testing
         #expect(frame.kind == "session.status")
         #expect(frame.sessionID == "9c51b648-1792999266")
         #expect(frame.data?.to == .idle)
+        #expect(frame.data?.from == .starting)
     }
 
     @Test func frameWithoutDataDecodes() throws {
