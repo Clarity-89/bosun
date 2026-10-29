@@ -382,9 +382,7 @@ struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(session.status.color)
-                .frame(width: 8, height: 8)
+            StatusBadge(status: session.status)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title).lineLimit(1)
                 Text(subtitle)
@@ -454,20 +452,5 @@ struct WindowRow: View {
         }
         .padding(.leading, 16)
         .padding(.vertical, 1)
-    }
-}
-
-extension SessionStatus {
-    var color: Color {
-        switch self {
-        case .running: .blue
-        case .waiting: .orange
-        case .idle: .green
-        case .error: .red
-        case .stopped: .gray
-        case .starting: .yellow
-        case .queued: .indigo
-        case .unknown: .secondary
-        }
     }
 }
