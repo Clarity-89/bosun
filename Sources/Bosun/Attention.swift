@@ -9,6 +9,32 @@ enum AttentionKind: String, Codable, Sendable {
     case asks
     /// The session hit an error.
     case failed
+
+    /// The most urgent is highest.
+    var rank: Int {
+        switch self {
+        case .asks: 2
+        case .failed: 1
+        case .finished: 0
+        }
+    }
+
+    /// In a session row, before omp's task name.
+    var label: String {
+        switch self {
+        case .asks: "Asks for input"
+        case .failed: "Failed"
+        case .finished: "Finished"
+        }
+    }
+
+    var notificationBody: String {
+        switch self {
+        case .asks: "Asks for input"
+        case .failed: "Hit an error"
+        case .finished: "Finished its turn"
+        }
+    }
 }
 
 /// What wants you: a whole session, as agent-deck reports it, or one omp
@@ -26,6 +52,9 @@ struct Unread: Codable, Equatable, Sendable {
     var label: String?
     /// The window that holds the pane, to show it.
     var windowID: String?
+    /// Mark as Unread: looking does not clear it until another session is
+    /// shown.
+    var pinned = false
 }
 
 /// Something becoming unread; `notify` is false for what Bosun only works
@@ -127,9 +156,10 @@ struct AttentionState: Equatable, Sendable {
     // MARK: omp
 
     /// One poll of omp's pane titles. A pane whose omp went from working to
-    /// its prompt is unread, one that asks is unread too; answering clears
-    /// it. A pane seen for the first time already asking is unread without a
-    /// notification. Panes that are gone take their unread with them.
+    /// its prompt is unread, one that asks is unread too; a new turn, an
+    /// answer included, clears it. A pane seen for the first time already
+    /// asking is unread without a notification. Panes that are gone take
+    /// their unread with them.
     mutating func panesPolled(_ polled: [AgentPane], sessionIDs: [String: String], at now: Date) -> [AttentionEvent] {
         var next: [String: PolledPane] = [:]
         var events: [AttentionEvent] = []
@@ -143,7 +173,7 @@ struct AttentionState: Equatable, Sendable {
                 events += setUnread(key, found, notify: true)
             case (let old, .asks) where old != .asks:
                 events += setUnread(key, Unread(kind: .asks, since: now, label: found.label, windowID: found.windowID), notify: old != nil)
-            case (.asks?, .working):
+            case (_, .working):
                 unread[key] = nil
             case (.asks?, .atPrompt):
                 // The question went without an answer, Esc say; what is left
@@ -165,19 +195,29 @@ struct AttentionState: Equatable, Sendable {
     // MARK: you
 
     /// You looked at the session, in `windowID` when Bosun knows it: its own
-    /// unread and its panes in that window are no longer unread. Returns
-    /// what that cleared.
-    @discardableResult
-    mutating func seen(sessionID: String, windowID: String?) -> [AttentionKey] {
-        let cleared = unread.filter { key, item in
-            key.sessionID == sessionID && (key.paneID == nil || windowID == nil || item.windowID == windowID)
-        }.map(\.key)
-        for key in cleared { unread[key] = nil }
-        return cleared
+    /// unread and its panes in that window are no longer unread, Mark as
+    /// Unread aside.
+    mutating func seen(sessionID: String, windowID: String?) {
+        unread = unread.filter { key, item in
+            item.pinned || !isOnScreen(key, sessionID: sessionID, windowID: windowID)
+        }
+    }
+
+    /// Whether the pane, showing `sessionID` in `windowID` (nil while Bosun
+    /// does not know which window it shows), has what `key` wants you for
+    /// in front of you.
+    func isOnScreen(_ key: AttentionKey, sessionID: String?, windowID: String?) -> Bool {
+        guard key.sessionID == sessionID, let item = unread[key] else { return false }
+        return item.windowID == nil || windowID == nil || item.windowID == windowID
     }
 
     mutating func markUnread(sessionID: String, at now: Date) {
-        unread[AttentionKey(sessionID: sessionID, paneID: nil)] = Unread(kind: .finished, since: now)
+        unread[AttentionKey(sessionID: sessionID, paneID: nil)] = Unread(kind: .finished, since: now, pinned: true)
+    }
+
+    /// Another session is shown: what you marked unread can be seen again.
+    mutating func unpin() {
+        for key in unread.keys { unread[key]?.pinned = false }
     }
 
     /// The row's view of a session: any unread, a question open in any of its
@@ -189,7 +229,7 @@ struct AttentionState: Equatable, Sendable {
         var summary: String?
         if asks {
             summary = Self.say(.asks, asking.first?.title.label ?? mine.first { $0.kind == .asks }?.label)
-        } else if let top = mine.max(by: { Self.rank($0.kind) < Self.rank($1.kind) || ($0.kind == $1.kind && $0.since < $1.since) }) {
+        } else if let top = mine.max(by: { ($0.kind.rank, $0.since) < ($1.kind.rank, $1.since) }) {
             summary = Self.say(top.kind, top.label)
         }
         return SessionAttention(unread: !mine.isEmpty, asks: asks, summary: summary)
@@ -210,21 +250,8 @@ struct AttentionState: Equatable, Sendable {
         return [AttentionEvent(key: key, unread: item, notify: notify)]
     }
 
-    private static func rank(_ kind: AttentionKind) -> Int {
-        switch kind {
-        case .asks: 2
-        case .failed: 1
-        case .finished: 0
-        }
-    }
-
     private static func say(_ kind: AttentionKind, _ label: String?) -> String {
-        let what = switch kind {
-        case .asks: "Asks for input"
-        case .failed: "Failed"
-        case .finished: "Finished"
-        }
-        return label.map { "\(what): \($0)" } ?? what
+        label.map { "\(kind.label): \($0)" } ?? kind.label
     }
 }
 

@@ -26,7 +26,7 @@ struct SessionActionItems: View {
             }
             Button("Restart", action: perform(session, model.restartSession)).shortcut(.restart)
             Divider()
-            Button("Mark as Unread", action: perform(session, model.markUnread))
+            Button("Mark as Unread", action: perform(session) { model.attention.markUnread(sessionID: $0.id) })
             Divider()
             Button("Rename…", action: perform(session) { SessionPrompts.rename($0, model: model) }).shortcut(.rename)
             if let window {

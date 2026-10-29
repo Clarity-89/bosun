@@ -28,7 +28,7 @@ import Testing
     """
 
     @Test func decodesTheFieldsBosunUsesAndIgnoresTheRest() throws {
-        let session = try JSONDecoder().decode(DeckSession.self, from: Data(Self.row.utf8))
+        let session = try AgentDeckCLI.jsonDecoder().decode(DeckSession.self, from: Data(Self.row.utf8))
         #expect(session.id == "8b232f9f-1776403870")
         #expect(session.title == "omp")
         #expect(session.tool == "shell")

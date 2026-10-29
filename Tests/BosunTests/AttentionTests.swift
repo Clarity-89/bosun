@@ -13,7 +13,7 @@ private func session(_ id: String, status: SessionStatus = .idle, substate: Stri
 }
 
 private func pane(_ paneID: String, in sessionID: String, window: String = "@1", _ title: String) -> AgentPane {
-    AgentPane(tmuxSession: "agentdeck_\(sessionID)", windowID: window, paneID: paneID, title: OmpTitle(title)!)
+    AgentPane(tmuxSession: "agentdeck_\(sessionID)", windowID: window, paneID: paneID, panePID: 1, title: OmpTitle(title)!)
 }
 
 private let sessionIDs = ["agentdeck_a": "a", "agentdeck_b": "b"]
@@ -76,6 +76,19 @@ private let sessionIDs = ["agentdeck_a": "a", "agentdeck_b": "b"]
         #expect(state.unreadCount == unreadLeft)
     }
 
+    /// A new turn means the last one is old news, as agent-deck's `running`
+    /// does; a relaunch that finds the pane working again agrees.
+    @Test func newTurnClearsAFinishedPane() {
+        var state = AttentionState()
+        _ = state.panesPolled([pane("%1", in: "a", "π ⠋ x")], sessionIDs: sessionIDs, at: t0)
+        _ = state.panesPolled([pane("%1", in: "a", "π > x")], sessionIDs: sessionIDs, at: t0)
+        var relaunched = AttentionState(snapshot: state.snapshot)
+        _ = state.panesPolled([pane("%1", in: "a", "π ⠋ x")], sessionIDs: sessionIDs, at: t0)
+        #expect(state.unreadCount == 0)
+        _ = relaunched.panesPolled([pane("%1", in: "a", "π ⠋ x")], sessionIDs: sessionIDs, at: t0)
+        #expect(relaunched.unreadCount == 0)
+    }
+
     /// At launch every pane is new: one already asking is unread without a
     /// notification, one at its prompt is nothing.
     @Test func firstSightIsQuiet() {
@@ -118,9 +131,23 @@ private let sessionIDs = ["agentdeck_a": "a", "agentdeck_b": "b"]
     /// A window on screen shows all of its panes, not the other windows'.
     @Test func seeingAWindowClearsItsPanesAndTheSession() {
         var state = Self.twoWindows()
-        let cleared = state.seen(sessionID: "a", windowID: "@1")
-        #expect(Set(cleared) == [AttentionKey(sessionID: "a", paneID: nil), AttentionKey(sessionID: "a", paneID: "%1")])
+        state.seen(sessionID: "a", windowID: "@1")
+        #expect(!state.isUnread(AttentionKey(sessionID: "a", paneID: nil)))
+        #expect(!state.isUnread(AttentionKey(sessionID: "a", paneID: "%1")))
         #expect(state.isUnread(AttentionKey(sessionID: "a", paneID: "%2")))
+    }
+
+    /// The same rule decides whether a notification would be about what is
+    /// on screen: the session's own, and a pane's in the shown window or
+    /// while the window is unknown.
+    @Test func onScreenIsOneRule() {
+        let state = Self.twoWindows()
+        #expect(state.isOnScreen(AttentionKey(sessionID: "a", paneID: nil), sessionID: "a", windowID: "@2"))
+        #expect(state.isOnScreen(AttentionKey(sessionID: "a", paneID: "%2"), sessionID: "a", windowID: "@2"))
+        #expect(state.isOnScreen(AttentionKey(sessionID: "a", paneID: "%2"), sessionID: "a", windowID: nil))
+        #expect(!state.isOnScreen(AttentionKey(sessionID: "a", paneID: "%2"), sessionID: "a", windowID: "@1"))
+        #expect(!state.isOnScreen(AttentionKey(sessionID: "a", paneID: nil), sessionID: "b", windowID: nil))
+        #expect(!state.isOnScreen(AttentionKey(sessionID: "a", paneID: nil), sessionID: nil, windowID: nil))
     }
 
     @Test func seeingWithoutAWindowClearsTheWholeSession() {
@@ -139,10 +166,14 @@ private let sessionIDs = ["agentdeck_a": "a", "agentdeck_b": "b"]
         #expect(state.attention(for: session("a")) == SessionAttention(unread: false, asks: true, summary: "Asks for input: Pick one"))
     }
 
-    @Test func markedUnreadUntilSeen() {
+    /// Mark as Unread holds through looking at the session, until another
+    /// one is shown.
+    @Test func markedUnreadHoldsUntilAnotherSessionIsShown() {
         var state = AttentionState()
         state.markUnread(sessionID: "a", at: t0)
+        state.seen(sessionID: "a", windowID: "@1")
         #expect(state.attention(for: session("a")).unread)
+        state.unpin()
         state.seen(sessionID: "a", windowID: "@1")
         #expect(!state.attention(for: session("a")).unread)
     }

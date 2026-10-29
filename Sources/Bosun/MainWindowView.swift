@@ -304,7 +304,7 @@ private struct SidebarSessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention(for: session))
+            SessionRow(session: session, attention: model.attention[session])
             Spacer(minLength: 0)
             if isHovered {
                 HStack(spacing: 4) {

@@ -47,43 +47,14 @@ public struct DeckSession: Decodable, Identifiable, Equatable, Sendable {
     public let tmuxSession: String?
     public let archived: Bool
     /// agent-deck's last confirmed activity or hook time; it moves while a
-    /// session works, not only at a turn's end.
+    /// session works, not only at a turn's end. `AgentDeckCLI.jsonDecoder()`
+    /// reads Go's RFC3339Nano.
     public let lastActivityAt: Date?
 
     private enum CodingKeys: String, CodingKey {
         case id, title, path, group, tool, status, substate, archived
         case tmuxSession = "tmux_session"
         case lastActivityAt = "last_activity_at"
-    }
-
-    public init(
-        id: String, title: String, path: String, group: String, tool: String, status: SessionStatus,
-        substate: String?, tmuxSession: String?, archived: Bool, lastActivityAt: Date? = nil
-    ) {
-        self.id = id
-        self.title = title
-        self.path = path
-        self.group = group
-        self.tool = tool
-        self.status = status
-        self.substate = substate
-        self.tmuxSession = tmuxSession
-        self.archived = archived
-        self.lastActivityAt = lastActivityAt
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        title = try container.decode(String.self, forKey: .title)
-        path = try container.decode(String.self, forKey: .path)
-        group = try container.decode(String.self, forKey: .group)
-        tool = try container.decode(String.self, forKey: .tool)
-        status = try container.decode(SessionStatus.self, forKey: .status)
-        substate = try container.decodeIfPresent(String.self, forKey: .substate)
-        tmuxSession = try container.decodeIfPresent(String.self, forKey: .tmuxSession)
-        archived = try container.decode(Bool.self, forKey: .archived)
-        lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt).flatMap(Date.init(rfc3339:))
     }
 }
 

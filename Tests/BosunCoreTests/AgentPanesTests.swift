@@ -69,10 +69,13 @@ import Testing
     ].joined(separator: "\n")
 
     /// Two omp instances in one window are two panes; Bosun's view lists the
-    /// first again, and a pane whose omp has exited keeps only its title.
+    /// first again, and a pane whose omp has exited keeps only its title,
+    /// which the process table rules out.
     @Test func everyLiveOmpPaneOnce() {
+        let titled = AgentPane.parse(listOutput: Self.panes)
+        #expect(titled.map(\.paneID) == ["%41", "%31", "%7"])
         let tree = ProcessTree(psOutput: ProcessTreeTests.table)
-        let panes = AgentPane.parse(listOutput: Self.panes, runsOmp: tree.runsOmp(under:))
+        let panes = titled.filter { tree.runsOmp(under: $0.panePID) }
         #expect(panes.map(\.paneID) == ["%41", "%31"])
         #expect(panes.map(\.title.state) == [.atPrompt, .working])
         #expect(Set(panes.map(\.windowID)) == ["@12"])

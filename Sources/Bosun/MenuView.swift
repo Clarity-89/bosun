@@ -55,7 +55,7 @@ struct MenuView: View {
                     ForEach(model.groups) { group in
                         Section {
                             ForEach(group.sessions) { session in
-                                MenuSessionRow(session: session, attention: model.attention(for: session)) {
+                                MenuSessionRow(session: session, attention: model.attention[session]) {
                                     openInWindow(session)
                                 }
                             }
@@ -99,7 +99,7 @@ struct MenuView: View {
     /// The menu bar is the quick list; selecting a row shows that session
     /// in the main window, at the pane that wants you, and brings it forward.
     private func openInWindow(_ session: DeckSession) {
-        model.reveal(sessionID: session.id, windowID: model.attentionState.window(for: session.id))
+        model.reveal(session)
         NSApp.activate()
         openWindow(id: MainWindowView.windowID)
     }

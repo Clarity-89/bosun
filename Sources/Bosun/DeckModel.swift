@@ -27,8 +27,8 @@ final class DeckModel {
     /// Five terminals stay attached, so switching back to a recent session
     /// shows it at once; each costs a tmux client and a hidden surface.
     private var recent = RecentPanes(limit: 5)
-    /// What wants you, by Bosun's own count: see AttentionState.
-    private(set) var attentionState = DeckModel.savedAttention()
+    /// What wants you, by Bosun's own count.
+    let attention = AttentionCenter()
     /// Counts notification clicks, so the window puts the keyboard in the
     /// terminal of the session shown.
     private(set) var revealRequests = 0
@@ -62,16 +62,10 @@ final class DeckModel {
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var delayedRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var isReordering = false
+    /// True once a `list` succeeded, so `sessions` is real; a failure leaves
+    /// `hasLoadedSessions` true with nothing in it.
     @ObservationIgnored private var hasListed = false
     @ObservationIgnored private var agentPanePollTask: Task<Void, Never>?
-    @ObservationIgnored private var pendingNotifications: [AttentionKey: Task<Void, Never>] = [:]
-    @ObservationIgnored private var seenTask: Task<Void, Never>?
-    @ObservationIgnored private var savedAttentionState: AttentionState?
-    /// Bosun is active with the main window on screen: the pane is in front of you.
-    @ObservationIgnored private var paneInFront = false
-    /// The session you marked unread while it was on screen; it stays so
-    /// until another one is shown.
-    @ObservationIgnored private var keptUnread: String?
     @ObservationIgnored private var pendingReveal: (sessionID: String, windowID: String?)?
 
     private init() {}
@@ -96,13 +90,6 @@ final class DeckModel {
     /// proves nothing.
     var connectionLabel: String {
         connection == .live && statusFeedGap != nil ? "Updates every 60 s" : connection.label
-    }
-
-    /// What wants you: each session's own unread and each of its omp panes'.
-    var attentionCount: Int { attentionState.unreadCount }
-
-    func attention(for session: DeckSession) -> SessionAttention {
-        attentionState.attention(for: session)
     }
 
     /// Nil while a group row is selected.
@@ -175,10 +162,10 @@ final class DeckModel {
     }
 
     func stop() {
-        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask, agentPanePollTask, seenTask] {
+        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask, agentPanePollTask] {
             task?.cancel()
         }
-        pendingNotifications.values.forEach { $0.cancel() }
+        attention.stop()
     }
 
     /// One `list --json` at a time: it runs a status pass, and a slower call
@@ -203,6 +190,7 @@ final class DeckModel {
                     result[session.id] = windows
                 }
             }
+            shownChanged()
         } catch {
             lastError = error.localizedDescription
         }
@@ -231,7 +219,7 @@ final class DeckModel {
             hasListed = true
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
-            updateAttention { [sessions] in $0.listed(sessions, previous: previous, at: .now) }
+            attention.listed(sessions, previous: previous)
             dropStalePanes(loneViews: await cli.loneViews())
             await loadAllWindows()
             if let (sessionID, windowID) = pendingReveal {
@@ -267,7 +255,7 @@ final class DeckModel {
         } else if sessions.first(where: { $0.id == target.sessionID })?.status != .stopped {
             attach(target)
         }
-        scheduleSeen()
+        shownChanged()
     }
 
     /// Changes the session the pane shows. The terminal leaving yields its
@@ -276,8 +264,24 @@ final class DeckModel {
         guard sessionID != shownSessionID else { return }
         if let hidden = attachedPane { yieldSize(of: hidden) }
         shownSessionID = sessionID
-        keptUnread = nil
-        scheduleSeen()
+        shownChanged()
+    }
+
+    /// Attention hears what the pane shows: after a selection, a shown
+    /// session, or the window list changing.
+    private func shownChanged() {
+        attention.shown(sessionID: shownSessionID, windowID: shownWindowID)
+    }
+
+    /// The window the pane shows: the selected window row's, else the
+    /// session's first, where its agent runs; nil until the windows are
+    /// listed.
+    private var shownWindowID: String? {
+        guard let shownSessionID else { return nil }
+        if case .pane(let target)? = selection, target.sessionID == shownSessionID, let windowID = target.windowID {
+            return windowID
+        }
+        return windowsBySession[shownSessionID]?.first?.windowID
     }
 
     /// A window row's window, or the agent's for the session row, selected
@@ -765,7 +769,7 @@ final class DeckModel {
         // The bus carries no substate, and the old one described the previous status.
         sessions[index].substate = nil
         logger.info("status \(frame.sessionID, privacy: .public) -> \(change.to.rawValue, privacy: .public)")
-        updateAttention { $0.statusChanged(sessionID: frame.sessionID, from: from, to: change.to, at: .now) }
+        attention.statusChanged(sessions[index], from: from, to: change.to)
         if change.to == .stopped { dropStalePanes() }
     }
 
@@ -777,105 +781,11 @@ final class DeckModel {
         agentPanePollTask = Task {
             while !Task.isCancelled {
                 if let panes = await cli.listAgentPanes() {
-                    let sessionIDs = Dictionary(
-                        sessions.compactMap { session in session.tmuxSession.map { ($0, session.id) } },
-                        uniquingKeysWith: { first, _ in first }
-                    )
-                    updateAttention { $0.panesPolled(panes, sessionIDs: sessionIDs, at: .now) }
+                    attention.panesPolled(panes, sessions: sessions)
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
-    }
-
-    /// Applies a change to what wants you, then queues its notifications and
-    /// saves it; the views see it only when it changed.
-    private func updateAttention(_ change: (inout AttentionState) -> [AttentionEvent]) {
-        var next = attentionState
-        let events = change(&next)
-        guard next != attentionState else { return }
-        attentionState = next
-        events.filter(\.notify).forEach(queueNotification)
-        saveAttention()
-        if events.contains(where: { $0.key.sessionID == shownSessionID }) { scheduleSeen() }
-    }
-
-    /// Waits out harnesses that flap back to running for a moment mid-turn:
-    /// the notification goes only if it is still unread after 3 s.
-    private func queueNotification(_ event: AttentionEvent) {
-        guard AttentionSettings.notifies(event.unread.kind) else { return }
-        pendingNotifications.removeValue(forKey: event.key)?.cancel()
-        pendingNotifications[event.key] = Task {
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
-            pendingNotifications[event.key] = nil
-            postNotification(event.key)
-        }
-    }
-
-    /// Never for what is on screen in front of you.
-    private func postNotification(_ key: AttentionKey) {
-        guard let unread = attentionState.unread[key], AttentionSettings.notifies(unread.kind),
-              let session = sessions.first(where: { $0.id == key.sessionID })
-        else { return }
-        if paneInFront, shownSessionID == key.sessionID, unread.windowID == nil || unread.windowID == shownWindowID { return }
-        let body = switch unread.kind {
-        case .finished: "Finished its turn"
-        case .asks: "Asks for input"
-        case .failed: "Hit an error"
-        }
-        Notifier.shared.post(
-            id: Self.notificationID(key), title: session.title, subtitle: unread.label ?? session.groupName, body: body,
-            sessionID: key.sessionID, windowID: unread.windowID, sound: AttentionSettings.isOn(AttentionSettings.sound)
-        )
-        logger.info("notified \(key.sessionID, privacy: .public) \(key.paneID ?? "", privacy: .public): \(unread.kind.rawValue, privacy: .public)")
-    }
-
-    private static func notificationID(_ key: AttentionKey) -> String {
-        "\(key.sessionID)|\(key.paneID ?? "")"
-    }
-
-    /// The window the pane shows: the selected window row's, else the
-    /// session's first, where its agent runs.
-    private var shownWindowID: String? {
-        guard let shownSessionID else { return nil }
-        if case .pane(let target)? = selection, target.sessionID == shownSessionID, let windowID = target.windowID {
-            return windowID
-        }
-        return windowsBySession[shownSessionID]?.first?.windowID
-    }
-
-    /// Bosun became active or not, or the main window came on screen or
-    /// went off it.
-    func paneInFrontChanged(_ inFront: Bool) {
-        guard inFront != paneInFront else { return }
-        paneInFront = inFront
-        scheduleSeen()
-    }
-
-    /// What the pane shows counts as seen after a second in front of you.
-    private func scheduleSeen() {
-        seenTask?.cancel()
-        guard paneInFront, let sessionID = shownSessionID, sessionID != keptUnread, attentionState.hasUnread(sessionID: sessionID) else { return }
-        seenTask = Task {
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled, paneInFront, shownSessionID == sessionID, sessionID != keptUnread else { return }
-            var next = attentionState
-            let cleared = next.seen(sessionID: sessionID, windowID: shownWindowID)
-            guard !cleared.isEmpty else { return }
-            logger.info("seen \(sessionID, privacy: .public): \(cleared.count, privacy: .public) cleared")
-            attentionState = next
-            for key in cleared { pendingNotifications.removeValue(forKey: key)?.cancel() }
-            Notifier.shared.remove(ids: cleared.map(Self.notificationID))
-            saveAttention()
-        }
-    }
-
-    /// Mark as Unread. The session on screen stays unread until another one
-    /// is shown.
-    func markUnread(_ session: DeckSession) {
-        keptUnread = shownSessionID == session.id ? session.id : nil
-        updateAttention { $0.markUnread(sessionID: session.id, at: .now); return [] }
     }
 
     /// A notification's click: the session, in the window of the pane that
@@ -893,22 +803,9 @@ final class DeckModel {
         revealRequests += 1
     }
 
-    /// Saves what is unread when it changed.
-    private func saveAttention() {
-        guard attentionState.unread != savedAttentionState?.unread || attentionState.observedUntil != savedAttentionState?.observedUntil,
-              let data = try? JSONEncoder().encode(attentionState.snapshot)
-        else { return }
-        UserDefaults.standard.set(data, forKey: Self.attentionKey)
-        savedAttentionState = attentionState
-    }
-
-    private static let attentionKey = "attention"
-
-    private static func savedAttention() -> AttentionState {
-        guard let data = UserDefaults.standard.data(forKey: attentionKey),
-              let snapshot = try? JSONDecoder().decode(AttentionState.Snapshot.self, from: data)
-        else { return AttentionState() }
-        return AttentionState(snapshot: snapshot)
+    /// A menu bar row's click: the session, at the pane that wants you.
+    func reveal(_ session: DeckSession) {
+        reveal(sessionID: session.id, windowID: attention.window(for: session.id))
     }
 
     /// A frame for a session the list does not know yet (created since the

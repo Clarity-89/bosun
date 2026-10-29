@@ -12,7 +12,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Shows a session, in the window of the pane that wants you.
     private var onOpen: ((_ sessionID: String, _ windowID: String?) -> Void)?
 
-    /// Nil outside an app bundle, `swift test` say, where the center traps.
+    /// Nil outside an app bundle, the bare `swift run` binary say, where the center traps.
     private lazy var center: UNUserNotificationCenter? = {
         guard Bundle.main.bundleIdentifier != nil else { return nil }
         let center = UNUserNotificationCenter.current()

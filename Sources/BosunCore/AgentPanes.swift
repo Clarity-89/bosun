@@ -74,29 +74,29 @@ public struct ProcessTree: Sendable {
     }
 }
 
-/// A tmux pane with omp running in it.
+/// A tmux pane whose title is omp's.
 public struct AgentPane: Equatable, Sendable {
     public let tmuxSession: String
     public let windowID: String
     /// tmux's `%N` id, stable for the pane's life. One window can hold
     /// several omp instances, one per pane.
     public let paneID: String
+    /// The pane's first process, the shell omp runs under.
+    public let panePID: Int32
     public let title: OmpTitle
 
     static let listFormat = "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_title}"
 
     /// Panes from `listFormat` lines whose title is omp's. Bosun's own views
-    /// list the same panes again and are skipped. `runsOmp` decides on a pane
-    /// pid; nil skips the check.
-    static func parse(listOutput: String, runsOmp: ((Int32) -> Bool)?) -> [AgentPane] {
+    /// list the same panes again and are skipped.
+    static func parse(listOutput: String) -> [AgentPane] {
         var seen: Set<String> = []
         return listOutput.split(whereSeparator: \.isNewline).compactMap { line in
             let fields = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
             guard fields.count == 5, !fields[0].hasPrefix(ViewSession.prefix),
-                  let title = OmpTitle(fields[4]), let pid = Int32(fields[3]),
-                  runsOmp?(pid) ?? true, seen.insert(fields[2]).inserted
+                  let title = OmpTitle(fields[4]), let pid = Int32(fields[3]), seen.insert(fields[2]).inserted
             else { return nil }
-            return AgentPane(tmuxSession: fields[0], windowID: fields[1], paneID: fields[2], title: title)
+            return AgentPane(tmuxSession: fields[0], windowID: fields[1], paneID: fields[2], panePID: pid, title: title)
         }
     }
 }
@@ -104,15 +104,17 @@ public struct AgentPane: Equatable, Sendable {
 extension AgentDeckCLI {
     /// Every pane omp runs in, on tmux's default server; nil when tmux or ps
     /// did not answer, so a failed poll does not read as every omp gone. The
-    /// process table is read only when some title is omp's.
+    /// process table, which tells a live omp from a title it left behind, is
+    /// read only when some title is omp's.
     public func listAgentPanes() async -> [AgentPane]? {
         guard let panes = try? await tmux(["list-panes", "-a", "-F", AgentPane.listFormat]), panes.succeeded else { return nil }
-        guard !AgentPane.parse(listOutput: panes.stdout, runsOmp: nil).isEmpty else { return [] }
+        let titled = AgentPane.parse(listOutput: panes.stdout)
+        guard !titled.isEmpty else { return [] }
         guard let ps = try? await Subprocess.run(
             executable: "/bin/ps", arguments: ["-axo", "pid=,ppid=,args="],
             environment: Self.childEnvironment(binaryDirectory: nil), timeout: .seconds(5)
         ), ps.succeeded else { return nil }
         let tree = ProcessTree(psOutput: ps.stdout)
-        return AgentPane.parse(listOutput: panes.stdout, runsOmp: tree.runsOmp(under:))
+        return titled.filter { tree.runsOmp(under: $0.panePID) }
     }
 }
