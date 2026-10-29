@@ -20,7 +20,7 @@ enum Shortcut: CaseIterable {
     case newSession, quickSession
     case rename, restart, stop, delete
     case splitSideBySide, openInGhostty
-    case toggleSessionList, focusTerminal, focusSidebar, cheatSheet
+    case toggleSessionList, focusTerminal, focusSidebar, cheatSheet, settings
 
     enum Section: String, CaseIterable {
         case sessionList = "Session list"
@@ -32,7 +32,7 @@ enum Shortcut: CaseIterable {
         switch self {
         case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: .sessionList
         case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty: .sessions
-        case .toggleSessionList, .focusTerminal, .focusSidebar, .cheatSheet: .window
+        case .toggleSessionList, .focusTerminal, .focusSidebar, .cheatSheet, .settings: .window
         }
     }
 
@@ -59,6 +59,7 @@ enum Shortcut: CaseIterable {
         case .focusTerminal: "Focus the terminal"
         case .focusSidebar: "Focus the session list"
         case .cheatSheet: "Show these shortcuts"
+        case .settings: "Settings: notifications and the unread count"
         }
     }
 
@@ -81,7 +82,7 @@ enum Shortcut: CaseIterable {
         case .delete: "d"
         case .splitSideBySide: "H"
         case .cheatSheet: "?"
-        case .toggleSessionList, .focusTerminal, .focusSidebar: nil
+        case .toggleSessionList, .focusTerminal, .focusSidebar, .settings: nil
         }
     }
 
@@ -126,6 +127,9 @@ enum Shortcut: CaseIterable {
         case .focusTerminal: KeyboardShortcut("e", modifiers: [.command, .shift])
         case .focusSidebar: KeyboardShortcut("l", modifiers: [.command, .shift])
         case .cheatSheet: KeyboardShortcut("/")
+        // SwiftUI's own Settings item holds it; the entry lets the terminal
+        // hand ⌘, over, where Ghostty would take it for `open_config`.
+        case .settings: KeyboardShortcut(",")
         }
     }
 

@@ -291,6 +291,20 @@ public actor AgentDeckCLI {
 
     /// `run`, then the JSON on stdout as `type`.
     func decode<T: Decodable>(_ type: T.Type, _ arguments: [String], timeout: Duration = .seconds(30)) async throws -> T {
-        try JSONDecoder().decode(type, from: Data(try await run(arguments, timeout: timeout).stdout.utf8))
+        try Self.jsonDecoder().decode(type, from: Data(try await run(arguments, timeout: timeout).stdout.utf8))
+    }
+
+    /// agent-deck's JSON, whose dates Go writes as RFC3339Nano.
+    static func jsonDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let text = try container.decode(String.self)
+            guard let date = Date(rfc3339: text) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "not an RFC 3339 date: \(text)")
+            }
+            return date
+        }
+        return decoder
     }
 }

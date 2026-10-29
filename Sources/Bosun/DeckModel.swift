@@ -27,6 +27,11 @@ final class DeckModel {
     /// Five terminals stay attached, so switching back to a recent session
     /// shows it at once; each costs a tmux client and a hidden surface.
     private var recent = RecentPanes(limit: 5)
+    /// What wants you, by Bosun's own count.
+    let attention = AttentionCenter()
+    /// Counts notification clicks, so the window puts the keyboard in the
+    /// terminal of the session shown.
+    private(set) var revealRequests = 0
     /// Sessions whose terminal is being opened.
     private(set) var attachingSessionIDs: Set<String> = []
     /// Nil once libghostty is running; otherwise what the pane shows instead.
@@ -57,6 +62,11 @@ final class DeckModel {
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var delayedRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var isReordering = false
+    /// True once a `list` succeeded, so `sessions` is real; a failure leaves
+    /// `hasLoadedSessions` true with nothing in it.
+    @ObservationIgnored private var hasListed = false
+    @ObservationIgnored private var agentPanePollTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingReveal: (sessionID: String, windowID: String?)?
 
     private init() {}
 
@@ -80,10 +90,6 @@ final class DeckModel {
     /// proves nothing.
     var connectionLabel: String {
         connection == .live && statusFeedGap != nil ? "Updates every 60 s" : connection.label
-    }
-
-    var waitingCount: Int {
-        sessions.count(where: { $0.status.needsAttention })
     }
 
     /// Nil while a group row is selected.
@@ -156,9 +162,10 @@ final class DeckModel {
     }
 
     func stop() {
-        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask] {
+        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask, agentPanePollTask] {
             task?.cancel()
         }
+        attention.stop()
     }
 
     /// One `list --json` at a time: it runs a status pass, and a slower call
@@ -183,6 +190,7 @@ final class DeckModel {
                     result[session.id] = windows
                 }
             }
+            shownChanged()
         } catch {
             lastError = error.localizedDescription
         }
@@ -205,12 +213,19 @@ final class DeckModel {
             if let groups = try? await groupOrder {
                 deckGroups = groups
             }
+            let previous = hasListed ? sessions : nil
             sessions = DeckSession.inDeckOrder(visible, groupPaths: deckGroups.map(\.path))
             hasLoadedSessions = true
+            hasListed = true
             lastError = nil
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
+            attention.listed(sessions, previous: previous)
             dropStalePanes(loneViews: await cli.loneViews())
             await loadAllWindows()
+            if let (sessionID, windowID) = pendingReveal {
+                pendingReveal = nil
+                reveal(sessionID: sessionID, windowID: windowID)
+            }
         } catch is CancellationError {
         } catch {
             hasLoadedSessions = true
@@ -240,6 +255,7 @@ final class DeckModel {
         } else if sessions.first(where: { $0.id == target.sessionID })?.status != .stopped {
             attach(target)
         }
+        shownChanged()
     }
 
     /// Changes the session the pane shows. The terminal leaving yields its
@@ -248,6 +264,24 @@ final class DeckModel {
         guard sessionID != shownSessionID else { return }
         if let hidden = attachedPane { yieldSize(of: hidden) }
         shownSessionID = sessionID
+        shownChanged()
+    }
+
+    /// Attention hears what the pane shows: after a selection, a shown
+    /// session, or the window list changing.
+    private func shownChanged() {
+        attention.shown(sessionID: shownSessionID, windowID: shownWindowID)
+    }
+
+    /// The window the pane shows: the selected window row's, else the
+    /// session's first, where its agent runs; nil until the windows are
+    /// listed.
+    private var shownWindowID: String? {
+        guard let shownSessionID else { return nil }
+        if case .pane(let target)? = selection, target.sessionID == shownSessionID, let windowID = target.windowID {
+            return windowID
+        }
+        return windowsBySession[shownSessionID]?.first?.windowID
     }
 
     /// A window row's window, or the agent's for the session row, selected
@@ -606,6 +640,7 @@ final class DeckModel {
             let stats = try await cli.eventsStats()
             await refresh()
             startReconcileLoop()
+            startAgentPanePoll()
             record(stats)
             if stats.enabled {
                 startFollower(after: stats.cursor)
@@ -728,11 +763,49 @@ final class DeckModel {
             scheduleRefresh()
             return
         }
+        // `from` is missing, or empty, on a session's first status.
+        let from = change.from.flatMap { $0 == .unknown ? nil : $0 } ?? sessions[index].status
         sessions[index].status = change.to
         // The bus carries no substate, and the old one described the previous status.
         sessions[index].substate = nil
         logger.info("status \(frame.sessionID, privacy: .public) -> \(change.to.rawValue, privacy: .public)")
+        attention.statusChanged(sessions[index], from: from, to: change.to)
         if change.to == .stopped { dropStalePanes() }
+    }
+
+    // MARK: Attention
+
+    /// omp's pane titles every 2 s: when its turns end and when it asks.
+    private func startAgentPanePoll() {
+        agentPanePollTask?.cancel()
+        agentPanePollTask = Task {
+            while !Task.isCancelled {
+                if let panes = await cli.listAgentPanes() {
+                    attention.panesPolled(panes, sessions: sessions)
+                }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    /// A notification's click: the session, in the window of the pane that
+    /// wants you, with the keyboard in its terminal.
+    func reveal(sessionID: String, windowID: String?) {
+        // A click that launched Bosun arrives before the first list.
+        guard hasListed else {
+            pendingReveal = (sessionID, windowID)
+            return
+        }
+        guard let session = sessions.first(where: { $0.id == sessionID }) else { return }
+        unfoldGroup(session.groupName)
+        let first = windowsBySession[sessionID]?.first?.windowID
+        select(.pane(PaneTarget(sessionID: sessionID, windowID: windowID == first ? nil : windowID)))
+        revealRequests += 1
+    }
+
+    /// A menu bar row's click: the session, at the pane that wants you.
+    func reveal(_ session: DeckSession) {
+        reveal(sessionID: session.id, windowID: attention.window(for: session.id))
     }
 
     /// A frame for a session the list does not know yet (created since the

@@ -136,12 +136,12 @@ private let ghosttyDefaults: [Trigger: String] = Dictionary(uniqueKeysWithValues
     """.split(separator: "\n").map(Trigger.keybind))
 
 /// What a single embedded pane has no use for: Ghostty's windows, tabs and
-/// splits. GhosttyActionRouter performs none of these, so a menu shortcut
-/// may take their keys.
+/// splits, and opening Ghostty's own config. GhosttyActionRouter performs
+/// none of these, so a menu shortcut may take their keys.
 private let paneIgnoredActions: Set<String> = [
     "new_window", "new_tab", "new_split", "goto_tab", "last_tab", "previous_tab", "next_tab",
     "close_tab", "close_window", "close_all_windows", "goto_split", "resize_split", "equalize_splits",
-    "toggle_split_zoom",
+    "toggle_split_zoom", "open_config",
 ]
 
 /// The items macOS adds to Bosun's own menus that Ghostty does not bind:
@@ -224,6 +224,7 @@ private let appMenuItems = "super+h super+alt+h super+m super+x super+ctrl+s sup
         ("\u{7F}", [.command, .option], .delete),
         ("/", .command, .cheatSheet),
         ("q", .control, .toggleSessionList),
+        (",", .command, .settings),
         ("n", [.command, .capsLock], .newSession),
     ] as [(String, EventModifiers, Shortcut)])
     func menuKeyReachesTheMenuBar(key: String, modifiers: EventModifiers, action: Shortcut) {

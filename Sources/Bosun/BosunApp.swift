@@ -7,11 +7,15 @@ struct BosunApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let model = DeckModel.shared
 
+    init() {
+        AttentionSettings.register()
+    }
+
     var body: some Scene {
         // One window, as the model has one selection and one pane: opening
         // it from the menu bar brings it forward, or back after a close,
         // where a WindowGroup would add a second window on the same session.
-        Window("Bosun", id: "main") {
+        Window("Bosun", id: MainWindowView.windowID) {
             MainWindowView(model: model)
                 .frame(minWidth: 900, minHeight: 560)
         }
@@ -32,16 +36,14 @@ struct BosunApp: App {
         // The Help menu opens it; the View menu item it would add is a second way.
         .commandsRemoved()
 
+        Settings {
+            AttentionSettingsView()
+        }
+
         MenuBarExtra {
             MenuView(model: model)
         } label: {
-            // Icon only: a crowded, notched menu bar hides items that do not
-            // fit, so every point of width costs visibility.
-            if model.waitingCount > 0 {
-                Label("\(model.waitingCount)", systemImage: "rectangle.stack.badge.person.crop")
-            } else {
-                Image(systemName: "rectangle.stack")
-            }
+            MenuBarLabel(model: model)
         }
         .menuBarExtraStyle(.window)
     }
@@ -107,6 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installSignalHandlers()
+        observeWhatIsInFront()
+        Notifier.shared.start { [weak self] sessionID, windowID in
+            NSApp.activate()
+            self?.showMainWindow()
+            DeckModel.shared.reveal(sessionID: sessionID, windowID: windowID)
+        }
         DeckModel.shared.start()
     }
 
@@ -116,12 +124,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            for window in NSApp.windows where window.canBecomeKey && !(window is NSPanel) {
-                window.makeKeyAndOrderFront(nil)
+        if !flag { showMainWindow() }
+        return true
+    }
+
+    /// SwiftUI names the Window scene's NSWindow after its id, and keeps it
+    /// around once closed.
+    private var mainWindow: NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue == MainWindowView.windowID }
+    }
+
+    /// The main window, back from the Dock, a notification or the menu bar;
+    /// the Settings window and the cheat sheet stay as they are.
+    func showMainWindow() {
+        mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The pane is in front of you while Bosun is active and some of the
+    /// main window is on screen, a Settings window over it or not.
+    private func observeWhatIsInFront() {
+        let names = [
+            NSApplication.didBecomeActiveNotification,
+            NSApplication.didResignActiveNotification,
+            NSWindow.didChangeOcclusionStateNotification,
+        ]
+        for name in names {
+            _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    let window = self?.mainWindow
+                    DeckModel.shared.attention.inFront(
+                        NSApp.isActive && window?.isVisible == true && window?.occlusionState.contains(.visible) == true
+                    )
+                }
             }
         }
-        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
