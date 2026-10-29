@@ -7,12 +7,17 @@
 public enum ViewSession {
     static let prefix = "bosun-view-"
 
-    /// `bosun-view-<pid>-<n>`; the pid tells a dead Bosun's views from a
-    /// running one's. Never `agentdeck_…`, which agent-deck's duplicate sweep
-    /// kills, and never an extension of the agent-deck session's name, which
-    /// tmux's prefix match would take for that session once it is gone.
-    public static func name(sequence: Int, pid: Int32 = ProcessInfo.processInfo.processIdentifier) -> String {
-        "\(prefix)\(pid)-\(sequence)"
+    /// `ignore-size` on `attach-session` and `refresh-client`, and
+    /// `session_group_size`, arrived in 3.2.
+    static let minimumTmux = TmuxVersion(major: 3, minor: 2)
+
+    /// `bosun-view-<pid>-<first 8 of the pane id>`; the pid tells a dead
+    /// Bosun's views from a running one's. Never `agentdeck_…`, which
+    /// agent-deck's duplicate sweep kills, and never an extension of the
+    /// agent-deck session's name, which tmux's prefix match would take for
+    /// that session once it is gone.
+    public static func name(paneID: UUID, pid: Int32 = ProcessInfo.processInfo.processIdentifier) -> String {
+        "\(prefix)\(pid)-\(paneID.uuidString.prefix(8).lowercased())"
     }
 
     /// The views among `sessionNames` whose Bosun no longer runs: tmux ends
@@ -24,6 +29,22 @@ public enum ViewSession {
                   let pid = Int32(name.dropFirst(prefix.count).prefix { $0 != "-" }) else { return false }
             return pid != ownPID && !isRunning(pid)
         }
+    }
+
+    /// `list-sessions -F` format that `loneViews(in:)` reads.
+    static let groupSizeFormat = "#{session_name}\t#{session_group_size}"
+
+    /// The views alone in their group: agent-deck has killed the session each
+    /// was grouped with, perhaps to recreate it under the same name, and the
+    /// view alone keeps the dead session's windows alive.
+    static func loneViews(in listOutput: String) -> Set<String> {
+        var lone: Set<String> = []
+        for line in listOutput.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count == 2, fields[0].hasPrefix(prefix), (Int(fields[1]) ?? 0) < 2 else { continue }
+            lone.insert(String(fields[0]))
+        }
+        return lone
     }
 
     /// `list-clients -F` format that `someoneElse(on:besides:clients:)` reads.
@@ -42,11 +63,25 @@ public enum ViewSession {
     }
 }
 
+/// Why a view could not be made.
+public enum ViewSessionError: Error, LocalizedError, Equatable, Sendable {
+    case tmuxTooOld(TmuxVersion)
+
+    public var errorDescription: String? {
+        switch self {
+        case .tmuxTooOld(let version):
+            "tmux \(version) is older than \(ViewSession.minimumTmux)"
+        }
+    }
+}
+
 extension AgentDeckCLI {
-    /// A detached view grouped with agent-deck's `tmuxSession`. It fails for
-    /// a session tmux's default server does not have, one on a configured
-    /// `[tmux].socket_name`.
+    /// A detached view grouped with agent-deck's `tmuxSession`. It fails on a
+    /// tmux older than 3.2, and for a session tmux's default server does not
+    /// have, one on a configured `[tmux].socket_name`.
     public func createView(_ view: String, grouping tmuxSession: String) async throws {
+        let version = try await tmuxVersion()
+        guard version >= ViewSession.minimumTmux else { throw ViewSessionError.tmuxTooOld(version) }
         try await tmux(["new-session", "-d", "-t", "=\(tmuxSession)", "-s", view]).checkSucceeded()
     }
 
@@ -71,26 +106,22 @@ extension AgentDeckCLI {
         }
     }
 
-    /// For quitting, which cannot wait: one tmux per view, left to finish
-    /// after Bosun has exited.
-    public nonisolated func killViewsWithoutWaiting(_ views: [String]) {
-        guard let tmux = try? Self.tmuxPath() else { return }
-        for view in views {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tmux)
-            process.arguments = ["kill-session", "-t", "=\(view)"]
-            process.environment = Self.childEnvironment(binaryDirectory: nil)
-            try? process.run()
-        }
+    /// The views whose agent-deck session tmux no longer has, by name; see
+    /// `ViewSession.loneViews(in:)`. Empty when tmux cannot say.
+    public func loneViews() async -> Set<String> {
+        guard let result = try? await tmux(["list-sessions", "-F", ViewSession.groupSizeFormat]), result.succeeded else { return [] }
+        return ViewSession.loneViews(in: result.stdout)
     }
 
     /// Whether someone else is on the window the view shows, the TUI say:
     /// tmux gives a window one size, and agent-deck's `window-size latest`
-    /// gives it to the client used last. Nobody, when tmux cannot say.
+    /// gives it to the client used last. Someone, when tmux cannot say: the
+    /// pane then waits for input before it sizes a window whose clients it
+    /// could not see.
     public func someoneElseOnWindow(ofView view: String) async -> Bool {
         guard let window = try? await tmux(["display-message", "-p", "-t", "=\(view):", "#{window_id}"]), window.succeeded,
               let clients = try? await tmux(["list-clients", "-F", ViewSession.clientFormat]), clients.succeeded
-        else { return false }
+        else { return true }
         let windowID = window.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         return ViewSession.someoneElse(on: windowID, besides: view, clients: clients.stdout)
     }

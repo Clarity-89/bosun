@@ -252,9 +252,10 @@ enum GhosttyFFI {
         ghostty_surface_set_focus(surface, focused)
     }
 
-    /// Set whether the surface is occluded (not visible).
-    static func surfaceSetOcclusion(_ surface: ghostty_surface_t, occluded: Bool) {
-        ghostty_surface_set_occlusion(surface, occluded)
+    /// Set whether the surface is visible. BOSUN: `ghostty_surface_set_occlusion`
+    /// takes `visible` (apprt/embedded.zig); Calyx named the flag `occluded`.
+    static func surfaceSetVisible(_ surface: ghostty_surface_t, visible: Bool) {
+        ghostty_surface_set_occlusion(surface, visible)
     }
 
     /// Set the color scheme for a surface.

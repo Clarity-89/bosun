@@ -208,17 +208,13 @@ struct MainWindowView: View {
     }
 
     /// Every live pane stays in the view tree, hidden unless shown, so its
-    /// tmux client outlives a switch and showing it again is instant.
+    /// tmux client outlives a switch and showing it again is instant. The
+    /// terminal being opened shows a spinner; a session without one, Restart.
     private var detail: some View {
         let shown = model.attachedPane?.id
         return ZStack {
             ForEach(model.livePanes) { live in
-                TerminalHost(
-                    launch: live.launch,
-                    isShown: live.id == shown,
-                    awaitsInput: model.sizeYieldingPaneIDs.contains(live.id),
-                    focusRequest: terminalFocusRequest
-                ) { title in
+                TerminalHost(launch: live.launch, isShown: live.id == shown, focusRequest: terminalFocusRequest) { title in
                     model.paneTitleChanged(paneID: live.id, title: title)
                 } onInput: {
                     model.paneReceivedInput(paneID: live.id)
@@ -227,7 +223,9 @@ struct MainWindowView: View {
                 }
             }
             if shown == nil {
-                if let session = model.paneSession {
+                if model.isAttaching {
+                    ProgressView()
+                } else if let session = model.paneSession {
                     NotRunningPane(model: model, session: session)
                 } else {
                     ContentUnavailableView(

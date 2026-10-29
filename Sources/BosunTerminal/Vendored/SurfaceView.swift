@@ -35,6 +35,8 @@ class SurfaceView: NSView {
     // of fanning out through NotificationCenter; the host observes via closures.
     var onTitleChange: ((String) -> Void)?
     var onProcessExit: ((ProcessExit) -> Void)?
+    /// BOSUN: a key, click or scroll in the terminal, before the engine gets it.
+    var onInput: (() -> Void)?
 
     func applyTitle(_ value: String) {
         title = value
@@ -382,6 +384,7 @@ class SurfaceView: NSView {
     // MARK: - Keyboard Input
 
     override func keyDown(with event: NSEvent) {
+        onInput?() // BOSUN
         guard let surfaceController else {
             interpretKeyEvents([event])
             return
@@ -630,6 +633,7 @@ class SurfaceView: NSView {
     // MARK: - Mouse Input
 
     override func mouseDown(with event: NSEvent) {
+        onInput?() // BOSUN
         // BOSUN: a plain NSView does not take focus on click and the pane is
         // never auto-focused, so the click is the way in. Left button only,
         // as in Ghostty; the press still reaches the terminal.
@@ -656,6 +660,7 @@ class SurfaceView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        onInput?() // BOSUN
         let mods = EventTranslator.translateModifiers(event.modifierFlags)
         if surfaceController?.sendMouseButton(
             state: GHOSTTY_MOUSE_PRESS,
@@ -681,6 +686,7 @@ class SurfaceView: NSView {
 
     override func otherMouseDown(with event: NSEvent) {
         guard event.buttonNumber == 2 else { return }
+        onInput?() // BOSUN
         let mods = EventTranslator.translateModifiers(event.modifierFlags)
         surfaceController?.sendMouseButton(
             state: GHOSTTY_MOUSE_PRESS,
@@ -802,6 +808,7 @@ class SurfaceView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        onInput?() // BOSUN
         // When smooth scrolling is active for discrete events, we intercept and
         // drip-feed pixels to ghostty instead of sending the original tick event.
         if !event.hasPreciseScrollingDeltas && isSmoothScrollActive() {

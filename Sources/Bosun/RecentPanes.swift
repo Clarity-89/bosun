@@ -5,14 +5,17 @@ import Foundation
 /// for a session tmux's default server does not have, through `agent-deck
 /// session attach`.
 struct AttachedPane: Identifiable {
-    let id = UUID()
+    let id: UUID
     let sessionID: String
-    /// agent-deck's tmux session at the attach. One under another name is a
-    /// recreated session, whose windows the view does not share.
-    let tmuxSession: String?
     /// Bosun's own session in the group; nil when attached through agent-deck.
     let view: String?
     let launch: AttachLaunch
+    /// Whether the tmux client leaves its window's size to the other clients:
+    /// hidden, or shown while someone else is on the window, until you type
+    /// or click in it. tmux gives a window one size, and agent-deck's
+    /// `window-size latest` gives it to the client used last, so a pane that
+    /// sized its window would shrink the TUI's.
+    var yieldsSize: Bool
     /// What the terminal reports as its title.
     var title = ""
 }
@@ -30,6 +33,10 @@ struct RecentPanes {
 
     func pane(for sessionID: String) -> AttachedPane? {
         panes.first { $0.sessionID == sessionID }
+    }
+
+    func pane(id: UUID) -> AttachedPane? {
+        panes.first { $0.id == id }
     }
 
     /// The session's pane, made the most recent; nil without one.
@@ -57,18 +64,19 @@ struct RecentPanes {
         return panes.remove(at: index)
     }
 
-    mutating func setTitle(_ title: String, of id: UUID) {
+    mutating func update(_ id: UUID, _ change: (inout AttachedPane) -> Void) {
         guard let index = panes.firstIndex(where: { $0.id == id }) else { return }
-        panes[index].title = title
+        change(&panes[index])
     }
 
     /// Removes and returns the panes `sessions` no longer backs: a session
-    /// gone or stopped, or a view whose agent-deck session tmux now has
-    /// under another name.
-    mutating func removeStale(given sessions: [DeckSession]) -> [AttachedPane] {
+    /// gone or stopped, or a view in `loneViews`, left alone in its tmux
+    /// group when agent-deck killed the session, perhaps to recreate it
+    /// under the same name; the view alone keeps the dead windows alive.
+    mutating func removeStale(given sessions: [DeckSession], loneViews: Set<String>) -> [AttachedPane] {
         let stale = panes.filter { pane in
             guard let session = sessions.first(where: { $0.id == pane.sessionID }) else { return true }
-            return session.status == .stopped || (pane.view != nil && session.tmuxSession != pane.tmuxSession)
+            return session.status == .stopped || pane.view.map(loneViews.contains) ?? false
         }
         panes.removeAll { pane in stale.contains { $0.id == pane.id } }
         return stale

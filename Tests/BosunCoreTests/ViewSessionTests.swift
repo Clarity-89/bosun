@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import BosunCore
 
@@ -32,15 +33,40 @@ import Testing
     /// A crashed Bosun's views go; a running Bosun's, its own included, and
     /// every other session stay.
     @Test func orphansAreViewsOfBosunsThatAreGone() {
-        let names = [
-            ViewSession.name(sequence: 1, pid: 100),
-            ViewSession.name(sequence: 2, pid: 100),
-            ViewSession.name(sequence: 1, pid: 200),
-            ViewSession.name(sequence: 1, pid: 300),
+        let dead = [ViewSession.name(paneID: UUID(), pid: 100), ViewSession.name(paneID: UUID(), pid: 100)]
+        let names = dead + [
+            ViewSession.name(paneID: UUID(), pid: 200),
+            ViewSession.name(paneID: UUID(), pid: 300),
             "agentdeck_api_1a2b",
             "bosun-view-notapid-1",
         ]
         let orphans = ViewSession.orphans(in: names, ownPID: 300, isRunning: { $0 == 200 })
-        #expect(orphans == [ViewSession.name(sequence: 1, pid: 100), ViewSession.name(sequence: 2, pid: 100)])
+        #expect(orphans == dead)
+    }
+
+    /// agent-deck killed the session a lone view was grouped with; a view
+    /// still grouped with its session, and agent-deck's own sessions, are
+    /// not lone, whatever their group says.
+    @Test func loneViewsAreAloneInTheirGroup() {
+        let listed = "agentdeck_api\t2\nbosun-view-42-1\t2\nbosun-view-42-2\t1\nbosun-view-7-1\t\nagentdeck_old\t1\n"
+        #expect(ViewSession.loneViews(in: listed) == ["bosun-view-42-2", "bosun-view-7-1"])
+    }
+
+    /// `ignore-size` and `session_group_size` need 3.2; a letter suffix or
+    /// a `next-` build changes nothing.
+    @Test(arguments: [
+        ("tmux 3.7b", true),
+        ("tmux 3.2", true),
+        ("tmux next-3.5", true),
+        ("tmux 3.1c", false),
+        ("tmux 2.9a", false),
+    ])
+    func viewsNeedTmux32(output: String, supported: Bool) throws {
+        let version = try #require(TmuxVersion(versionOutput: output))
+        #expect((version >= ViewSession.minimumTmux) == supported)
+    }
+
+    @Test func versionOutputWithoutANumberIsNil() {
+        #expect(TmuxVersion(versionOutput: "tmux: command not found") == nil)
     }
 }

@@ -159,10 +159,10 @@ final class GhosttySurfaceController: Identifiable, GhosttyColorSchemeReceiving 
         GhosttyFFI.surfaceSetFocus(surface, focused: focused)
     }
 
-    /// Set whether the surface is occluded.
-    func setOcclusion(_ occluded: Bool) {
+    /// Set whether the surface is visible; hidden, it stops drawing.
+    func setVisible(_ visible: Bool) {
         guard let surface else { return }
-        GhosttyFFI.surfaceSetOcclusion(surface, occluded: occluded)
+        GhosttyFFI.surfaceSetVisible(surface, visible: visible)
     }
 
     /// Request a redraw for the current surface.

@@ -78,6 +78,8 @@ public enum AgentDeckCLIError: Error, LocalizedError, Equatable, Sendable {
 public actor AgentDeckCLI {
     private let configuredPath: String?
     private var resolved: AgentDeckBinary?
+    /// `tmux -V` once `tmuxVersion()` has run.
+    var probedTmuxVersion: TmuxVersion?
 
     public init(agentDeckPath: String? = nil) {
         configuredPath = agentDeckPath

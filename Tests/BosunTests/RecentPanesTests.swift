@@ -1,13 +1,14 @@
+import Foundation
 import Testing
 @testable import Bosun
 @testable import BosunCore
 
-private func pane(_ sessionID: String, tmux: String? = nil, view: String? = "view") -> AttachedPane {
-    AttachedPane(sessionID: sessionID, tmuxSession: tmux ?? "agentdeck_\(sessionID)", view: view, launch: AttachLaunch(command: "tmux", environment: [:]))
+private func pane(_ sessionID: String, view: String? = "view") -> AttachedPane {
+    AttachedPane(id: UUID(), sessionID: sessionID, view: view, launch: AttachLaunch(command: "tmux", environment: [:]), yieldsSize: false)
 }
 
-private func session(_ id: String, status: SessionStatus = .idle, tmux: String? = nil) -> DeckSession {
-    DeckSession(id: id, title: id, path: "/p", group: "g", tool: "shell", status: status, substate: nil, tmuxSession: tmux ?? "agentdeck_\(id)", archived: false)
+private func session(_ id: String, status: SessionStatus = .idle) -> DeckSession {
+    DeckSession(id: id, title: id, path: "/p", group: "g", tool: "shell", status: status, substate: nil, tmuxSession: "agentdeck_\(id)", archived: false)
 }
 
 /// The terminals kept attached for a quick switch back.
@@ -39,22 +40,17 @@ private func session(_ id: String, status: SessionStatus = .idle, tmux: String? 
         #expect(recent.panes.map(\.sessionID) == ["a"])
     }
 
-    /// A view of a session agent-deck recreated under another tmux name
-    /// shows the dead one's windows; a client through agent-deck ends by
-    /// itself instead.
-    @Test func stalePanesAreGoneStoppedOrRegrouped() {
+    /// A view left alone in its tmux group shows a killed session's windows,
+    /// whatever the session's name is now; a client through agent-deck ends
+    /// by itself instead.
+    @Test func stalePanesAreGoneStoppedOrLeftAlone() {
         var recent = RecentPanes(limit: 5)
-        for added in [pane("gone"), pane("stopped"), pane("renamed"), pane("renamedNoView", view: nil), pane("kept")] {
+        for added in [pane("gone"), pane("stopped"), pane("alone", view: "view-alone"), pane("noView", view: nil), pane("kept")] {
             _ = recent.add(added)
         }
-        let sessions = [
-            session("stopped", status: .stopped),
-            session("renamed", tmux: "agentdeck_renamed_2"),
-            session("renamedNoView", tmux: "agentdeck_renamedNoView_2"),
-            session("kept"),
-        ]
-        let stale = recent.removeStale(given: sessions)
-        #expect(stale.map(\.sessionID) == ["gone", "stopped", "renamed"])
-        #expect(recent.panes.map(\.sessionID) == ["renamedNoView", "kept"])
+        let sessions = [session("stopped", status: .stopped), session("alone"), session("noView"), session("kept")]
+        let stale = recent.removeStale(given: sessions, loneViews: ["view-alone", "view-of-nobody"])
+        #expect(stale.map(\.sessionID) == ["gone", "stopped", "alone"])
+        #expect(recent.panes.map(\.sessionID) == ["noView", "kept"])
     }
 }

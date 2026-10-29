@@ -43,6 +43,33 @@ public enum SplitDirection: Sendable {
     }
 }
 
+/// `MAJOR.MINOR` of the tmux on PATH; tmux's letter suffix (`3.7b`) does
+/// not change what a version can do.
+public struct TmuxVersion: Comparable, CustomStringConvertible, Sendable {
+    public let major: Int
+    public let minor: Int
+
+    public init(major: Int, minor: Int) {
+        self.major = major
+        self.minor = minor
+    }
+
+    /// Parses the first `MAJOR.MINOR` in `tmux -V` output such as `tmux 3.7b`
+    /// or `tmux next-3.5`.
+    public init?(versionOutput: String) {
+        guard let match = versionOutput.firstMatch(of: /(\d+)\.(\d+)/),
+              let major = Int(match.1), let minor = Int(match.2)
+        else { return nil }
+        self.init(major: major, minor: minor)
+    }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        (lhs.major, lhs.minor) < (rhs.major, rhs.minor)
+    }
+
+    public var description: String { "\(major).\(minor)" }
+}
+
 /// Window operations. Closing goes through agent-deck; the rest talk to tmux
 /// directly and so reach only the default server (`list --json` does not
 /// expose a session's `[tmux].socket_name`) and skip the cwd assertion and
@@ -98,6 +125,18 @@ extension AgentDeckCLI {
             executable: try Self.tmuxPath(), arguments: arguments,
             environment: Self.childEnvironment(binaryDirectory: nil), timeout: .seconds(10)
         )
+    }
+
+    /// `tmux -V`, probed once; the binary does not change while Bosun runs.
+    func tmuxVersion() async throws -> TmuxVersion {
+        if let probedTmuxVersion { return probedTmuxVersion }
+        let result = try await tmux(["-V"])
+        try result.checkSucceeded()
+        guard let version = TmuxVersion(versionOutput: result.stdout) else {
+            throw SubprocessError.launchFailed(command: "tmux -V", reason: "no version in \(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        probedTmuxVersion = version
+        return version
     }
 
     static func tmuxPath() throws -> String {
