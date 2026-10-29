@@ -2,14 +2,17 @@ import BosunCore
 import BosunTerminal
 import SwiftUI
 
-/// The embedded terminal for one attached session. Give it `.id(sessionID)`:
-/// SwiftUI then replaces the pane, and with it the PTY, only when the
-/// session changes, never on other state.
+/// The embedded terminal for one attached pane. Identify it by the pane:
+/// SwiftUI then replaces the PTY only for another pane, never on other
+/// state. A hidden host keeps its tmux client and draws nothing.
 struct TerminalHost: NSViewRepresentable {
     let launch: AttachLaunch
-    /// Monotonic; each new value moves keyboard focus into the terminal.
+    let isShown: Bool
+    /// Monotonic; each new value moves keyboard focus into the shown terminal.
     let focusRequest: Int
     let onTitleChange: (String) -> Void
+    /// A key, click or scroll in the terminal.
+    let onInput: () -> Void
     let onExit: (ProcessExit) -> Void
 
     final class Coordinator {
@@ -25,17 +28,22 @@ struct TerminalHost: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalPane {
         let pane = TerminalPane(command: launch.command, environment: launch.environment)
         pane.onTitleChange = onTitleChange
+        pane.onInput = onInput
         pane.onProcessExit = onExit
         pane.yieldsKeyEquivalent = { Shortcut.menuAction(for: $0) != nil }
         return pane
     }
+
     func updateNSView(_ pane: TerminalPane, context: Context) {
+        pane.setShown(isShown)
         guard focusRequest != context.coordinator.handledFocusRequest else { return }
+        // A hidden pane counts the request as seen, so showing it later
+        // does not replay it.
         context.coordinator.handledFocusRequest = focusRequest
-        pane.focusTerminal()
+        if isShown { pane.focusTerminal() }
     }
 
-    /// SwiftUI drops the pane when the session changes; the engine surface
+    /// SwiftUI drops the pane once the model lets it go; the engine surface
     /// must go with it, now, not whenever ARC gets around to it.
     static func dismantleNSView(_ pane: TerminalPane, coordinator: Coordinator) {
         pane.teardown()

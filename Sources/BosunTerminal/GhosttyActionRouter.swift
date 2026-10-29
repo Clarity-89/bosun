@@ -87,8 +87,8 @@ enum GhosttyActionRouter {
             return true
 
         case GHOSTTY_ACTION_CLOSE_TAB, GHOSTTY_ACTION_CLOSE_WINDOW:
-            // Keybind-driven closes; the pane is a tmux client, so detaching
-            // (Ctrl-Q) is the way out. Not performed.
+            // Keybind-driven closes; the pane is a tmux client, which ends
+            // with a tmux detach or with its session. Not performed.
             return false
 
         case GHOSTTY_ACTION_QUIT:

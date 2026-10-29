@@ -24,6 +24,9 @@ public final class TerminalPane: NSView {
     /// Whether a ⌘ key belongs to the app's menu bar, which then gets it
     /// before the engine's keybinds do; nil leaves every key to the engine.
     public var yieldsKeyEquivalent: ((NSEvent) -> Bool)?
+    /// A key typed, or a click or scroll, in the terminal; ⌘ keys go to the
+    /// menu bar or the engine's keybinds and are not reported.
+    public var onInput: (() -> Void)?
 
     private let command: String
     private let environment: [String: String]
@@ -49,6 +52,7 @@ public final class TerminalPane: NSView {
         ])
         surfaceView.onTitleChange = { [weak self] title in self?.onTitleChange?(title) }
         surfaceView.onProcessExit = { [weak self] exit in self?.onProcessExit?(exit) }
+        surfaceView.onInput = { [weak self] in self?.onInput?() }
     }
 
     @available(*, unavailable)
@@ -75,6 +79,18 @@ public final class TerminalPane: NSView {
     /// from whatever created it.
     public func focusTerminal() {
         window?.makeFirstResponder(surfaceView)
+    }
+
+    /// A hidden pane keeps its command running but draws nothing and gives
+    /// up the keyboard, which would otherwise type into a terminal no one
+    /// sees.
+    public func setShown(_ shown: Bool) {
+        guard isHidden == shown else { return }
+        isHidden = !shown
+        if !shown, let window, window.firstResponder === surfaceView {
+            window.makeFirstResponder(nil)
+        }
+        surfaceView.surfaceController?.setVisible(shown)
     }
 
     /// Frees the engine surface now. It also dies with the view, but a

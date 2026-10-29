@@ -43,6 +43,33 @@ public enum SplitDirection: Sendable {
     }
 }
 
+/// `MAJOR.MINOR` of the tmux on PATH; tmux's letter suffix (`3.7b`) does
+/// not change what a version can do.
+public struct TmuxVersion: Comparable, CustomStringConvertible, Sendable {
+    public let major: Int
+    public let minor: Int
+
+    public init(major: Int, minor: Int) {
+        self.major = major
+        self.minor = minor
+    }
+
+    /// Parses the first `MAJOR.MINOR` in `tmux -V` output such as `tmux 3.7b`
+    /// or `tmux next-3.5`.
+    public init?(versionOutput: String) {
+        guard let match = versionOutput.firstMatch(of: /(\d+)\.(\d+)/),
+              let major = Int(match.1), let minor = Int(match.2)
+        else { return nil }
+        self.init(major: major, minor: minor)
+    }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        (lhs.major, lhs.minor) < (rhs.major, rhs.minor)
+    }
+
+    public var description: String { "\(major).\(minor)" }
+}
+
 /// Window operations. Closing goes through agent-deck; the rest talk to tmux
 /// directly and so reach only the default server (`list --json` does not
 /// expose a session's `[tmux].socket_name`) and skip the cwd assertion and
@@ -57,18 +84,22 @@ extension AgentDeckCLI {
         return SessionWindow.parse(listOutput: result.stdout)
     }
 
-    /// Mirrors the TUI's "open shell here" as a new window.
+    /// Mirrors the TUI's "open shell here" as a new window. `tmuxSession` is
+    /// the agent-deck session or Bosun's view of it, which then shows the
+    /// window while other clients stay where they are.
     public func newShellWindow(tmuxSession: String, workingDirectory: String?) async throws {
-        try await openShell(["new-window", "-t", tmuxSession], workingDirectory: workingDirectory)
+        try await openShell(["new-window", "-t", "=\(tmuxSession):"], workingDirectory: workingDirectory)
     }
 
-    /// Mirrors the TUI's "open shell here" as a split of the active window.
+    /// Mirrors the TUI's "open shell here" as a split of the active window
+    /// of `tmuxSession`, the agent-deck session or Bosun's view of it.
     public func splitShellPane(tmuxSession: String, direction: SplitDirection, workingDirectory: String?) async throws {
-        try await openShell(["split-window", direction.tmuxFlag, "-t", tmuxSession], workingDirectory: workingDirectory)
+        try await openShell(["split-window", direction.tmuxFlag, "-t", "=\(tmuxSession):"], workingDirectory: workingDirectory)
     }
 
     /// tmux's current window is per session; every client attached to the
-    /// session follows this switch, as with the TUI's window rows.
+    /// session follows this switch, as with the TUI's window rows. Bosun's
+    /// own panes select in their view instead (`selectWindow(_:inView:)`).
     public func selectWindow(windowID: String) async throws {
         try await tmux(["select-window", "-t", windowID]).checkSucceeded()
     }
@@ -89,12 +120,30 @@ extension AgentDeckCLI {
     /// tmux as the agent-deck binary's children see it: PATH lookup in the
     /// child environment, which already includes the package-manager
     /// prefixes a GUI launch would otherwise miss.
-    private func tmux(_ arguments: [String]) async throws -> ProcessResult {
-        let environment = Self.childEnvironment(binaryDirectory: nil)
-        let tmux = (environment["PATH"] ?? "").split(separator: ":").lazy
+    func tmux(_ arguments: [String]) async throws -> ProcessResult {
+        try await Subprocess.run(
+            executable: try Self.tmuxPath(), arguments: arguments,
+            environment: Self.childEnvironment(binaryDirectory: nil), timeout: .seconds(10)
+        )
+    }
+
+    /// `tmux -V`, probed once; the binary does not change while Bosun runs.
+    func tmuxVersion() async throws -> TmuxVersion {
+        if let probedTmuxVersion { return probedTmuxVersion }
+        let result = try await tmux(["-V"])
+        try result.checkSucceeded()
+        guard let version = TmuxVersion(versionOutput: result.stdout) else {
+            throw SubprocessError.launchFailed(command: "tmux -V", reason: "no version in \(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        probedTmuxVersion = version
+        return version
+    }
+
+    static func tmuxPath() throws -> String {
+        let path = (childEnvironment(binaryDirectory: nil)["PATH"] ?? "").split(separator: ":").lazy
             .map { "\($0)/tmux" }
             .first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let tmux else { throw SubprocessError.launchFailed(command: "tmux", reason: "not found on PATH") }
-        return try await Subprocess.run(executable: tmux, arguments: arguments, environment: environment, timeout: .seconds(10))
+        guard let path else { throw SubprocessError.launchFailed(command: "tmux", reason: "not found on PATH") }
+        return path
     }
 }
