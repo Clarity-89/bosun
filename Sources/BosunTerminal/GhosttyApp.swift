@@ -40,7 +40,6 @@ public final class GhosttyAppController {
     /// stays nil and panes log instead of crashing.
     public func start() throws {
         guard app == nil else { return }
-        GhosttyResources.applyEnvironment()
         // ghostty_init must precede every other engine call, including ghostty_config_new.
         guard GhosttyFFI.initialize() else { throw GhosttyEngineError.initFailed }
         guard let configManager = GhosttyConfigManager() else { throw GhosttyEngineError.configFailed }
