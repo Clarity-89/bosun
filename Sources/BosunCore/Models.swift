@@ -110,12 +110,10 @@ public struct ConfigValue: Decodable, Sendable {
     public let value: Bool
 }
 
-/// `data` of a `session.status` frame. The wire also carries `tool`,
-/// `tmux_session`, `changed_at` and an always-empty `substate`; the list is
-/// the source for all of those. `from` is absent on the first status a
-/// session ever had.
+/// `data` of a `session.status` frame. The wire also carries `from`, `tool`,
+/// `tmux_session`, `changed_at` and an always-empty `substate`; the
+/// session's row from the list is the source for all of those.
 public struct StatusChange: Decodable, Sendable {
-    public let from: SessionStatus?
     public let to: SessionStatus
 }
 

@@ -88,7 +88,6 @@ import Testing
         #expect(frame.kind == "session.status")
         #expect(frame.sessionID == "9c51b648-1792999266")
         #expect(frame.data?.to == .idle)
-        #expect(frame.data?.from == .starting)
     }
 
     @Test func frameWithoutDataDecodes() throws {

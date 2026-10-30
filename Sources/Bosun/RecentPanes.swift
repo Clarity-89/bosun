@@ -18,6 +18,11 @@ struct AttachedPane: Identifiable {
     var yieldsSize: Bool
     /// What the terminal reports as its title.
     var title = ""
+    /// Opened by switching to the session: an attach that ends at once
+    /// restarts it, since a session you switch to should run. A re-attach of
+    /// the session shown does not, so one that dies in front of you stays
+    /// as it ended.
+    var restartsIfDead = false
 }
 
 /// The panes kept attached, the most recently shown last. A hidden one
