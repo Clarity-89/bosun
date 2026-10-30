@@ -55,7 +55,7 @@ struct MenuView: View {
                     ForEach(model.groups) { group in
                         Section {
                             ForEach(group.sessions) { session in
-                                MenuSessionRow(session: session, attention: model.attention[session], github: model.inbox[session.id]) {
+                                MenuSessionRow(session: session, attention: model.attention[session], github: model.inbox[session]) {
                                     openInWindow(session)
                                 }
                             }
@@ -108,7 +108,7 @@ struct MenuView: View {
 private struct MenuSessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
-    let github: SessionGitHub?
+    let github: SessionGitHub
     let action: () -> Void
 
     var body: some View {

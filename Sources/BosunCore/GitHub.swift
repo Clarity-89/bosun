@@ -83,6 +83,18 @@ public struct IssueRef: Hashable, Codable, Sendable, CustomStringConvertible {
     public var description: String { "\(repo)#\(number)" }
 }
 
+/// A branch and the repositories it can have a pull request in: `origin`,
+/// then `upstream` for a fork.
+public struct BranchRef: Hashable, Sendable {
+    public let branch: String
+    public let repos: [RepoSlug]
+
+    public init(branch: String, repos: [RepoSlug]) {
+        self.branch = branch
+        self.repos = repos
+    }
+}
+
 public enum PullRequestState: Sendable {
     case open, draft, merged, closed
 }
@@ -164,13 +176,14 @@ public struct InboxSection<Item: Equatable & Sendable>: Equatable, Sendable {
         self.items = items
         self.total = total
     }
+
+    static var empty: Self { Self(items: [], total: 0) }
 }
 
 /// What GitHub has for you: pull requests that ask your review, by name or
 /// through a team, yours, and issues assigned to you, opened by you or
 /// mentioning you.
 public struct GitHubInbox: Equatable, Sendable {
-    public let login: String
     public let reviewRequests: InboxSection<GitHubPullRequest>
     public let teamReviewRequests: InboxSection<GitHubPullRequest>
     public let pullRequests: InboxSection<GitHubPullRequest>
@@ -202,6 +215,13 @@ public struct GitRepoInfo: Equatable, Sendable {
     public var featureBranch: String? {
         guard let branch, branch != defaultBranch, !["main", "master", "HEAD"].contains(branch) else { return nil }
         return branch
+    }
+
+    /// Its own branch and where to ask GitHub about it; nil on the default
+    /// branch, or with no github.com remote to ask.
+    public var branchRef: BranchRef? {
+        guard let featureBranch, !repos.isEmpty else { return nil }
+        return BranchRef(branch: featureBranch, repos: repos)
     }
 }
 
@@ -271,7 +291,7 @@ public enum GitHubQueries {
         ("direct", "is:pr is:open archived:false user-review-requested:@me sort:updated-desc", "...PullRequestFields"),
         ("requested", "is:pr is:open archived:false review-requested:@me sort:updated-desc", "...PullRequestSummary"),
         ("mine", "is:pr is:open archived:false author:@me sort:updated-desc", "...PullRequestFields \(closing)"),
-    ], fragments: [pullRequestFields, pullRequestSummary, issueFields])
+    ], first: 50, fragments: [pullRequestFields, pullRequestSummary, issueFields])
 
     /// The Inbox's issues, with the pull requests that close them.
     public static let inboxIssues = searches([
@@ -279,45 +299,22 @@ public enum GitHubQueries {
         ("opened", "is:issue is:open archived:false author:@me sort:updated-desc", "... on Issue { ...IssueFields \(closedBy) }"),
         ("mentions", "is:issue is:open archived:false mentions:@me -author:@me sort:updated-desc",
          "... on Issue { ...IssueFields \(closedBy) }"),
-    ], fragments: [issueFields, pullRequestSummary])
+    ], first: 50, fragments: [issueFields, pullRequestSummary])
 
-    /// One search per alias, its string a variable of the same name.
-    /// GraphQL rejects a fragment a query does not use, so each query lists
-    /// its own.
-    private static func searches(_ searches: [(alias: String, query: String, fields: String)], fragments: [String]) -> GraphQLRequest {
-        let declarations = searches.map { "$\($0.alias): String!" }.joined(separator: ", ")
-        let selections = searches.map {
-            "\($0.alias): search(query: $\($0.alias), type: ISSUE, first: 50) { issueCount nodes { \($0.fields) } }"
-        }.joined(separator: "\n  ")
-        return GraphQLRequest(
-            query: "query(\(declarations)) {\n  viewer { login }\n  \(selections)\n}\n" + fragments.joined(separator: "\n"),
-            strings: Dictionary(uniqueKeysWithValues: searches.map { ($0.alias, $0.query) }),
-            ints: [:]
+    /// Pull requests whose head is each branch in its repositories, one
+    /// alias per index (`b0`, `b1`, …), so all branches cost one request.
+    public static func pullRequests(forBranches branches: [BranchRef]) -> GraphQLRequest {
+        searches(
+            branches.enumerated().map { index, branch in
+                ("b\(index)", (["is:pr", "head:\(branch.branch)"] + branch.repos.map { "repo:\($0)" }).joined(separator: " "),
+                 "...PullRequestFields \(closing)")
+            },
+            first: 5, fragments: [pullRequestFields, issueFields]
         )
     }
 
-    /// Pull requests whose head is `branch` in any of `repos`, one alias
-    /// per key (`b0`, `b1`, …), so all branches cost one request.
-    public static func pullRequests(forBranches branches: [(branch: String, repos: [RepoSlug])]) -> GraphQLRequest {
-        let declarations = branches.indices.map { "$q\($0): String!" }.joined(separator: ", ")
-        let selections = branches.indices.map {
-            "b\($0): search(query: $q\($0), type: ISSUE, first: 5) { issueCount nodes { ...PullRequestFields \(closing) } }"
-        }.joined(separator: "\n  ")
-        let strings = Dictionary(uniqueKeysWithValues: branches.enumerated().map { index, entry in
-            ("q\(index)", (["is:pr", "head:\(entry.branch)"] + entry.repos.map { "repo:\($0)" }).joined(separator: " "))
-        })
-        return GraphQLRequest(
-            query: "query(\(declarations)) {\n  \(selections)\n}\n\(pullRequestFields)\n\(issueFields)",
-            strings: strings, ints: [:]
-        )
-    }
-
-    /// Issues by reference, one alias per key (`i0`, `i1`, …).
+    /// Issues by reference, one alias per index (`i0`, `i1`, …).
     public static func issues(_ refs: [IssueRef]) -> GraphQLRequest {
-        let declarations = refs.indices.map { "$o\($0): String!, $n\($0): String!, $k\($0): Int!" }.joined(separator: ", ")
-        let selections = refs.indices.map {
-            "i\($0): repository(owner: $o\($0), name: $n\($0)) { issue(number: $k\($0)) { ...IssueFields \(closedBy) } }"
-        }.joined(separator: "\n  ")
         var strings: [String: String] = [:]
         var ints: [String: Int] = [:]
         for (index, ref) in refs.enumerated() {
@@ -326,9 +323,40 @@ public enum GitHubQueries {
             ints["k\(index)"] = ref.number
         }
         return GraphQLRequest(
-            query: "query(\(declarations)) {\n  \(selections)\n}\n\(issueFields)\n\(pullRequestSummary)",
+            query: query(
+                declarations: refs.indices.map { "$o\($0): String!, $n\($0): String!, $k\($0): Int!" },
+                selections: refs.indices.map {
+                    "i\($0): repository(owner: $o\($0), name: $n\($0)) { issue(number: $k\($0)) { ...IssueFields \(closedBy) } }"
+                },
+                fragments: [issueFields, pullRequestSummary]
+            ),
             strings: strings, ints: ints
         )
+    }
+
+    /// One search per alias, its string a variable of the same name, the
+    /// first `first` of what it finds.
+    private static func searches(
+        _ searches: [(alias: String, query: String, fields: String)], first: Int, fragments: [String]
+    ) -> GraphQLRequest {
+        GraphQLRequest(
+            query: query(
+                declarations: searches.map { "$\($0.alias): String!" },
+                selections: searches.map {
+                    "\($0.alias): search(query: $\($0.alias), type: ISSUE, first: \(first)) { issueCount nodes { \($0.fields) } }"
+                },
+                fragments: fragments
+            ),
+            strings: Dictionary(uniqueKeysWithValues: searches.map { ($0.alias, $0.query) }),
+            ints: [:]
+        )
+    }
+
+    /// GraphQL rejects a fragment a query does not use, so each query lists
+    /// its own.
+    private static func query(declarations: [String], selections: [String], fragments: [String]) -> String {
+        "query(\(declarations.joined(separator: ", "))) {\n  \(selections.joined(separator: "\n  "))\n}\n"
+            + fragments.joined(separator: "\n")
     }
 }
 
@@ -350,59 +378,43 @@ extension GitHubInbox {
     /// answer with data and errors both, a search it could not run say;
     /// what came is kept.
     public init(pullRequestsGraphQL: Data, issuesGraphQL: Data) throws {
-        let raw = try Self.payload(pullRequestsGraphQL)
-        let rawIssues = try Self.payload(issuesGraphQL)
-        let direct = raw.direct?.pullRequests() ?? []
-        let directIDs = Set(direct.map(\.id))
-        let requested = raw.requested?.pullRequests() ?? []
-        let teams = requested.filter { !directIDs.contains($0.id) }
+        let raw = try GraphQLResponse<RawInboxPullRequests>.payload(pullRequestsGraphQL)
+        let rawIssues = try GraphQLResponse<RawInboxIssues>.payload(issuesGraphQL)
+        let direct = raw.direct?.section ?? .empty
+        let requested = raw.requested?.section ?? .empty
+        let directIDs = Set(direct.items.map(\.id))
+        let teams = requested.items.filter { !directIDs.contains($0.id) }
         self.init(
-            login: raw.viewer?.login ?? "",
-            reviewRequests: InboxSection(items: direct, total: raw.direct?.issueCount ?? direct.count),
-            teamReviewRequests: InboxSection(
-                items: teams, total: max((raw.requested?.issueCount ?? 0) - (raw.direct?.issueCount ?? 0), teams.count)
-            ),
-            pullRequests: InboxSection(items: raw.mine?.pullRequests() ?? [], total: raw.mine?.issueCount ?? 0),
-            assignedIssues: InboxSection(items: rawIssues.assigned?.issues() ?? [], total: rawIssues.assigned?.issueCount ?? 0),
-            openedIssues: InboxSection(items: rawIssues.opened?.issues() ?? [], total: rawIssues.opened?.issueCount ?? 0),
-            mentions: InboxSection(items: rawIssues.mentions?.issues() ?? [], total: rawIssues.mentions?.issueCount ?? 0)
+            reviewRequests: direct,
+            teamReviewRequests: InboxSection(items: teams, total: max(requested.total - direct.total, teams.count)),
+            pullRequests: raw.mine?.section ?? .empty,
+            assignedIssues: rawIssues.assigned?.section ?? .empty,
+            openedIssues: rawIssues.opened?.section ?? .empty,
+            mentions: rawIssues.mentions?.section ?? .empty
         )
-    }
-
-    private static func payload(_ data: Data) throws -> RawInbox {
-        let response = try JSONDecoder().decode(GraphQLResponse<RawInbox>.self, from: data)
-        guard let raw = response.data else {
-            throw GitHubDecodingError.reported(response.firstError ?? "GitHub returned no data")
-        }
-        return raw
     }
 }
 
 extension GitHubQueries {
     /// A `pullRequests(forBranches:)` answer: each branch's pull requests
     /// whose head really is that branch in one of its repositories, as
-    /// `head:` also matches other forks' branches of the same name.
-    public static func decodePullRequests(
-        _ data: Data, forBranches branches: [(branch: String, repos: [RepoSlug])]
-    ) throws -> [[GitHubPullRequest]] {
-        let response = try JSONDecoder().decode(GraphQLResponse<[String: RawSearch?]>.self, from: data)
-        guard let raw = response.data else {
-            throw GitHubDecodingError.reported(response.firstError ?? "GitHub returned no data")
+    /// `head:` also matches other forks' branches of the same name. A
+    /// branch GitHub would not search has none.
+    public static func decodePullRequests(_ data: Data, forBranches branches: [BranchRef]) throws -> [BranchRef: [GitHubPullRequest]] {
+        let raw = try GraphQLResponse<[String: RawSearch<RawPullRequest>?]>.payload(data)
+        let found = branches.enumerated().map { index, branch in
+            let own = (raw["b\(index)"] ?? nil)?.pullRequests.filter { pr in
+                pr.headBranch == branch.branch && (pr.headRepo.map(branch.repos.contains) ?? true)
+            }
+            return (branch, own ?? [])
         }
-        return branches.enumerated().map { index, entry in
-            (raw["b\(index)"] ?? nil)?.pullRequests().filter { pr in
-                pr.headBranch == entry.branch && (pr.headRepo.map(entry.repos.contains) ?? true)
-            } ?? []
-        }
+        return Dictionary(found, uniquingKeysWith: { first, _ in first })
     }
 
     /// An `issues(_:)` answer, in the order asked; nil where an issue was
     /// not found or GitHub would not say.
     public static func decodeIssues(_ data: Data, count: Int) throws -> [GitHubIssue?] {
-        let response = try JSONDecoder().decode(GraphQLResponse<[String: RawRepositoryIssue?]>.self, from: data)
-        guard let raw = response.data else {
-            throw GitHubDecodingError.reported(response.firstError ?? "GitHub returned no data")
-        }
+        let raw = try GraphQLResponse<[String: RawRepositoryIssue?]>.payload(data)
         return (0..<count).map { index in (raw["i\(index)"] ?? nil)?.issue?.issue }
     }
 }
@@ -415,17 +427,28 @@ struct GraphQLResponse<Payload: Decodable>: Decodable {
         let message: String
     }
 
-    var firstError: String? { errors?.first?.message }
+    /// The data, or the first error GitHub gave instead of any.
+    static func payload(_ data: Data) throws -> Payload {
+        let response = try JSONDecoder().decode(Self.self, from: data)
+        guard let payload = response.data else {
+            throw GitHubDecodingError.reported(response.errors?.first?.message ?? "GitHub returned no data")
+        }
+        return payload
+    }
 }
 
-struct RawInbox: Decodable {
-    let viewer: Login?
-    let direct: RawSearch?
-    let requested: RawSearch?
-    let mine: RawSearch?
-    let assigned: RawSearch?
-    let opened: RawSearch?
-    let mentions: RawSearch?
+/// `inboxPullRequests`' aliases; nil where GitHub could not run a search.
+struct RawInboxPullRequests: Decodable {
+    let direct: RawSearch<RawPullRequest>?
+    let requested: RawSearch<RawPullRequest>?
+    let mine: RawSearch<RawPullRequest>?
+}
+
+/// `inboxIssues`' aliases; nil where GitHub could not run a search.
+struct RawInboxIssues: Decodable {
+    let assigned: RawSearch<RawIssue>?
+    let opened: RawSearch<RawIssue>?
+    let mentions: RawSearch<RawIssue>?
 }
 
 struct Login: Decodable {
@@ -438,12 +461,20 @@ struct NameWithOwner: Decodable {
 
 /// A search's nodes, any of which may be some other type GitHub matched
 /// (an empty object to these fragments) or fail to decode; those drop out.
-struct RawSearch: Decodable {
+struct RawSearch<Node: Decodable>: Decodable {
     let issueCount: Int
-    let nodes: [Lossy<RawNode>]
+    let nodes: [Lossy<Node>]
 
-    func pullRequests() -> [GitHubPullRequest] { nodes.compactMap { $0.value?.pullRequest } }
-    func issues() -> [GitHubIssue] { nodes.compactMap { $0.value?.issue } }
+    var values: [Node] { nodes.compactMap(\.value) }
+}
+
+extension RawSearch where Node == RawPullRequest {
+    var pullRequests: [GitHubPullRequest] { values.compactMap(\.pullRequest) }
+    var section: InboxSection<GitHubPullRequest> { InboxSection(items: pullRequests, total: issueCount) }
+}
+
+extension RawSearch where Node == RawIssue {
+    var section: InboxSection<GitHubIssue> { InboxSection(items: values.compactMap(\.issue), total: issueCount) }
 }
 
 struct Lossy<Value: Decodable>: Decodable {
@@ -461,34 +492,28 @@ struct Connection<Node: Decodable>: Decodable {
 }
 
 struct RawRepositoryIssue: Decodable {
-    let issue: RawNode?
+    let issue: RawIssue?
 }
 
-/// A pull request or an issue, as the two fragments spell them.
-struct RawNode: Decodable {
+/// A pull request as `PullRequestFields` spells it, or `PullRequestSummary`,
+/// which leaves out its review and threads.
+struct RawPullRequest: Decodable {
     let number: Int
     let title: String
     let url: String
     let state: String
+    let isDraft: Bool
     let updatedAt: String
+    let headRefName: String
+    let baseRefName: String
     let author: Login?
     let repository: NameWithOwner
-    // Pull requests
-    let isDraft: Bool?
-    let headRefName: String?
-    let baseRefName: String?
     let headRepository: NameWithOwner?
+    let commits: Connection<CommitNode>?
     let reviewDecision: String?
     let mergeable: String?
-    let commits: Connection<CommitNode>?
     let reviewThreads: Connection<Thread>?
-    let closingIssuesReferences: Connection<RawNode>?
-    // Issues
-    let stateReason: String?
-    let labels: Connection<Name>?
-    let assignees: Connection<Login>?
-    let comments: Count?
-    let closedByPullRequestsReferences: Connection<RawNode>?
+    let closingIssuesReferences: Connection<RawIssue>?
 
     struct CommitNode: Decodable {
         let commit: Commit
@@ -504,50 +529,23 @@ struct RawNode: Decodable {
         let isResolved: Bool
     }
 
-    struct Name: Decodable {
-        let name: String
-    }
-
-    struct Count: Decodable {
-        let totalCount: Int
-    }
-
     var pullRequest: GitHubPullRequest? {
-        guard let headRefName, let repo = RepoSlug(repository.nameWithOwner), let url = URL(string: url),
-              let updated = Date(rfc3339: updatedAt)
+        guard let repo = RepoSlug(repository.nameWithOwner), let url = URL(string: url), let updated = Date(rfc3339: updatedAt)
         else { return nil }
         let state: PullRequestState = switch self.state {
         case "MERGED": .merged
         case "CLOSED": .closed
-        default: isDraft == true ? .draft : .open
+        default: isDraft ? .draft : .open
         }
         return GitHubPullRequest(
             repo: repo, number: number, title: title, url: url, author: author?.login, state: state,
             headBranch: headRefName, headRepo: headRepository.flatMap { RepoSlug($0.nameWithOwner) },
-            baseBranch: baseRefName ?? "",
+            baseBranch: baseRefName,
             checks: commits?.values.first?.commit.statusCheckRollup.flatMap { Self.checks($0.state) },
             review: reviewDecision.flatMap(Self.review),
             hasConflicts: mergeable == "CONFLICTING",
             unresolvedThreads: reviewThreads?.values.count { !$0.isResolved } ?? 0,
             closingIssues: closingIssuesReferences?.values.compactMap(\.issue) ?? [],
-            updatedAt: updated
-        )
-    }
-
-    var issue: GitHubIssue? {
-        guard headRefName == nil, let repo = RepoSlug(repository.nameWithOwner), let url = URL(string: url),
-              let updated = Date(rfc3339: updatedAt)
-        else { return nil }
-        let state: IssueState = switch (self.state, stateReason) {
-        case ("OPEN", _): .open
-        case (_, "NOT_PLANNED"), (_, "DUPLICATE"): .notPlanned
-        default: .completed
-        }
-        return GitHubIssue(
-            repo: repo, number: number, title: title, url: url, author: author?.login, state: state,
-            labels: labels?.values.map(\.name) ?? [], assignees: assignees?.values.map(\.login) ?? [],
-            comments: comments?.totalCount ?? 0,
-            pullRequests: closedByPullRequestsReferences?.values.compactMap(\.pullRequest) ?? [],
             updatedAt: updated
         )
     }
@@ -573,67 +571,43 @@ struct RawNode: Decodable {
     }
 }
 
-// MARK: omp
+/// An issue as `IssueFields` spells it.
+struct RawIssue: Decodable {
+    let number: Int
+    let title: String
+    let url: String
+    let state: String
+    let stateReason: String?
+    let updatedAt: String
+    let author: Login?
+    let repository: NameWithOwner
+    let labels: Connection<Name>?
+    let assignees: Connection<Login>?
+    let comments: Count?
+    let closedByPullRequestsReferences: Connection<RawPullRequest>?
 
-/// omp's session logs (`~/.omp/agent/sessions/<folder>/<start>_<id>.jsonl`),
-/// one JSON object per line. The first user message is what the session
-/// was asked to do.
-public enum OmpLog {
-    /// omp's folder for runs in `path`: the path from home, `/` as `-`,
-    /// behind a `-`, as `-dev-agent-deck` for `~/dev/agent-deck`.
-    public static func directory(forWorkingDirectory path: String, home: String) -> String {
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        let homePath = URL(fileURLWithPath: home).resolvingSymlinksInPath().path
-        let relative = resolved.hasPrefix(homePath + "/") ? String(resolved.dropFirst(homePath.count + 1)) : String(resolved.drop { $0 == "/" })
-        return "\(home)/.omp/agent/sessions/-" + relative.replacingOccurrences(of: "/", with: "-")
+    struct Name: Decodable {
+        let name: String
     }
 
-    /// The issue URL in the first user message of a log's opening `data`;
-    /// nil when that message names none. Later messages are not the
-    /// session's purpose and are not read.
-    public static func firstIssue(inLog data: Data) -> IssueRef? {
-        for line in data.split(separator: UInt8(ascii: "\n")) {
-            guard let entry = try? JSONDecoder().decode(Entry.self, from: Data(line)),
-                  entry.type == "message", entry.message?.role == "user"
-            else { continue }
-            return entry.message?.content.flatMap { IssueRef.firstURL(in: $0.text) }
-        }
-        return nil
+    struct Count: Decodable {
+        let totalCount: Int
     }
 
-    private struct Entry: Decodable {
-        let type: String?
-        let message: Message?
-    }
-
-    private struct Message: Decodable {
-        let role: String?
-        let content: Content?
-    }
-
-    /// A message's text: a string, or parts of which the text ones count.
-    private enum Content: Decodable {
-        case text(String)
-        case parts([Part])
-
-        struct Part: Decodable {
-            let text: String?
+    var issue: GitHubIssue? {
+        guard let repo = RepoSlug(repository.nameWithOwner), let url = URL(string: url), let updated = Date(rfc3339: updatedAt)
+        else { return nil }
+        let state: IssueState = switch (self.state, stateReason) {
+        case ("OPEN", _): .open
+        case (_, "NOT_PLANNED"), (_, "DUPLICATE"): .notPlanned
+        default: .completed
         }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.singleValueContainer()
-            if let text = try? container.decode(String.self) {
-                self = .text(text)
-            } else {
-                self = .parts(try container.decode([Lossy<Part>].self).compactMap(\.value))
-            }
-        }
-
-        var text: String {
-            switch self {
-            case .text(let text): text
-            case .parts(let parts): parts.compactMap(\.text).joined(separator: "\n")
-            }
-        }
+        return GitHubIssue(
+            repo: repo, number: number, title: title, url: url, author: author?.login, state: state,
+            labels: labels?.values.map(\.name) ?? [], assignees: assignees?.values.map(\.login) ?? [],
+            comments: comments?.totalCount ?? 0,
+            pullRequests: closedByPullRequestsReferences?.values.compactMap(\.pullRequest) ?? [],
+            updatedAt: updated
+        )
     }
 }

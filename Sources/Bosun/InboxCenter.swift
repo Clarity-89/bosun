@@ -10,48 +10,147 @@ struct LinkedIssue: Equatable, Sendable {
         case linked, pullRequest, prompt
     }
 
+    /// What GitHub said of it.
+    enum Answer: Equatable, Sendable {
+        /// Nothing yet.
+        case pending
+        /// It would not say: gone, private, or never there.
+        case missing
+        case issue(GitHubIssue)
+    }
+
     let ref: IssueRef
-    /// Nil until GitHub answers, or when it would not say.
-    let issue: GitHubIssue?
     let source: Source
+    let answer: Answer
+
+    var issue: GitHubIssue? {
+        if case .issue(let issue) = answer { issue } else { nil }
+    }
 }
 
-/// A session's git and GitHub side: its branch, the pull request from it,
-/// and the issue it works on.
+/// A session's git and GitHub side: what its branch has, and the issue it
+/// works on.
 struct SessionGitHub: Equatable, Sendable {
-    var repo: GitRepoInfo?
-    var pullRequest: GitHubPullRequest?
-    var issue: LinkedIssue?
-    /// GitHub has yet to say whether its branch has a pull request.
-    var pullRequestLoading = false
-    /// GitHub has yet to describe its issue.
-    var issueLoading = false
+    enum Branch: Equatable, Sendable {
+        /// Bosun has yet to read the folder, or GitHub to answer for the branch.
+        case loading
+        /// Nothing to show: no repository, or its default branch.
+        case none
+        /// A branch of its own without a pull request, and how many of its
+        /// commits are not pushed, when git knows.
+        case unpushed(branch: String, commits: Int?)
+        case pullRequest(GitHubPullRequest)
 
-    /// The issue it works on: yours if you linked one, else the one its
-    /// pull request closes, else the one its omp prompt names.
-    static func issue(
-        linked: IssueRef?, pullRequest: GitHubPullRequest?, prompt: IssueRef?, known: [IssueRef: GitHubIssue]
-    ) -> LinkedIssue? {
+        var pullRequest: GitHubPullRequest? {
+            if case .pullRequest(let pullRequest) = self { pullRequest } else { nil }
+        }
+    }
+
+    let branch: Branch
+    let issue: LinkedIssue?
+    /// Where `#12` typed for this session lives: a fork's issues are its
+    /// upstream's.
+    let issueRepo: RepoSlug?
+}
+
+/// What Bosun has from git, omp and GitHub, and the rules for what each
+/// session shows of it. InboxCenter feeds it what it read and asked.
+struct InboxState: Equatable, Sendable {
+    /// A session folder's branch and omp prompt.
+    struct Folder: Equatable, Sendable {
+        let repo: GitRepoInfo?
+        let prompt: IssueRef?
+    }
+
+    /// Each folder read, by path.
+    var folders: [String: Folder] = [:]
+    /// Sessions to issues, as you linked them; Bosun's alone.
+    var links: [String: IssueRef] = [:]
+    /// Each branch asked about, and the pull request GitHub found for it.
+    var pullRequests: [BranchRef: GitHubPullRequest?] = [:]
+    /// Each issue asked about, and what GitHub said of it.
+    var issues: [IssueRef: GitHubIssue?] = [:]
+    var inbox: GitHubInbox?
+
+    /// The branches to ask GitHub about: each folder's own, with its
+    /// repositories.
+    var branches: [BranchRef] {
+        Array(Set(folders.values.compactMap { $0.repo?.branchRef }))
+    }
+
+    func github(for session: DeckSession) -> SessionGitHub {
+        let folder = folders[session.path]
+        let branch = branch(of: folder)
+        return SessionGitHub(
+            branch: branch,
+            issue: issue(linked: links[session.id], pullRequest: branch.pullRequest, prompt: folder?.prompt),
+            issueRepo: folder?.repo?.repos.last
+        )
+    }
+
+    /// What a folder's branch has: unknown before the folder is read, and
+    /// before GitHub answers for a branch that has somewhere to ask.
+    private func branch(of folder: Folder?) -> SessionGitHub.Branch {
+        guard let folder else { return .loading }
+        guard let repo = folder.repo, let name = repo.featureBranch else { return .none }
+        let unpushed = SessionGitHub.Branch.unpushed(branch: name, commits: repo.unpushed)
+        guard let ref = repo.branchRef else { return unpushed }
+        guard let asked = pullRequests[ref] else { return .loading }
+        return asked.map(SessionGitHub.Branch.pullRequest) ?? unpushed
+    }
+
+    /// The issue a session works on: yours if you linked one, else the one
+    /// its pull request closes, else the one its omp prompt names.
+    func issue(linked: IssueRef?, pullRequest: GitHubPullRequest?, prompt: IssueRef?) -> LinkedIssue? {
         if let linked {
-            return LinkedIssue(ref: linked, issue: known[linked], source: .linked)
+            return LinkedIssue(ref: linked, source: .linked, answer: answer(for: linked))
         }
         if let closing = pullRequest?.closingIssues.first {
-            return LinkedIssue(ref: closing.ref, issue: closing, source: .pullRequest)
+            return LinkedIssue(ref: closing.ref, source: .pullRequest, answer: .issue(closing))
         }
         if let prompt {
-            return LinkedIssue(ref: prompt, issue: known[prompt], source: .prompt)
+            return LinkedIssue(ref: prompt, source: .prompt, answer: answer(for: prompt))
         }
         return nil
     }
 
-    /// Where `#12` typed for this session lives: a fork's issues are its
-    /// upstream's.
-    var issueRepo: RepoSlug? { repo?.repos.last }
+    private func answer(for ref: IssueRef) -> LinkedIssue.Answer {
+        guard let asked = issues[ref] else { return .pending }
+        return asked.map(LinkedIssue.Answer.issue) ?? .missing
+    }
+
+    // MARK: What came
+
+    /// The Inbox's issues, and the ones its pull requests close, need no
+    /// second request for a link or prompt naming them.
+    mutating func received(_ inbox: GitHubInbox) {
+        self.inbox = inbox
+        let described = inbox.assignedIssues.items + inbox.openedIssues.items + inbox.mentions.items
+            + (inbox.pullRequests.items + inbox.reviewRequests.items).flatMap(\.closingIssues)
+        for issue in described { issues.updateValue(issue, forKey: issue.ref) }
+    }
+
+    /// Each branch's pull request, the preferred one of what GitHub found.
+    mutating func received(pullRequests found: [BranchRef: [GitHubPullRequest]]) {
+        for (ref, candidates) in found { pullRequests.updateValue(GitHubPullRequest.preferred(candidates), forKey: ref) }
+    }
+
+    /// GitHub's answers for `refs`, nil for an issue it would not describe.
+    mutating func received(issues answers: [GitHubIssue?], for refs: [IssueRef]) {
+        for (ref, answer) in zip(refs, answers) { issues.updateValue(answer, forKey: ref) }
+    }
+
+    /// GitHub did not answer for these branches: until it does, one it has
+    /// never answered for shows as without a pull request, not as loading.
+    mutating func failed(branches: [BranchRef]) {
+        for ref in branches where pullRequests[ref] == nil { pullRequests.updateValue(nil, forKey: ref) }
+    }
 }
 
 /// GitHub for the Inbox and the session rows, read-only: what asks for you
-/// there, and each session's branch, pull request and issue. Your links
-/// from session to issue stay in Bosun.
+/// there, and each session's branch, pull request and issue. InboxState
+/// holds what came and the rules; this reads git and omp, asks GitHub and
+/// keeps your links across a quit.
 @MainActor
 @Observable
 final class InboxCenter {
@@ -61,49 +160,41 @@ final class InboxCenter {
         case failed(String)
     }
 
-    private(set) var inbox: GitHubInbox?
+    private(set) var state = InboxState(links: InboxCenter.savedLinks()) {
+        didSet {
+            guard oldValue.links != state.links else { return }
+            UserDefaults.standard.set(try? JSONEncoder().encode(state.links), forKey: Self.linksKey)
+        }
+    }
     private(set) var status = Status.idle
     private(set) var updatedAt: Date?
-    /// By session id.
-    private(set) var sessionGitHub: [String: SessionGitHub] = [:]
-    /// Sessions to issues, as you linked them; Bosun's alone.
-    private(set) var links = InboxCenter.savedLinks() {
-        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(links), forKey: Self.linksKey) }
-    }
+    private(set) var sessions: [DeckSession] = []
 
     @ObservationIgnored private let gitHub = GitHubCLI()
-    @ObservationIgnored private var sessions: [DeckSession] = []
-    /// The folders the last load read, so a new session's folder reloads.
-    @ObservationIgnored private var loadedPaths: Set<String>?
-    /// Each folder's git info and omp prompt, from the last load.
-    @ObservationIgnored private var folders: [String: Folder] = [:]
-    /// Issues GitHub described, for links and prompts outside the Inbox.
-    @ObservationIgnored private var known: [IssueRef: GitHubIssue] = [:]
-    /// What GitHub was asked about, answered or not: until then a row shows
-    /// where its pull request or issue will go.
-    @ObservationIgnored private var askedBranches: Set<BranchKey> = []
-    @ObservationIgnored private var askedIssues: Set<IssueRef> = []
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var loopTask: Task<Void, Never>?
 
-    private struct Folder: Sendable {
-        let repo: GitRepoInfo?
-        let prompt: IssueRef?
-    }
+    var inbox: GitHubInbox? { state.inbox }
 
-    subscript(sessionID: String) -> SessionGitHub? { sessionGitHub[sessionID] }
+    subscript(session: DeckSession) -> SessionGitHub { state.github(for: session) }
 
     /// The sessions working on `pullRequest`, from its branch.
     func sessions(working pullRequest: GitHubPullRequest) -> [DeckSession] {
-        sessions.filter { sessionGitHub[$0.id]?.pullRequest?.id == pullRequest.id }
+        sessions.filter { self[$0].branch.pullRequest?.id == pullRequest.id }
     }
 
     /// The sessions working on `issue`, by link, pull request or prompt.
     func sessions(working issue: GitHubIssue) -> [DeckSession] {
-        sessions.filter { sessionGitHub[$0.id]?.issue?.ref == issue.ref }
+        sessions.filter { self[$0].issue?.ref == issue.ref }
     }
 
-    /// Reloads every 5 min from now on; the first list starts it.
+    /// GitHub last answered over a minute ago.
+    var isStale: Bool {
+        updatedAt.map { Date.now.timeIntervalSince($0) > 60 } ?? false
+    }
+
+    /// Reloads every 5 min from now on; the first list starts it, so the
+    /// first load has folders to read.
     func start() {
         guard loopTask == nil else { return }
         loopTask = Task {
@@ -119,21 +210,15 @@ final class InboxCenter {
         refreshTask?.cancel()
     }
 
-    /// A new session list. A folder the last load did not read reloads
-    /// everything; the rest waits for the next round. A deleted session's
-    /// link goes with it.
+    /// A new session list. A deleted session's link goes with it. A folder
+    /// no load has read is read now, with its branch's pull request; the
+    /// rest waits for the next round.
     func listed(_ sessions: [DeckSession]) {
         self.sessions = sessions
         let ids = Set(sessions.map(\.id))
-        if links.keys.contains(where: { !ids.contains($0) }) {
-            links = links.filter { ids.contains($0.key) }
-        }
-        guard let loadedPaths else { return }
-        if !Set(sessions.map(\.path)).isSubset(of: loadedPaths) {
-            Task { await refresh() }
-        } else {
-            rebuildSessions()
-        }
+        update { state in state.links = state.links.filter { ids.contains($0.key) } }
+        guard loopTask != nil, !Set(sessions.map(\.path)).isSubset(of: state.folders.keys) else { return }
+        Task { await loadSessions() }
     }
 
     /// One load at a time; asking during one waits for it.
@@ -149,138 +234,95 @@ final class InboxCenter {
 
     // MARK: Links
 
-    /// The issue a link or its removal now shows may be one GitHub has not
-    /// described yet: the prompt's, hidden behind the link until now.
+    /// A link, or its removal, can show an issue GitHub has not described:
+    /// the prompt's, hidden behind the link until now.
     func link(_ ref: IssueRef, toSession sessionID: String) {
-        links[sessionID] = ref
-        rebuildSessions()
-        Task { await describeUnknownIssues() }
+        update { $0.links[sessionID] = ref }
+        Task { await describePendingIssues() }
     }
 
     func unlink(session sessionID: String) {
-        links[sessionID] = nil
-        rebuildSessions()
-        Task { await describeUnknownIssues() }
+        update { $0.links[sessionID] = nil }
+        Task { await describePendingIssues() }
     }
 
+    // MARK: Loading
+
+    /// Everything: the sessions' folders and branches alongside the Inbox,
+    /// then the issues neither brought.
     private func load() async {
-        if inbox == nil { status = .loading }
-        let sessions = self.sessions
+        if state.inbox == nil { status = .loading }
+        async let inbox: Void = askInbox()
+        await askBranches(await readFolders())
+        await inbox
+        await describePendingIssues()
+    }
+
+    /// The sessions' folders and branches, and the issues their prompts name.
+    private func loadSessions() async {
+        await askBranches(await readFolders())
+        await describePendingIssues()
+    }
+
+    /// Every session folder's branch and omp prompt, shown at once so
+    /// GitHub's part fills in around what is known. Read off the main actor:
+    /// local, but not free on a large repository.
+    private func readFolders() async -> [BranchRef] {
         let paths = Set(sessions.map(\.path))
-        // git and omp's logs are local and quick; reading them off the main
-        // actor keeps the window responsive.
-        let folders = await withTaskGroup(of: (String, Folder).self) { group in
+        let folders = await withTaskGroup(of: (String, InboxState.Folder).self) { group in
             for path in paths {
                 group.addTask {
-                    (path, Folder(repo: await GitRepo.info(path: path), prompt: OmpLog.firstIssue(forWorkingDirectory: path)))
+                    (path, InboxState.Folder(repo: await GitRepo.info(path: path), prompt: OmpLog.firstIssue(forWorkingDirectory: path)))
                 }
             }
-            var folders: [String: Folder] = [:]
+            var folders: [String: InboxState.Folder] = [:]
             for await (path, folder) in group { folders[path] = folder }
             return folders
         }
-        // Shown at once, so GitHub's part fills in around what is known.
-        self.folders = folders
-        loadedPaths = paths
-        rebuildSessions()
-        let branches = Self.branches(in: folders.values.compactMap(\.repo))
+        update { $0.folders = folders }
+        return state.branches
+    }
 
-        let gitHub = gitHub
-        async let inbox = result { try await gitHub.inbox() }
-        async let found = result { try await gitHub.pullRequests(forBranches: branches) }
-        let inboxResult = await inbox
-        let foundResult = await found
-
-        askedBranches.formUnion(branches.map(BranchKey.init))
-        var pullRequests: [BranchKey: GitHubPullRequest] = [:]
-        if case .success(let lists) = foundResult {
-            for (branch, list) in zip(branches, lists) {
-                pullRequests[BranchKey(branch)] = GitHubPullRequest.preferred(list)
-            }
-            branchPullRequests = pullRequests
+    /// Each branch's pull request, in one request.
+    private func askBranches(_ branches: [BranchRef]) async {
+        guard !branches.isEmpty else { return }
+        do {
+            let found = try await gitHub.pullRequests(forBranches: branches)
+            update { $0.received(pullRequests: found) }
+        } catch {
+            update { $0.failed(branches: branches) }
+            logger.error("branch pull requests failed: \(error.localizedDescription, privacy: .public)")
         }
-        switch inboxResult {
-        case .success(let fresh):
-            self.inbox = fresh
-            remember(fresh)
+    }
+
+    private func askInbox() async {
+        do {
+            let fresh = try await gitHub.inbox()
+            update { $0.received(fresh) }
             status = .ready
             updatedAt = .now
-        case .failure(let error):
+        } catch {
             status = Self.status(for: error)
             logger.error("inbox failed: \(error.localizedDescription, privacy: .public)")
         }
-        if case .failure(let error) = foundResult {
-            logger.error("branch pull requests failed: \(error.localizedDescription, privacy: .public)")
-        }
-        rebuildSessions()
-        await describeUnknownIssues()
     }
 
-    /// Pull requests by branch from the last load that reached GitHub.
-    @ObservationIgnored private var branchPullRequests: [BranchKey: GitHubPullRequest] = [:]
-
-    private struct BranchKey: Hashable {
-        let branch: String
-        let repos: [RepoSlug]
-
-        init(_ entry: (branch: String, repos: [RepoSlug])) {
-            branch = entry.branch
-            repos = entry.repos
-        }
-    }
-
-    /// Each distinct branch of its own, with the repositories it pushes to.
-    private static func branches(in repos: [GitRepoInfo]) -> [(branch: String, repos: [RepoSlug])] {
-        var seen = Set<BranchKey>()
-        return repos.compactMap { info in
-            guard let branch = info.featureBranch, !info.repos.isEmpty else { return nil }
-            let entry = (branch: branch, repos: info.repos)
-            return seen.insert(BranchKey(entry)).inserted ? entry : nil
-        }
-    }
-
-    /// The Inbox's issues, and the ones its pull requests close, need no
-    /// second request for a link or prompt naming them.
-    private func remember(_ inbox: GitHubInbox) {
-        let issues = inbox.assignedIssues.items + inbox.openedIssues.items + inbox.mentions.items
-            + (inbox.pullRequests.items + inbox.reviewRequests.items).flatMap(\.closingIssues)
-        for issue in issues { known[issue.ref] = issue }
-    }
-
-    /// Links and prompts naming an issue the Inbox did not bring, in one
-    /// request.
-    private func describeUnknownIssues() async {
-        let wanted = Set(sessionGitHub.values.compactMap { $0.issue?.issue == nil ? $0.issue?.ref : nil })
-        let refs = Array(wanted.subtracting(known.keys))
+    /// Links and prompts naming an issue GitHub has not described, in one
+    /// request; one it will not answer for stops waiting.
+    private func describePendingIssues() async {
+        let refs = Array(Set(sessions.compactMap { session in
+            self[session].issue.flatMap { $0.answer == .pending ? $0.ref : nil }
+        }))
         guard !refs.isEmpty else { return }
-        let issues = try? await gitHub.issues(refs)
-        askedIssues.formUnion(refs)
-        for (ref, issue) in zip(refs, issues ?? []) {
-            if let issue { known[ref] = issue }
-        }
-        rebuildSessions()
+        let answers = (try? await gitHub.issues(refs)) ?? refs.map { _ in nil }
+        update { $0.received(issues: answers, for: refs) }
     }
 
-    /// Each session's side from what the last load found, your links over
-    /// what was worked out.
-    private func rebuildSessions() {
-        var next: [String: SessionGitHub] = [:]
-        for session in sessions {
-            let folder = folders[session.path]
-            let branch = folder?.repo.flatMap { info in
-                info.featureBranch.map { BranchKey((branch: $0, repos: info.repos)) }
-            }
-            let pullRequest = branch.flatMap { branchPullRequests[$0] }
-            let issue = SessionGitHub.issue(linked: links[session.id], pullRequest: pullRequest, prompt: folder?.prompt, known: known)
-            next[session.id] = SessionGitHub(
-                repo: folder?.repo,
-                pullRequest: pullRequest,
-                issue: issue,
-                pullRequestLoading: branch.map { !askedBranches.contains($0) } ?? false,
-                issueLoading: issue.map { $0.issue == nil && !askedIssues.contains($0.ref) } ?? false
-            )
-        }
-        if next != sessionGitHub { sessionGitHub = next }
+    /// Applies a change and publishes it if it made one.
+    private func update(_ change: (inout InboxState) -> Void) {
+        var next = state
+        change(&next)
+        if next != state { state = next }
     }
 
     private static func status(for error: any Error) -> Status {
@@ -288,14 +330,6 @@ final class InboxCenter {
         case GitHubCLIError.notInstalled: .notInstalled
         case GitHubCLIError.signedOut: .signedOut
         default: .failed(error.localizedDescription)
-        }
-    }
-
-    private nonisolated func result<T: Sendable>(_ operation: @Sendable () async throws -> T) async -> Result<T, any Error> {
-        do {
-            return .success(try await operation())
-        } catch {
-            return .failure(error)
         }
     }
 

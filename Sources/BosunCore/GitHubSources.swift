@@ -26,9 +26,9 @@ public struct GitHubCLI: Sendable {
         return try GitHubInbox(pullRequestsGraphQL: try await pullRequests, issuesGraphQL: try await issues)
     }
 
-    /// Each branch's pull requests, in the order given.
-    public func pullRequests(forBranches branches: [(branch: String, repos: [RepoSlug])]) async throws -> [[GitHubPullRequest]] {
-        guard !branches.isEmpty else { return [] }
+    /// Each branch's pull requests.
+    public func pullRequests(forBranches branches: [BranchRef]) async throws -> [BranchRef: [GitHubPullRequest]] {
+        guard !branches.isEmpty else { return [:] }
         return try GitHubQueries.decodePullRequests(
             try await run(GitHubQueries.pullRequests(forBranches: branches)), forBranches: branches
         )
@@ -51,6 +51,8 @@ public struct GitHubCLI: Sendable {
             return Data(result.stdout.utf8)
         }
         let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        // gh exits 1 for a missing login as for anything else; its message
+        // is the only tell.
         if detail.contains("gh auth login") || detail.contains("not logged") || detail.contains("HTTP 401") {
             throw GitHubCLIError.signedOut
         }
@@ -104,27 +106,5 @@ public enum GitRepo {
         ), result.succeeded else { return nil }
         let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         return output.isEmpty ? nil : output
-    }
-}
-
-extension OmpLog {
-    /// The issue in the first prompt of omp's newest run in `path`, the run
-    /// a session's pane most likely shows. Reads the log's first MiB only:
-    /// the first user message comes right after its header.
-    public static func firstIssue(
-        forWorkingDirectory path: String,
-        home: String = FileManager.default.homeDirectoryForCurrentUser.path
-    ) -> IssueRef? {
-        let directory = directory(forWorkingDirectory: path, home: home)
-        let fileManager = FileManager.default
-        guard let names = try? fileManager.contentsOfDirectory(atPath: directory) else { return nil }
-        let newest = names.lazy.filter { $0.hasSuffix(".jsonl") }.map { "\(directory)/\($0)" }
-            .compactMap { path in
-                (try? fileManager.attributesOfItem(atPath: path)[.modificationDate] as? Date).map { (path, $0) }
-            }
-            .max { $0.1 < $1.1 }
-        guard let newest, let handle = FileHandle(forReadingAtPath: newest.0) else { return nil }
-        defer { try? handle.close() }
-        return firstIssue(inLog: (try? handle.read(upToCount: 1 << 20)) ?? Data())
     }
 }

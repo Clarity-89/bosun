@@ -21,6 +21,18 @@ final class DeckModel {
     private var statusOwner: StatusOwner?
     private(set) var lastError: String?
     private(set) var selection: SidebarItem?
+    /// The sidebar's list. The Inbox covers the terminals: what they show
+    /// is neither seen nor spared its notifications meanwhile.
+    var tab = SidebarTab(rawValue: UserDefaults.standard.string(forKey: "sidebarTab") ?? "") ?? .sessions {
+        didSet {
+            guard tab != oldValue else { return }
+            UserDefaults.standard.set(tab.rawValue, forKey: "sidebarTab")
+            attention.paneCovered(tab == .inbox)
+            if tab == .inbox, inbox.isStale {
+                Task { await inbox.refresh() }
+            }
+        }
+    }
     /// The session the pane shows: its terminal while `recent` has one,
     /// nothing while `attachingSessionIDs` has it, else Restart.
     private(set) var shownSessionID: String?
@@ -69,6 +81,9 @@ final class DeckModel {
     @ObservationIgnored private var hasListed = false
     @ObservationIgnored private var agentPanePollTask: Task<Void, Never>?
     @ObservationIgnored private var pendingReveal: (sessionID: String, windowID: String?)?
+    /// The session a reveal put in the pane before it had a terminal; the
+    /// keyboard goes into the terminal once its attach lands.
+    @ObservationIgnored private var focusOnAttach: String?
 
     private init() {}
 
@@ -154,6 +169,7 @@ final class DeckModel {
     func start() {
         guard !started else { return }
         started = true
+        attention.paneCovered(tab == .inbox)
         do {
             try GhosttyAppController.shared.start()
         } catch {
@@ -181,6 +197,13 @@ final class DeckModel {
         refreshTask = task
         await task.value
         refreshTask = nil
+    }
+
+    /// The toolbar's Refresh: the session list and GitHub, together.
+    func refreshAll() async {
+        async let list: Void = refresh()
+        await inbox.refresh()
+        await list
     }
 
     /// Window rows for every session, keyed back from tmux session name
@@ -267,6 +290,7 @@ final class DeckModel {
     /// window's size while hidden.
     private func show(_ sessionID: String?) {
         guard sessionID != shownSessionID else { return }
+        focusOnAttach = nil
         if let hidden = attachedPane { yieldSize(of: hidden) }
         shownSessionID = sessionID
         shownChanged()
@@ -347,6 +371,10 @@ final class DeckModel {
             }
             for leaving in recent.add(live) {
                 end(leaving)
+            }
+            if focusOnAttach == sessionID {
+                focusOnAttach = nil
+                revealRequests += 1
             }
             if case .pane(let now)? = selection, now.sessionID == sessionID, now.windowID != target.windowID {
                 showWindow(now.windowID, in: live)
@@ -793,8 +821,9 @@ final class DeckModel {
         }
     }
 
-    /// A notification's click: the session, in the window of the pane that
-    /// wants you, with the keyboard in its terminal.
+    /// A notification's click, or Show Session: the session, in the window
+    /// of the pane that wants you, with the keyboard in its terminal once
+    /// there is one.
     func reveal(sessionID: String, windowID: String?) {
         // A click that launched Bosun arrives before the first list.
         guard hasListed else {
@@ -802,10 +831,15 @@ final class DeckModel {
             return
         }
         guard let session = sessions.first(where: { $0.id == sessionID }) else { return }
+        tab = .sessions
         unfoldGroup(session.groupName)
         let first = windowsBySession[sessionID]?.first?.windowID
         select(.pane(PaneTarget(sessionID: sessionID, windowID: windowID == first ? nil : windowID)))
-        revealRequests += 1
+        if attachedPane != nil {
+            revealRequests += 1
+        } else {
+            focusOnAttach = sessionID
+        }
     }
 
     /// A menu bar row's click: the session, at the pane that wants you.
@@ -849,6 +883,11 @@ struct PaneTarget: Hashable {
 enum SidebarItem: Hashable {
     case group(String)
     case pane(PaneTarget)
+}
+
+/// The sidebar's two lists.
+enum SidebarTab: String {
+    case sessions, inbox
 }
 
 /// The New Session dialog's starting values.

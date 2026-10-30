@@ -77,6 +77,15 @@ import Testing
     @Test func detachedHeadHasNoBranch() {
         #expect(GitRepoInfo(branch: nil, defaultBranch: "main", repos: [], unpushed: nil).featureBranch == nil)
     }
+
+    /// A branch of its own is worth asking GitHub about only with a
+    /// github.com remote to ask.
+    @Test func asksGitHubOnlyWithARemote() {
+        let grafana = RepoSlug(owner: "grafana", name: "grafana")
+        #expect(GitRepoInfo(branch: "alexk/x", defaultBranch: "main", repos: [grafana], unpushed: 2).branchRef == BranchRef(branch: "alexk/x", repos: [grafana]))
+        #expect(GitRepoInfo(branch: "alexk/x", defaultBranch: "main", repos: [], unpushed: 2).branchRef == nil)
+        #expect(GitRepoInfo(branch: "main", defaultBranch: "main", repos: [grafana], unpushed: nil).branchRef == nil)
+    }
 }
 
 /// `gh api graphql` answers, trimmed from live ones.
@@ -119,13 +128,13 @@ import Testing
     static func inbox(errors: String = "") throws -> GitHubInbox {
         let errorsField = errors.isEmpty ? "" : ",\"errors\":[{\"message\":\"\(errors)\"}]"
         let pullRequests = Data("""
-        {"data":{"viewer":{"login":"Clarity-89"},
+        {"data":{
          "direct":\(search(1, [pr(134116, checks: "FAILURE", review: "CHANGES_REQUESTED", mergeable: "CONFLICTING", threads: [false, true, false])])),
          "requested":\(search(31, [pr(134116), pr(136472), "{}"])),
          "mine":\(search(9, [pr(136272, closing: issue(136268)), pr(136105, draft: true, checks: "PENDING", review: nil)]))}}
         """.utf8)
         let issues = Data("""
-        {"data":{"viewer":{"login":"Clarity-89"},
+        {"data":{
          "assigned":\(search(4, [issue(136268, closedBy: pr(136272))])),
          "opened":\(search(44, [issue(1420, repo: "grafana/git-ui-sync-project", state: "CLOSED", reason: "COMPLETED"),
                                  issue(14, repo: "Clarity-89/bosun", state: "CLOSED", reason: "NOT_PLANNED")])),
@@ -172,7 +181,6 @@ import Testing
     /// search GitHub could not run is empty.
     @Test func keepsWhatCameWithErrors() throws {
         let inbox = try Self.inbox(errors: "Something went wrong while executing your query.")
-        #expect(inbox.login == "Clarity-89")
         #expect(inbox.mentions.items.isEmpty)
         #expect(inbox.mentions.total == 0)
         #expect(inbox.assignedIssues.total == 4)
@@ -188,11 +196,11 @@ import Testing
     /// `head:` matches other forks' branches of the same name; only the
     /// session's own repositories count.
     @Test func branchPullRequestsAreTheBranchsOwn() throws {
-        let branches: [(branch: String, repos: [RepoSlug])] = [
-            ("feat/surface-worktree-setup-warnings",
-             [RepoSlug(owner: "Clarity-89", name: "agent-deck"), RepoSlug(owner: "asheshgoplani", name: "agent-deck")]),
-            ("alexk/mt-homepage", [RepoSlug(owner: "grafana", name: "grafana")]),
-        ]
+        let agentDeck = BranchRef(
+            branch: "feat/surface-worktree-setup-warnings",
+            repos: [RepoSlug(owner: "Clarity-89", name: "agent-deck"), RepoSlug(owner: "asheshgoplani", name: "agent-deck")]
+        )
+        let grafana = BranchRef(branch: "alexk/mt-homepage", repos: [RepoSlug(owner: "grafana", name: "grafana")])
         let data = Data("""
         {"data":{
          "b0":\(Self.search(3, [
@@ -202,8 +210,9 @@ import Testing
          ])),
          "b1":null}}
         """.utf8)
-        let found = try GitHubQueries.decodePullRequests(data, forBranches: branches)
-        #expect(found.map { $0.map(\.number) } == [[1696], []])
+        let found = try GitHubQueries.decodePullRequests(data, forBranches: [agentDeck, grafana])
+        #expect(found[agentDeck]?.map(\.number) == [1696])
+        #expect(found[grafana] == [])
     }
 
     @Test func aBranchShowsItsLivePullRequestFirst() throws {
@@ -215,9 +224,10 @@ import Testing
             Self.pr(4, state: "OPEN", draft: true, updated: "2026-10-02T00:00:00Z"),
         ]))}}
         """.utf8)
-        let found = try GitHubQueries.decodePullRequests(data, forBranches: [("alexk/branch", [RepoSlug(owner: "grafana", name: "grafana")])])
-        #expect(GitHubPullRequest.preferred(found[0])?.number == 4)
-        #expect(GitHubPullRequest.preferred(found[0].filter { $0.state != .open && $0.state != .draft })?.number == 1)
+        let branch = BranchRef(branch: "alexk/branch", repos: [RepoSlug(owner: "grafana", name: "grafana")])
+        let found = try #require(GitHubQueries.decodePullRequests(data, forBranches: [branch])[branch])
+        #expect(GitHubPullRequest.preferred(found)?.number == 4)
+        #expect(GitHubPullRequest.preferred(found.filter { $0.state != .open && $0.state != .draft })?.number == 1)
     }
 
     @Test func issuesComeBackInTheOrderAsked() throws {
@@ -234,59 +244,14 @@ import Testing
 @Suite struct GraphQLRequestTests {
     @Test func branchNamesStayOutOfTheQuery() {
         let branch = "alexk/x\") { viewer { login } }"
-        let request = GitHubQueries.pullRequests(forBranches: [(branch, [RepoSlug(owner: "grafana", name: "grafana")])])
+        let request = GitHubQueries.pullRequests(forBranches: [BranchRef(branch: branch, repos: [RepoSlug(owner: "grafana", name: "grafana")])])
         #expect(!request.query.contains(branch))
-        #expect(request.arguments.contains("q0=is:pr head:\(branch) repo:grafana/grafana"))
+        #expect(request.arguments.contains("b0=is:pr head:\(branch) repo:grafana/grafana"))
     }
 
     @Test func issueNumbersAreTypedVariables() {
         let request = GitHubQueries.issues([IssueRef(repo: RepoSlug(owner: "Clarity-89", name: "bosun"), number: 16)])
         #expect(request.arguments.suffix(2) == ["-F", "k0=16"])
         #expect(request.strings == ["o0": "Clarity-89", "n0": "bosun"])
-    }
-}
-
-/// omp's session logs: only the first user message names the session's
-/// purpose.
-@Suite struct OmpLogTests {
-    static func lines(_ objects: [String]) -> Data { Data(objects.joined(separator: "\n").utf8) }
-
-    @Test func readsTheIssueInTheFirstPrompt() {
-        let log = Self.lines([
-            #"{"type":"title","title":"⚓ BOSUN","v":3}"#,
-            #"{"type":"model_change","model":"x"}"#,
-            #"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Implement https://github.com/Clarity-89/bosun/issues/10 please"}]}}"#,
-            #"{"type":"message","message":{"role":"user","content":"Now https://github.com/Clarity-89/bosun/issues/16"}}"#,
-        ])
-        #expect(OmpLog.firstIssue(inLog: log)?.description == "Clarity-89/bosun#10")
-    }
-
-    /// A first prompt without an issue means the session has none, whatever
-    /// a later message mentions; tool results are not prompts.
-    @Test func laterMessagesDoNotCount() {
-        let log = Self.lines([
-            #"{"type":"message","message":{"role":"toolResult","content":"https://github.com/a/b/issues/1"}}"#,
-            #"{"type":"message","message":{"role":"user","content":"Look around the repo"}}"#,
-            #"{"type":"message","message":{"role":"user","content":"https://github.com/a/b/issues/2"}}"#,
-        ])
-        #expect(OmpLog.firstIssue(inLog: log) == nil)
-    }
-
-    /// The read stops at a size limit, which can cut the last line short.
-    @Test func skipsALineCutShort() {
-        let log = Self.lines([
-            #"{"type":"custom","data":"#,
-            #"{"type":"message","message":{"role":"user","content":"https://github.com/grafana/grafana/issues/136268"}}"#,
-        ])
-        #expect(OmpLog.firstIssue(inLog: log)?.number == 136268)
-    }
-
-    @Test(arguments: [
-        ("/Users/me/dev/agent-deck", "/Users/me/.omp/agent/sessions/-dev-agent-deck"),
-        ("/Users/me/dev/worktrees/grafana/alexk/git-sync-sdk", "/Users/me/.omp/agent/sessions/-dev-worktrees-grafana-alexk-git-sync-sdk"),
-        ("/Users/me/.omp/wt/wt-20261013", "/Users/me/.omp/agent/sessions/-.omp-wt-wt-20261013"),
-    ])
-    func findsOmpsFolderForASession(path: String, folder: String) {
-        #expect(OmpLog.directory(forWorkingDirectory: path, home: "/Users/me") == folder)
     }
 }

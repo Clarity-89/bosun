@@ -30,7 +30,7 @@ struct SessionActionItems: View {
             Button("Mark as Unread", action: perform(session) { model.attention.markUnread(sessionID: $0.id) })
             Divider()
             Button("Link to Issue…", action: perform(session) { SessionPrompts.linkIssue($0, model: model) })
-            if let session, model.inbox.links[session.id] != nil {
+            if let session, model.inbox[session].issue?.source == .linked {
                 Button("Remove Issue Link", action: perform(session) { model.inbox.unlink(session: $0.id) })
             }
             Divider()
@@ -103,11 +103,11 @@ enum SessionPrompts {
     /// Your link wins over what Bosun works out, in Bosun only: GitHub is
     /// not told. `#12` means the session's repository, a fork's upstream.
     static func linkIssue(_ session: DeckSession, model: DeckModel) {
-        let github = model.inbox[session.id]
+        let github = model.inbox[session]
         let alert = NSAlert()
         alert.messageText = "Link “\(session.title)” to an issue"
-        alert.informativeText = github?.issueRepo.map { "An issue URL, owner/repo#12, or #12 in \($0)." } ?? "An issue URL or owner/repo#12."
-        let field = NSTextField(string: github?.issue.map { $0.ref.description } ?? "")
+        alert.informativeText = github.issueRepo.map { "An issue URL, owner/repo#12, or #12 in \($0)." } ?? "An issue URL or owner/repo#12."
+        let field = NSTextField(string: github.issue.map { $0.ref.description } ?? "")
         field.placeholderString = "https://github.com/owner/repo/issues/12"
         field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
         alert.accessoryView = field
@@ -116,7 +116,7 @@ enum SessionPrompts {
         alert.window.initialFirstResponder = field
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard let ref = IssueRef(parsing: field.stringValue, defaultRepo: github?.issueRepo) else {
+        guard let ref = IssueRef(parsing: field.stringValue, defaultRepo: github.issueRepo) else {
             let error = NSAlert()
             error.messageText = "That is not an issue"
             error.informativeText = "“\(field.stringValue)” names no GitHub issue Bosun can find."

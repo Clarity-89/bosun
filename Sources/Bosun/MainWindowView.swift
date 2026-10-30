@@ -11,19 +11,15 @@ struct MainWindowView: View {
     @State private var terminalFocusRequest = 0
     /// The session list's toolbar button and ⌃Q both hide and show it.
     @State private var columnVisibility = NavigationSplitViewVisibility.all
-    @SceneStorage("sidebarTab") private var tab = SidebarTab.sessions
     /// The Inbox row whose detail covers the terminals.
     @State private var inboxSelection: String?
-    /// A reveal waits for its terminal: a pane only takes requests made
-    /// after it exists.
-    @State private var focusWhenAttached = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             VStack(spacing: 0) {
                 tabPicker
-                switch tab {
+                switch model.tab {
                 case .sessions:
                     sessionList
                 case .inbox:
@@ -38,18 +34,11 @@ struct MainWindowView: View {
         } detail: {
             detail
         }
-        // A covered session is neither seen nor spared its notifications.
-        .onChange(of: tab, initial: true) {
-            model.attention.paneCovered(tab == .inbox)
-        }
         // Into the Inbox list, never left in a terminal out of sight. Back
         // in Sessions, Show Session puts it in the terminal.
-        .onChange(of: tab) {
-            guard tab == .inbox else { return }
+        .onChange(of: model.tab) {
+            guard model.tab == .inbox else { return }
             Task { sidebarFocused = true }
-            if model.inbox.updatedAt.map({ Date.now.timeIntervalSince($0) > 60 }) ?? false {
-                Task { await model.inbox.refresh() }
-            }
         }
         // The keyboard follows the list, as ⌃Q in the TUI goes back to its
         // list: into it as it shows, into the terminal as it hides.
@@ -62,26 +51,16 @@ struct MainWindowView: View {
             }
         }
         .onChange(of: model.revealRequests) {
-            tab = .sessions
-            if model.attachedPane != nil {
-                terminalFocusRequest += 1
-            } else {
-                focusWhenAttached = true
-            }
-        }
-        .onChange(of: model.attachedPane?.id) { _, pane in
-            guard focusWhenAttached, pane != nil else { return }
-            focusWhenAttached = false
             terminalFocusRequest += 1
         }
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
-        .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || tab == .inbox ? nil : $terminalFocusRequest)
+        .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab == .inbox ? nil : $terminalFocusRequest)
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
         .navigationTitle(titleText)
         .toolbar {
-            if tab == .sessions, let selected = model.selectedSession, let github = model.inbox[selected.id] {
+            if model.tab == .sessions, let selected = model.selectedSession {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    GitHubToolbarLinks(github: github)
+                    GitHubToolbarLinks(github: model.inbox[selected])
                 }
             }
             ToolbarItemGroup(placement: .primaryAction) {
@@ -106,11 +85,7 @@ struct MainWindowView: View {
                     .help("Open this session in a separate Ghostty window")
                 }
                 Button {
-                    Task {
-                        async let list: Void = model.refresh()
-                        await model.inbox.refresh()
-                        await list
-                    }
+                    Task { await model.refreshAll() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -124,7 +99,7 @@ struct MainWindowView: View {
 
     /// Names what the pane shows, which a selected group row leaves as it was.
     private var titleText: String {
-        if tab == .inbox { return "Inbox" }
+        if model.tab == .inbox { return "Inbox" }
         guard let shown = model.paneSession else { return "Bosun" }
         guard let title = model.attachedPane?.title, !title.isEmpty else { return shown.title }
         return "\(shown.title) · \(title)"
@@ -133,7 +108,7 @@ struct MainWindowView: View {
     /// The sidebar's two lists; Inbox counts what asks for your review.
     private var tabPicker: some View {
         let reviews = model.inbox.inbox?.reviewRequests.total ?? 0
-        return Picker("List", selection: $tab) {
+        return Picker("List", selection: $model.tab) {
             Text("Sessions").tag(SidebarTab.sessions)
             Text(reviews > 0 ? "Inbox \(reviews)" : "Inbox").tag(SidebarTab.inbox)
         }
@@ -317,14 +292,11 @@ struct MainWindowView: View {
                 }
             }
             // Out of sight under the Inbox, so out of VoiceOver's reach too.
-            .accessibilityHidden(tab == .inbox)
+            .accessibilityHidden(model.tab == .inbox)
             // Over the terminals, which stay in the tree, so their tmux
             // clients live on while the Inbox shows.
-            if tab == .inbox {
-                InboxDetail(inbox: model.inbox, entryID: inboxSelection) { session in
-                    tab = .sessions
-                    model.reveal(session)
-                }
+            if model.tab == .inbox {
+                InboxDetail(inbox: model.inbox, entryID: inboxSelection) { model.reveal($0) }
             }
         }
     }
@@ -377,7 +349,7 @@ private struct SidebarSessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention[session], github: model.inbox[session.id])
+            SessionRow(session: session, attention: model.attention[session], github: model.inbox[session])
             Spacer(minLength: 0)
             if isHovered {
                 HStack(spacing: 4) {
@@ -474,7 +446,7 @@ private struct RowActionButton: View {
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
-    let github: SessionGitHub?
+    let github: SessionGitHub
 
     var body: some View {
         HStack(spacing: 8) {
@@ -485,9 +457,9 @@ struct SessionRow: View {
                     .lineLimit(1)
                 HStack(spacing: 3) {
                     Text(subtitle).layoutPriority(1)
-                    if let issue = github?.issue {
+                    if let issue = github.issue {
                         Text("·")
-                        IssueMark(issue: issue, loading: github?.issueLoading ?? false)
+                        IssueMark(issue: issue)
                     }
                 }
                 .font(.caption)
@@ -501,7 +473,7 @@ struct SessionRow: View {
                     .frame(width: 7, height: 7)
                     .accessibilityLabel("Unread")
             }
-            BranchChip(github: github)
+            BranchChip(branch: github.branch)
         }
         // What GitHub says fades in over its placeholder.
         .animation(.easeOut(duration: 0.25), value: github)
@@ -522,44 +494,10 @@ struct SessionRow: View {
 
     private var help: String {
         var lines = [session.title, subtitle]
-        if let issue = github?.issue {
-            lines.append(issue.issue.map { "Issue #\($0.number): \($0.title)" } ?? "Issue \(issue.ref)")
+        if let issue = github.issue {
+            lines.append(issue.summary)
         }
         return lines.joined(separator: "\n")
-    }
-}
-
-/// The selected session's issue and pull request, each opening on GitHub.
-private struct GitHubToolbarLinks: View {
-    let github: SessionGitHub
-
-    var body: some View {
-        if let issue = github.issue {
-            Button {
-                GitHubLinks.open(issue.ref.url)
-            } label: {
-                Label {
-                    Text(verbatim: "#\(issue.ref.number)")
-                } icon: {
-                    Image(systemName: issue.issue?.state.symbol ?? IssueState.open.symbol)
-                }
-            }
-            .labelStyle(.titleAndIcon)
-            .help(issue.issue.map { "Issue #\($0.number): \($0.title)" } ?? "Issue \(issue.ref.description)")
-        }
-        if let pr = github.pullRequest {
-            Button {
-                GitHubLinks.open(pr.url)
-            } label: {
-                Label {
-                    Text(verbatim: "#\(pr.number)")
-                } icon: {
-                    Image(systemName: pr.state.symbol)
-                }
-            }
-            .labelStyle(.titleAndIcon)
-            .help("\(pr.state.label) pull request #\(pr.number): \(pr.title)\(pr.checks.map { " · \($0.label)" } ?? "")")
-        }
     }
 }
 
