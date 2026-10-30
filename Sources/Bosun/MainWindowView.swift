@@ -378,9 +378,10 @@ private struct NotRunningPane: View {
 }
 
 /// A sidebar row: highlighted on hover, with the drag handle fading in at
-/// the leading edge and Rename and Delete in a plate over the trailing
-/// edge, so the common actions need no context menu and nothing moves
-/// when they show.
+/// the leading edge and Rename and Delete in a plate over the end of the
+/// text, so the common actions need no context menu and nothing moves
+/// when they show. The chip comes after the text, so the plate never
+/// covers it.
 @MainActor
 private struct SidebarSessionRow: View {
     let model: DeckModel
@@ -388,9 +389,10 @@ private struct SidebarSessionRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        let github = model.inbox[session]
+        return HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention[session], github: model.inbox[session])
+            SessionRow(session: session, attention: model.attention[session], github: github)
                 .overlay(alignment: .trailing) {
                     if isHovered {
                         HStack(spacing: 4) {
@@ -408,6 +410,7 @@ private struct SidebarSessionRow: View {
                         .transition(.opacity)
                     }
                 }
+            BranchChip(branch: github.branch)
         }
         .modifier(SidebarHover(isHovered: $isHovered))
     }
@@ -487,8 +490,8 @@ private struct RowActionButton: View {
 
 /// Bold with a ring round its status dot while something in the session is
 /// unread; an open question turns the dot orange. The issue it works on
-/// follows its status; its branch's pull request, or the commits it has yet
-/// to push, sit at the trailing edge.
+/// follows its status. The text takes the room left in its row, so what a
+/// row puts after it stays put.
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
@@ -512,15 +515,13 @@ struct SessionRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            // The full text when the row is too narrow for it; only on the
-            // text, as the chip has a tooltip of its own.
-            .help(help)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // With the stack's spacing, the gap a spacer kept before the chip.
+            // With the row's spacing, the gap a spacer kept before the chip.
             .padding(.trailing, 12)
-            BranchChip(branch: github.branch)
         }
-        // What GitHub says fades in over its placeholder.
+        // The full text when the row is too narrow for it.
+        .help(help)
+        // What GitHub says about the issue fades in over its placeholder.
         .animation(.easeOut(duration: 0.25), value: github)
     }
 

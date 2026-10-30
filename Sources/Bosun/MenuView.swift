@@ -115,6 +115,7 @@ private struct MenuSessionRow: View {
         Button(action: action) {
             HStack {
                 SessionRow(session: session, attention: attention, github: github)
+                BranchChip(branch: github.branch)
                 Spacer(minLength: 4)
                 Image(systemName: "terminal")
                     .font(.caption)

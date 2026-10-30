@@ -8,34 +8,38 @@ struct BranchChip: View {
     let branch: SessionGitHub.Branch
 
     var body: some View {
-        switch branch {
-        case .loading:
-            Text(verbatim: "#000000")
-                .monospacedDigit()
-                .chip()
-                .modifier(LoadingPulse())
-                // Redacted text is hidden from VoiceOver; a fresh element says what loads.
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Loading pull request")
-        case .none:
-            EmptyView()
-        case .unpushed(let name, let commits):
-            Text(verbatim: "↑\(commits)")
-                .monospacedDigit()
-                .chip()
-                .help("\(commits) commit\(commits == 1 ? "" : "s") on \(name) not pushed; no pull request")
-        case .pullRequest(let pr):
-            HStack(spacing: 3) {
-                Image(systemName: pr.state.symbol).foregroundStyle(pr.state.color)
-                Text(verbatim: "#\(pr.number)").monospacedDigit()
-                if pr.state == .open || pr.state == .draft {
-                    if let checks = pr.checks { Image(systemName: checks.symbol).foregroundStyle(checks.color) }
-                    if pr.unresolvedThreads > 0 { Image(systemName: "bubble.left.fill").foregroundStyle(.orange) }
+        Group {
+            switch branch {
+            case .loading:
+                Text(verbatim: "#000000")
+                    .monospacedDigit()
+                    .chip()
+                    .modifier(LoadingPulse())
+                    // Redacted text is hidden from VoiceOver; a fresh element says what loads.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading pull request")
+            case .none:
+                EmptyView()
+            case .unpushed(let name, let commits):
+                Text(verbatim: "↑\(commits)")
+                    .monospacedDigit()
+                    .chip()
+                    .help("\(commits) commit\(commits == 1 ? "" : "s") on \(name) not pushed; no pull request")
+            case .pullRequest(let pr):
+                HStack(spacing: 3) {
+                    Image(systemName: pr.state.symbol).foregroundStyle(pr.state.color)
+                    Text(verbatim: "#\(pr.number)").monospacedDigit()
+                    if pr.state == .open || pr.state == .draft {
+                        if let checks = pr.checks { Image(systemName: checks.symbol).foregroundStyle(checks.color) }
+                        if pr.unresolvedThreads > 0 { Image(systemName: "bubble.left.fill").foregroundStyle(.orange) }
+                    }
                 }
+                .chip()
+                .help("\(pr.state.label) pull request #\(pr.number): \(pr.title)")
             }
-            .chip()
-            .help("\(pr.state.label) pull request #\(pr.number): \(pr.title)")
         }
+        // What GitHub says fades in over the placeholder.
+        .animation(.easeOut(duration: 0.25), value: branch)
     }
 }
 
