@@ -13,7 +13,10 @@ struct MainWindowView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// The Inbox row whose detail covers the terminals.
     @State private var inboxSelection: String?
+    /// The pane whose terminal holds the keyboard; nil while it is elsewhere.
+    @State private var keyboardPaneID: UUID?
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -264,6 +267,7 @@ struct MainWindowView: View {
     /// Every live pane stays in the view tree, hidden unless shown, so its
     /// tmux client outlives a switch and showing it again is instant. The
     /// terminal being opened shows a spinner; a session without one, Restart.
+    /// Over a shown terminal, `keyboardHint` says when typing would miss it.
     private var detail: some View {
         let shown = model.attachedPane?.id
         return ZStack {
@@ -275,8 +279,15 @@ struct MainWindowView: View {
                         model.paneReceivedInput(paneID: live.id)
                     } onExit: { exit in
                         model.paneExited(paneID: live.id, exit: exit)
+                    } onFocusChange: { focused in
+                        if focused {
+                            keyboardPaneID = live.id
+                        } else if keyboardPaneID == live.id {
+                            keyboardPaneID = nil
+                        }
                     }
                 }
+                KeyboardElsewhereHint(hint: keyboardHint)
                 if shown == nil {
                     if model.isAttaching {
                         ProgressView()
@@ -301,6 +312,20 @@ struct MainWindowView: View {
         }
     }
 
+    /// Why typing would not reach the shown terminal, and how to type in it;
+    /// nil while it would. With keys going to another window or app there is
+    /// no dimming, which would only make a session watched from there harder
+    /// to read. The first click on this window only brings it forward, so the
+    /// keyboard then stays where it was.
+    private var keyboardHint: KeyboardHint? {
+        guard let shown = model.attachedPane?.id, model.tab == .sessions else { return nil }
+        guard controlActiveState == .key else { return KeyboardHint(dims: false, message: "Click to type here") }
+        guard shown != keyboardPaneID else { return nil }
+        // Return hands the keyboard over from the list; elsewhere only the menu shortcut does.
+        let key = sidebarFocused ? Shortcut.activate.listKeyLabel : Shortcut.focusTerminal.menuLabel
+        return KeyboardHint(dims: true, message: "Press \(key) or click to type here")
+    }
+
     private var footer: some View {
         VStack(alignment: .leading, spacing: 4) {
             StatusNotices(model: model)
@@ -310,6 +335,36 @@ struct MainWindowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(.bar)
+    }
+}
+
+/// What `KeyboardElsewhereHint` shows: a message, over a dimmed pane or not.
+private struct KeyboardHint: Equatable {
+    let dims: Bool
+    let message: String
+}
+
+/// Over a shown terminal that typing would miss: the hint, over a dimmed
+/// pane while the keyboard is elsewhere in this window. Clicks pass through,
+/// so a click lands in the terminal and gives it the keyboard, as it always
+/// has.
+private struct KeyboardElsewhereHint: View {
+    let hint: KeyboardHint?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(hint?.dims == true ? 0.35 : 0)
+            if let hint {
+                Label(hint.message, systemImage: "keyboard")
+                    .font(.callout)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: .capsule)
+                    .transition(.opacity)
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.15), value: hint)
     }
 }
 
