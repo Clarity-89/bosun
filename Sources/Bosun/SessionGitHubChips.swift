@@ -1,9 +1,10 @@
 import BosunCore
 import SwiftUI
 
-/// The pull request from a session's branch, or the bare branch with its
-/// unpushed commits; a placeholder of its size while Bosun has yet to read
-/// the folder or GitHub to say.
+/// The pull request from a session's branch, or the commits on a branch
+/// without one that are not pushed yet; nothing for a branch with neither.
+/// A placeholder of its size while Bosun has yet to read the folder or
+/// GitHub to say.
 struct BranchChip: View {
     let branch: SessionGitHub.Branch
 
@@ -17,17 +18,13 @@ struct BranchChip: View {
                 // Redacted text is hidden from VoiceOver; a fresh element says what loads.
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Loading pull request")
-        case .none:
+        case .none, .unpushed(_, nil), .unpushed(_, 0?):
             EmptyView()
-        case .unpushed(let name, let commits):
-            HStack(spacing: 2) {
-                Image(systemName: "arrow.triangle.branch")
-                if let commits, commits > 0 {
-                    Text(verbatim: "\(commits)↑").monospacedDigit()
-                }
-            }
-            .chip()
-            .help(Self.help(branch: name, commits: commits))
+        case .unpushed(let name, let commits?):
+            Text(verbatim: "↑\(commits)")
+                .monospacedDigit()
+                .chip()
+                .help("\(commits) commit\(commits == 1 ? "" : "s") on \(name) not pushed; no pull request")
         case .pullRequest(let pr):
             HStack(spacing: 3) {
                 Image(systemName: pr.state.symbol).foregroundStyle(pr.state.color)
@@ -40,11 +37,6 @@ struct BranchChip: View {
             .chip()
             .help("\(pr.state.label) pull request #\(pr.number): \(pr.title)")
         }
-    }
-
-    private static func help(branch: String, commits: Int?) -> String {
-        guard let commits, commits > 0 else { return "\(branch), no pull request" }
-        return "\(branch), no pull request, \(commits) commit\(commits == 1 ? "" : "s") not pushed"
     }
 }
 

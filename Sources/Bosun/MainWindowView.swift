@@ -440,9 +440,10 @@ private struct RowActionButton: View {
     }
 }
 
-/// Bold with a dot while something in the session is unread; an open
-/// question turns its status dot orange. The issue it works on follows its
-/// status; its branch's pull request sits at the trailing edge.
+/// Bold with a ring round its status dot while something in the session is
+/// unread; an open question turns the dot orange. The issue it works on
+/// follows its status; its branch's pull request, or the commits it has yet
+/// to push, sit at the trailing edge.
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
@@ -450,35 +451,32 @@ struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            StatusBadge(status: session.status, asks: attention.asks)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.title)
-                    .fontWeight(attention.unread ? .semibold : nil)
-                    .lineLimit(1)
-                HStack(spacing: 3) {
-                    Text(subtitle).layoutPriority(1)
-                    if let issue = github.issue {
-                        Text("·")
-                        IssueMark(issue: issue)
+            HStack(spacing: 8) {
+                StatusBadge(status: session.status, asks: attention.asks, unread: attention.unread)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.title)
+                        .fontWeight(attention.unread ? .semibold : nil)
+                        .lineLimit(1)
+                    HStack(spacing: 3) {
+                        Text(subtitle).layoutPriority(1)
+                        if let issue = github.issue {
+                            Text("·")
+                            IssueMark(issue: issue)
+                        }
                     }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
             }
+            // The full text when the row is too narrow for it; only here, as
+            // the chip has a tooltip of its own.
+            .help(help)
             Spacer(minLength: 4)
-            if attention.unread {
-                Circle()
-                    .fill(.tint)
-                    .frame(width: 7, height: 7)
-                    .accessibilityLabel("Unread")
-            }
             BranchChip(branch: github.branch)
         }
         // What GitHub says fades in over its placeholder.
         .animation(.easeOut(duration: 0.25), value: github)
-        // The full text when the row is too narrow for it.
-        .help(help)
     }
 
     private var subtitle: String {
