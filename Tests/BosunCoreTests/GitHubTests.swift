@@ -9,7 +9,7 @@ import Testing
         ("https://github.com/Clarity-89/bosun", "Clarity-89/bosun"),
         ("https://github.com/Clarity-89/bosun.git", "Clarity-89/bosun"),
         ("ssh://git@github.com/asheshgoplani/agent-deck.git", "asheshgoplani/agent-deck"),
-        ("https://github.com/grafana/plugin-graft/", "grafana/plugin-graft"),
+        ("https://github.com/grafana/loki/", "grafana/loki"),
         ("https://GitHub.com/grafana/sigil-sdk.git\n", "grafana/sigil-sdk"),
     ])
     func readsGitHubRemotes(remote: String, slug: String) {
@@ -36,7 +36,7 @@ import Testing
     @Test(arguments: [
         ("https://github.com/grafana/grafana/issues/136268", "grafana/grafana#136268"),
         ("https://github.com/grafana/grafana/issues/136268#issuecomment-1", "grafana/grafana#136268"),
-        ("  grafana/git-ui-sync-project#1420 ", "grafana/git-ui-sync-project#1420"),
+        ("  grafana/tempo#1420 ", "grafana/tempo#1420"),
         ("#16", "Clarity-89/bosun#16"),
         ("16", "Clarity-89/bosun#16"),
     ])
@@ -136,7 +136,7 @@ import Testing
         let issues = Data("""
         {"data":{
          "assigned":\(search(4, [issue(136268, closedBy: pr(136272))])),
-         "opened":\(search(44, [issue(1420, repo: "grafana/git-ui-sync-project", state: "CLOSED", reason: "COMPLETED"),
+         "opened":\(search(44, [issue(1420, repo: "grafana/tempo", state: "CLOSED", reason: "COMPLETED"),
                                  issue(14, repo: "Clarity-89/bosun", state: "CLOSED", reason: "NOT_PLANNED")])),
          "mentions":null}\(errorsField)}
         """.utf8)
