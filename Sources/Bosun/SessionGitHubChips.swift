@@ -2,9 +2,8 @@ import BosunCore
 import SwiftUI
 
 /// The pull request from a session's branch, or the commits on a branch
-/// without one that are not pushed yet; nothing for a branch with neither.
-/// A placeholder of its size while Bosun has yet to read the folder or
-/// GitHub to say.
+/// without one that are not pushed yet. A placeholder of its size while
+/// Bosun has yet to read the folder or GitHub to say.
 struct BranchChip: View {
     let branch: SessionGitHub.Branch
 
@@ -18,9 +17,9 @@ struct BranchChip: View {
                 // Redacted text is hidden from VoiceOver; a fresh element says what loads.
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Loading pull request")
-        case .none, .unpushed(_, nil), .unpushed(_, 0?):
+        case .none:
             EmptyView()
-        case .unpushed(let name, let commits?):
+        case .unpushed(let name, let commits):
             Text(verbatim: "↑\(commits)")
                 .monospacedDigit()
                 .chip()

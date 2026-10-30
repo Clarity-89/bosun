@@ -135,7 +135,7 @@ private func folder(prompt: IssueRef? = nil, repos: [RepoSlug] = [grafana], unpu
     }
 
     /// A request GitHub did not answer keeps what it said before and stops
-    /// the rest waiting.
+    /// the rest waiting; a branch git cannot count shows nothing.
     @Test func aFailedRequestKeepsEarlierAnswers() {
         let other = BranchRef(branch: "feat/other", repos: [grafana])
         var state = InboxState()
@@ -145,7 +145,7 @@ private func folder(prompt: IssueRef? = nil, repos: [RepoSlug] = [grafana], unpu
         state.received(pullRequests: [branch: [pr]])
         state.failed(branches: [branch, other])
         #expect(state.github(for: worker).branch == .pullRequest(pr))
-        #expect(state.github(for: session("s2", path: "/q")).branch == .unpushed(branch: other.branch, commits: nil))
+        #expect(state.github(for: session("s2", path: "/q")).branch == .none)
     }
 }
 

@@ -34,11 +34,12 @@ struct SessionGitHub: Equatable, Sendable {
     enum Branch: Equatable, Sendable {
         /// Bosun has yet to read the folder, or GitHub to answer for the branch.
         case loading
-        /// Nothing to show: no repository, or its default branch.
+        /// Nothing to show: no repository, its default branch, or a branch
+        /// with neither a pull request nor commits to push.
         case none
-        /// A branch of its own without a pull request, and how many of its
-        /// commits are not pushed, when git knows.
-        case unpushed(branch: String, commits: Int?)
+        /// A branch of its own without a pull request and with commits not
+        /// pushed yet.
+        case unpushed(branch: String, commits: Int)
         case pullRequest(GitHubPullRequest)
 
         var pullRequest: GitHubPullRequest? {
@@ -93,7 +94,11 @@ struct InboxState: Equatable, Sendable {
     private func branch(of folder: Folder?) -> SessionGitHub.Branch {
         guard let folder else { return .loading }
         guard let repo = folder.repo, let name = repo.featureBranch else { return .none }
-        let unpushed = SessionGitHub.Branch.unpushed(branch: name, commits: repo.unpushed)
+        let unpushed: SessionGitHub.Branch = if let commits = repo.unpushed, commits > 0 {
+            .unpushed(branch: name, commits: commits)
+        } else {
+            .none
+        }
         guard let ref = repo.branchRef else { return unpushed }
         guard let asked = pullRequests[ref] else { return .loading }
         return asked.map(SessionGitHub.Branch.pullRequest) ?? unpushed
