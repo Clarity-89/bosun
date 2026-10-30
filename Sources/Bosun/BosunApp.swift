@@ -17,7 +17,7 @@ struct BosunApp: App {
         // where a WindowGroup would add a second window on the same session.
         Window("Bosun", id: MainWindowView.windowID) {
             MainWindowView(model: model)
-                .frame(minWidth: 900, minHeight: 560)
+                .frame(minHeight: 560)
         }
         .defaultSize(width: 1280, height: 820)
         .commands {

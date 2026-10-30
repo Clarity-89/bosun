@@ -40,6 +40,11 @@ struct MainWindowView: View {
         } detail: {
             HStack(spacing: 0) {
                 detail
+                    // The terminal's own floor. A floor on the window's root
+                    // becomes the detail column's, and showing the list then
+                    // widens the window by a list, off the screen if need be,
+                    // instead of narrowing the terminal.
+                    .frame(minWidth: 400)
                 // Once the pair runs, so the shells' split view starts with
                 // both and halves the height; a child added later keeps the
                 // first one's size.
