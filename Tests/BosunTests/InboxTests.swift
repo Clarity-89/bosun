@@ -3,16 +3,16 @@ import Testing
 @testable import Bosun
 @testable import BosunCore
 
-private let grafana = RepoSlug(owner: "grafana", name: "grafana")
+private let octo = RepoSlug(owner: "octo-org", name: "octo-repo")
 private let bosun = RepoSlug(owner: "Clarity-89", name: "bosun")
-private let branch = BranchRef(branch: "alexk/homepage-remove-toggle", repos: [grafana])
+private let branch = BranchRef(branch: "me/feature", repos: [octo])
 private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func session(_ id: String, path: String = "/p") -> DeckSession {
     DeckSession(id: id, title: id, path: path, group: "g", tool: "omp", status: .idle, substate: nil, tmuxSession: nil, archived: false, lastActivityAt: nil)
 }
 
-private func issue(_ number: Int, in repo: RepoSlug = grafana) -> GitHubIssue {
+private func issue(_ number: Int, in repo: RepoSlug = octo) -> GitHubIssue {
     GitHubIssue(
         repo: repo, number: number, title: "Issue \(number)", url: IssueRef(repo: repo, number: number).url,
         author: nil, state: .open, labels: [], assignees: [], comments: 0, pullRequests: [], updatedAt: now
@@ -21,14 +21,14 @@ private func issue(_ number: Int, in repo: RepoSlug = grafana) -> GitHubIssue {
 
 private func pullRequest(closing: [GitHubIssue] = []) -> GitHubPullRequest {
     GitHubPullRequest(
-        repo: grafana, number: 136272, title: "PR", url: URL(string: "https://github.com/grafana/grafana/pull/136272")!,
-        author: nil, state: .open, headBranch: branch.branch, headRepo: grafana, baseBranch: "main",
+        repo: octo, number: 136272, title: "PR", url: URL(string: "https://github.com/octo-org/octo-repo/pull/136272")!,
+        author: nil, state: .open, headBranch: branch.branch, headRepo: octo, baseBranch: "main",
         checks: nil, review: nil, hasConflicts: false, unresolvedThreads: 0, closingIssues: closing, updatedAt: now
     )
 }
 
 /// A folder on `branch`, pushed to `repos`.
-private func folder(prompt: IssueRef? = nil, repos: [RepoSlug] = [grafana], unpushed: Int? = 2) -> InboxState.Folder {
+private func folder(prompt: IssueRef? = nil, repos: [RepoSlug] = [octo], unpushed: Int? = 2) -> InboxState.Folder {
     InboxState.Folder(repo: GitRepoInfo(branch: branch.branch, defaultBranch: "main", repos: repos, unpushed: unpushed), prompt: prompt)
 }
 
@@ -118,7 +118,7 @@ private func folder(prompt: IssueRef? = nil, repos: [RepoSlug] = [grafana], unpu
 
     @Test func nothingToShowOnTheDefaultBranchOrOutsideARepository() {
         var state = InboxState()
-        state.folders["/p"] = InboxState.Folder(repo: GitRepoInfo(branch: "main", defaultBranch: "main", repos: [grafana], unpushed: nil), prompt: nil)
+        state.folders["/p"] = InboxState.Folder(repo: GitRepoInfo(branch: "main", defaultBranch: "main", repos: [octo], unpushed: nil), prompt: nil)
         #expect(state.github(for: worker).branch == .none)
         state.folders["/p"] = InboxState.Folder(repo: nil, prompt: nil)
         #expect(state.github(for: worker).branch == .none)
@@ -137,10 +137,10 @@ private func folder(prompt: IssueRef? = nil, repos: [RepoSlug] = [grafana], unpu
     /// A request GitHub did not answer keeps what it said before and stops
     /// the rest waiting; a branch git cannot count shows nothing.
     @Test func aFailedRequestKeepsEarlierAnswers() {
-        let other = BranchRef(branch: "feat/other", repos: [grafana])
+        let other = BranchRef(branch: "feat/other", repos: [octo])
         var state = InboxState()
         state.folders["/p"] = folder()
-        state.folders["/q"] = InboxState.Folder(repo: GitRepoInfo(branch: other.branch, defaultBranch: "main", repos: [grafana], unpushed: nil), prompt: nil)
+        state.folders["/q"] = InboxState.Folder(repo: GitRepoInfo(branch: other.branch, defaultBranch: "main", repos: [octo], unpushed: nil), prompt: nil)
         let pr = pullRequest()
         state.received(pullRequests: [branch: [pr]])
         state.failed(branches: [branch, other])
@@ -168,10 +168,10 @@ private func folder(prompt: IssueRef? = nil, repos: [RepoSlug] = [grafana], unpu
         let sections = inbox.listSections
         #expect(sections.map(\.id) == [.reviews, .assigned, .mine, .teams, .opened, .mentions])
         let byID = Dictionary(uniqueKeysWithValues: sections.map { ($0.id, $0) })
-        #expect(byID[.assigned]?.entries.map(\.id) == ["grafana/grafana#136268", "grafana/grafana#127458"])
-        #expect(byID[.opened]?.entries.map(\.id) == ["grafana/grafana#135595"])
+        #expect(byID[.assigned]?.entries.map(\.id) == ["octo-org/octo-repo#136268", "octo-org/octo-repo#127458"])
+        #expect(byID[.opened]?.entries.map(\.id) == ["octo-org/octo-repo#135595"])
         #expect(byID[.opened]?.total == 43)
-        #expect(byID[.mentions]?.entries.map(\.id) == ["grafana/grafana#1"])
+        #expect(byID[.mentions]?.entries.map(\.id) == ["octo-org/octo-repo#1"])
         #expect(byID[.mentions]?.total == 5)
     }
 }

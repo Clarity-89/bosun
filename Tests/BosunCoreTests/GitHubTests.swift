@@ -5,12 +5,12 @@ import Testing
 /// Repositories from `git remote get-url`.
 @Suite struct RepoSlugTests {
     @Test(arguments: [
-        ("git@github.com:grafana/grafana.git", "grafana/grafana"),
+        ("git@github.com:octo-org/octo-repo.git", "octo-org/octo-repo"),
         ("https://github.com/Clarity-89/bosun", "Clarity-89/bosun"),
         ("https://github.com/Clarity-89/bosun.git", "Clarity-89/bosun"),
         ("ssh://git@github.com/asheshgoplani/agent-deck.git", "asheshgoplani/agent-deck"),
-        ("https://github.com/grafana/loki/", "grafana/loki"),
-        ("https://GitHub.com/grafana/sigil-sdk.git\n", "grafana/sigil-sdk"),
+        ("https://github.com/octo-org/second/", "octo-org/second"),
+        ("https://GitHub.com/octo-org/sdk.git\n", "octo-org/sdk"),
     ])
     func readsGitHubRemotes(remote: String, slug: String) {
         #expect(RepoSlug(remoteURL: remote)?.description == slug)
@@ -18,10 +18,10 @@ import Testing
 
     /// Other hosts, and paths that are not one repository.
     @Test(arguments: [
-        "git@gitlab.com:grafana/grafana.git",
+        "git@gitlab.com:octo-org/octo-repo.git",
         "https://example.com/github.com/a/b",
-        "https://github.com/grafana",
-        "https://github.com/grafana/grafana/pull/1",
+        "https://github.com/octo-org",
+        "https://github.com/octo-org/octo-repo/pull/1",
         "/Users/me/dev/local-only",
     ])
     func ignoresEverythingElse(remote: String) {
@@ -34,9 +34,9 @@ import Testing
     static let bosun = RepoSlug(owner: "Clarity-89", name: "bosun")
 
     @Test(arguments: [
-        ("https://github.com/grafana/grafana/issues/136268", "grafana/grafana#136268"),
-        ("https://github.com/grafana/grafana/issues/136268#issuecomment-1", "grafana/grafana#136268"),
-        ("  grafana/tempo#1420 ", "grafana/tempo#1420"),
+        ("https://github.com/octo-org/octo-repo/issues/136268", "octo-org/octo-repo#136268"),
+        ("https://github.com/octo-org/octo-repo/issues/136268#issuecomment-1", "octo-org/octo-repo#136268"),
+        ("  octo-org/third#1420 ", "octo-org/third#1420"),
         ("#16", "Clarity-89/bosun#16"),
         ("16", "Clarity-89/bosun#16"),
     ])
@@ -48,7 +48,7 @@ import Testing
     /// is not an issue.
     @Test func rejectsWhatNamesNoIssue() {
         #expect(IssueRef(parsing: "#16", defaultRepo: nil) == nil)
-        #expect(IssueRef(parsing: "https://github.com/grafana/grafana/pull/136272", defaultRepo: Self.bosun) == nil)
+        #expect(IssueRef(parsing: "https://github.com/octo-org/octo-repo/pull/136272", defaultRepo: Self.bosun) == nil)
         #expect(IssueRef(parsing: "fix the homepage", defaultRepo: Self.bosun) == nil)
         #expect(IssueRef(parsing: "#0", defaultRepo: Self.bosun) == nil)
     }
@@ -56,14 +56,14 @@ import Testing
     @Test func findsTheFirstIssueURLInProse() {
         let prompt = "Implement https://github.com/Clarity-89/bosun/issues/16, then see https://github.com/Clarity-89/bosun/issues/17"
         #expect(IssueRef.firstURL(in: prompt)?.description == "Clarity-89/bosun#16")
-        #expect(IssueRef.firstURL(in: "Review https://github.com/grafana/grafana/pull/134116") == nil)
+        #expect(IssueRef.firstURL(in: "Review https://github.com/octo-org/octo-repo/pull/134116") == nil)
     }
 }
 
 @Suite struct GitRepoInfoTests {
     /// Only a branch of its own can have a pull request.
     @Test(arguments: [
-        ("alexk/homepage-kb", "main", "alexk/homepage-kb"),
+        ("me/feature", "main", "me/feature"),
         ("main", "main", nil),
         ("develop", "develop", nil),
         ("master", nil, nil),
@@ -81,16 +81,16 @@ import Testing
     /// A branch of its own is worth asking GitHub about only with a
     /// github.com remote to ask.
     @Test func asksGitHubOnlyWithARemote() {
-        let grafana = RepoSlug(owner: "grafana", name: "grafana")
-        #expect(GitRepoInfo(branch: "alexk/x", defaultBranch: "main", repos: [grafana], unpushed: 2).branchRef == BranchRef(branch: "alexk/x", repos: [grafana]))
-        #expect(GitRepoInfo(branch: "alexk/x", defaultBranch: "main", repos: [], unpushed: 2).branchRef == nil)
-        #expect(GitRepoInfo(branch: "main", defaultBranch: "main", repos: [grafana], unpushed: nil).branchRef == nil)
+        let octo = RepoSlug(owner: "octo-org", name: "octo-repo")
+        #expect(GitRepoInfo(branch: "me/x", defaultBranch: "main", repos: [octo], unpushed: 2).branchRef == BranchRef(branch: "me/x", repos: [octo]))
+        #expect(GitRepoInfo(branch: "me/x", defaultBranch: "main", repos: [], unpushed: 2).branchRef == nil)
+        #expect(GitRepoInfo(branch: "main", defaultBranch: "main", repos: [octo], unpushed: nil).branchRef == nil)
     }
 }
 
 /// `gh api graphql` answers, trimmed from live ones.
 @Suite struct GitHubDecodingTests {
-    static func pr(_ number: Int, repo: String = "grafana/grafana", head: String = "alexk/branch", headRepo: String? = "grafana/grafana",
+    static func pr(_ number: Int, repo: String = "octo-org/octo-repo", head: String = "me/branch", headRepo: String? = "octo-org/octo-repo",
                    state: String = "OPEN", draft: Bool = false, updated: String = "2026-10-29T15:28:56Z",
                    checks: String? = "SUCCESS", review: String? = "REVIEW_REQUIRED", mergeable: String = "MERGEABLE",
                    threads: [Bool] = [], closing: String = "") -> String {
@@ -107,7 +107,7 @@ import Testing
         """
     }
 
-    static func issue(_ number: Int, repo: String = "grafana/grafana", state: String = "OPEN", reason: String? = nil,
+    static func issue(_ number: Int, repo: String = "octo-org/octo-repo", state: String = "OPEN", reason: String? = nil,
                       closedBy: String = "") -> String {
         let closedByField = closedBy.isEmpty ? "" : ",\"closedByPullRequestsReferences\":{\"nodes\":[\(closedBy)]}"
         return """
@@ -136,7 +136,7 @@ import Testing
         let issues = Data("""
         {"data":{
          "assigned":\(search(4, [issue(136268, closedBy: pr(136272))])),
-         "opened":\(search(44, [issue(1420, repo: "grafana/tempo", state: "CLOSED", reason: "COMPLETED"),
+         "opened":\(search(44, [issue(1420, repo: "octo-org/third", state: "CLOSED", reason: "COMPLETED"),
                                  issue(14, repo: "Clarity-89/bosun", state: "CLOSED", reason: "NOT_PLANNED")])),
          "mentions":null}\(errorsField)}
         """.utf8)
@@ -200,7 +200,7 @@ import Testing
             branch: "feat/surface-worktree-setup-warnings",
             repos: [RepoSlug(owner: "Clarity-89", name: "agent-deck"), RepoSlug(owner: "asheshgoplani", name: "agent-deck")]
         )
-        let grafana = BranchRef(branch: "alexk/mt-homepage", repos: [RepoSlug(owner: "grafana", name: "grafana")])
+        let octo = BranchRef(branch: "me/other", repos: [RepoSlug(owner: "octo-org", name: "octo-repo")])
         let data = Data("""
         {"data":{
          "b0":\(Self.search(3, [
@@ -210,9 +210,9 @@ import Testing
          ])),
          "b1":null}}
         """.utf8)
-        let found = try GitHubQueries.decodePullRequests(data, forBranches: [agentDeck, grafana])
+        let found = try GitHubQueries.decodePullRequests(data, forBranches: [agentDeck, octo])
         #expect(found[agentDeck]?.map(\.number) == [1696])
-        #expect(found[grafana] == [])
+        #expect(found[octo] == [])
     }
 
     @Test func aBranchShowsItsLivePullRequestFirst() throws {
@@ -224,7 +224,7 @@ import Testing
             Self.pr(4, state: "OPEN", draft: true, updated: "2026-10-02T00:00:00Z"),
         ]))}}
         """.utf8)
-        let branch = BranchRef(branch: "alexk/branch", repos: [RepoSlug(owner: "grafana", name: "grafana")])
+        let branch = BranchRef(branch: "me/branch", repos: [RepoSlug(owner: "octo-org", name: "octo-repo")])
         let found = try #require(GitHubQueries.decodePullRequests(data, forBranches: [branch])[branch])
         #expect(GitHubPullRequest.preferred(found)?.number == 4)
         #expect(GitHubPullRequest.preferred(found.filter { $0.state != .open && $0.state != .draft })?.number == 1)
@@ -243,10 +243,10 @@ import Testing
 /// branch is called can change the query.
 @Suite struct GraphQLRequestTests {
     @Test func branchNamesStayOutOfTheQuery() {
-        let branch = "alexk/x\") { viewer { login } }"
-        let request = GitHubQueries.pullRequests(forBranches: [BranchRef(branch: branch, repos: [RepoSlug(owner: "grafana", name: "grafana")])])
+        let branch = "me/x\") { viewer { login } }"
+        let request = GitHubQueries.pullRequests(forBranches: [BranchRef(branch: branch, repos: [RepoSlug(owner: "octo-org", name: "octo-repo")])])
         #expect(!request.query.contains(branch))
-        #expect(request.arguments.contains("b0=is:pr head:\(branch) repo:grafana/grafana"))
+        #expect(request.arguments.contains("b0=is:pr head:\(branch) repo:octo-org/octo-repo"))
     }
 
     @Test func issueNumbersAreTypedVariables() {
