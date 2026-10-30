@@ -199,8 +199,8 @@ class SurfaceView: NSView {
 
         // BOSUN: Calyx observed its smooth-scroll setting here; Bosun has no such setting.
 
-        // BOSUN: Calyx did not take drops; see the Drops extension.
-        registerForDraggedTypes(Array(Self.dropTypes))
+        // BOSUN: Calyx did not take drops; see SurfaceView+Drops.swift.
+        registerForDraggedTypes(Self.dropTypes)
     }
 
     /// Initialize the ghostty surface for this view.
@@ -1216,48 +1216,6 @@ extension SurfaceView: @preconcurrency NSTextInputClient {
         } else if clearIfNeeded {
             surfaceController.sendPreedit(nil)
         }
-    }
-}
-
-// MARK: - Drops
-
-// BOSUN: Ghostty's drop handling (SurfaceView_AppKit.swift, NSPasteboard+Extension.swift
-// and Ghostty.Shell.swift on main): a file becomes its escaped path, anything else its
-// text, sent as a paste, so an agent behind tmux gets it as one bracketed paste.
-extension SurfaceView {
-    static let dropTypes: Set<NSPasteboard.PasteboardType> = [.string, .fileURL]
-
-    private static let escapeCharacters = "\\ ()[]{}<>\"'`!#$&;|*?\t"
-
-    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        guard let types = sender.draggingPasteboard.types, !Set(types).isDisjoint(with: Self.dropTypes) else { return [] }
-        // Copy, for the badge: the dragged file stays where it is.
-        return .copy
-    }
-
-    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard let surfaceController, let text = Self.dropText(from: sender.draggingPasteboard) else { return false }
-        onInput?()
-        surfaceController.sendText(text)
-        return true
-    }
-
-    /// Each item's file path, escaped for a shell, else its text, joined by
-    /// spaces; nil when no item has either.
-    static func dropText(from pasteboard: NSPasteboard) -> String? {
-        let parts = (pasteboard.pasteboardItems ?? []).compactMap { item -> String? in
-            if let plist = item.propertyList(forType: .fileURL),
-               let url = NSURL(pasteboardPropertyList: plist, ofType: .fileURL) as URL?,
-               url.isFileURL {
-                return escape(url.path)
-            }
-            return item.string(forType: .string)
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
-    }
-
-    private static func escape(_ text: String) -> String {
-        escapeCharacters.reduce(text) { $0.replacingOccurrences(of: String($1), with: "\\\($1)") }
     }
 }
 
