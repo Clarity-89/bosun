@@ -1,6 +1,6 @@
-// Draws the app icon, an anchor on a sea-blue squircle, at every size an
-// icns holds, and writes the icns given as the argument. Code, not an
-// asset, so the icon has a source and `make bundle` can rebuild it.
+// The source of Resources/AppIcon.icns: an anchor on a sea-blue squircle,
+// drawn at every size an icns holds. Run after changing the drawing and
+// commit the icns:  swift scripts/make-icon.swift Resources/AppIcon.icns
 import AppKit
 
 let output = CommandLine.arguments.dropFirst().first ?? "Resources/AppIcon.icns"
