@@ -94,20 +94,11 @@ public actor AgentDeckCLI {
             return resolved
         }
 
+        let loginPath = await Self.resolveLoginPath()
         let environment = Self.childEnvironment(binaryDirectory: nil)
         var candidates: [String] = []
         if let configuredPath { candidates.append(configuredPath) }
-        // The login shell knows the user's PATH; a LaunchServices-launched app does not.
-        let lookup = try? await Subprocess.run(
-            executable: "/bin/zsh",
-            arguments: ["-lc", "which -a agent-deck"],
-            environment: environment,
-            timeout: .seconds(10)
-        )
-        candidates += (lookup?.stdout ?? "")
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
-            .filter { $0.hasPrefix("/") }
+        candidates += (loginPath ?? "").split(separator: ":").map { "\($0)/agent-deck" }.filter { $0.hasPrefix("/") }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         candidates += [
             "\(home)/.local/bin/agent-deck",
@@ -169,16 +160,53 @@ public actor AgentDeckCLI {
         return AgentDeckVersion(versionOutput: result.stdout)
     }
 
+    /// The login shell's PATH once `resolveLoginPath()` has read it.
+    static let loginPathCache = OSAllocatedUnfairLock<String?>(initialState: nil)
+
+    /// The login shell knows the user's PATH; a LaunchServices-launched app
+    /// does not. Interactive too, because installers such as bun's add to
+    /// PATH in `.zshrc`. A failed read leaves the cache empty so the next
+    /// `binary()` resolution retries.
+    static func resolveLoginPath() async -> String? {
+        if let cached = loginPathCache.withLock({ $0 }) { return cached }
+        let result = try? await Subprocess.run(
+            executable: "/bin/zsh",
+            arguments: ["-lic", #"printf '%s\n' "$PATH""#],
+            environment: childEnvironment(binaryDirectory: nil, loginPath: nil),
+            timeout: .seconds(10)
+        )
+        guard let result, result.succeeded, let path = loginPath(fromShellOutput: result.stdout) else {
+            log.warning("no PATH from the login shell; children get the launcher's")
+            return nil
+        }
+        loginPathCache.withLock { $0 = path }
+        return path
+    }
+
+    /// The last non-empty line of a login shell's output, when it looks like
+    /// a PATH; profile scripts may print before it.
+    static func loginPath(fromShellOutput output: String) -> String? {
+        let line = output.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { !$0.isEmpty }
+        guard let line, line.hasPrefix("/") else { return nil }
+        return line
+    }
+
     /// A minimal environment for agent-deck children: never the launching
     /// shell's `TMUX`/`AGENTDECK_*`, which would make `session attach` nest or
     /// misattribute the caller. The chosen binary's directory leads PATH so a
     /// re-exec by name (hooks, tmux-side helpers) lands on the same build.
-    /// `inherited` is the launcher's environment, Bosun's own by default.
+    /// A tmux server started from this environment gives its PATH to every
+    /// pane, so the login shell's PATH comes next. `inherited` is the
+    /// launcher's environment, Bosun's own by default.
     static func childEnvironment(
         binaryDirectory: String?,
-        inherited: [String: String] = ProcessInfo.processInfo.environment
+        inherited: [String: String] = ProcessInfo.processInfo.environment,
+        loginPath: String? = AgentDeckCLI.loginPathCache.withLock { $0 }
     ) -> [String: String] {
         let directories = [binaryDirectory].compactMap { $0 }
+            + (loginPath ?? "").split(separator: ":").map(String.init)
             + (inherited["PATH"] ?? "").split(separator: ":").map(String.init)
             + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         var seen = Set<String>()
@@ -199,8 +227,8 @@ public actor AgentDeckCLI {
         return environment
     }
 
-    /// `name` on the child environment's PATH, which already includes the
-    /// package-manager prefixes a GUI launch would otherwise miss.
+    /// `name` on the child environment's PATH, which includes the login
+    /// shell's PATH.
     static func executablePath(named name: String) throws -> String {
         let path = (childEnvironment(binaryDirectory: nil)["PATH"] ?? "").split(separator: ":").lazy
             .map { "\($0)/\(name)" }

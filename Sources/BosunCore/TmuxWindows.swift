@@ -118,8 +118,7 @@ extension AgentDeckCLI {
     }
 
     /// tmux as the agent-deck binary's children see it: PATH lookup in the
-    /// child environment, which already includes the package-manager
-    /// prefixes a GUI launch would otherwise miss.
+    /// child environment, which includes the login shell's PATH.
     func tmux(_ arguments: [String]) async throws -> ProcessResult {
         try await Subprocess.run(
             executable: try Self.tmuxPath(), arguments: arguments,
