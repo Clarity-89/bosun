@@ -85,6 +85,14 @@ struct MainWindowView: View {
         .navigationTitle(titleText)
         .toolbar {
             if model.tab == .sessions, let selected = model.selectedSession {
+                // Before the links, and apart from them: what to ask the
+                // agent for, then what it has made.
+                ToolbarItemGroup(placement: .primaryAction) {
+                    AgentRequestButtons(model: model, session: selected)
+                }
+                // Outlined buttons on their own, with no glass behind the outline.
+                .sharedBackgroundVisibility(.hidden)
+                ToolbarSpacer(.fixed, placement: .primaryAction)
                 ToolbarItemGroup(placement: .primaryAction) {
                     GitHubToolbarLinks(github: model.inbox[selected])
                 }

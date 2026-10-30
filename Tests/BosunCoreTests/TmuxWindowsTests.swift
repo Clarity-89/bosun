@@ -33,3 +33,24 @@ import Testing
         #expect(SessionWindow.parse(listOutput: "").isEmpty)
     }
 }
+
+/// `tmux list-panes -F` lines in `AgentDeckCLI.paneFormat`: id, active,
+/// command. The request goes to the active pane unless a shell prompt
+/// waits there; nil leaves it to the top-left pane.
+@Suite struct AgentPaneChoiceTests {
+    @Test func theActivePaneTakesItWhileAProgramRunsThere() {
+        let output = "%1\t0\tnode\n%4\t1\tnode\n"
+        #expect(AgentDeckCLI.agentPane(listOutput: output) == "%4")
+    }
+
+    @Test(arguments: ["zsh", "bash", "fish", "login"])
+    func aShellPromptInTheActivePaneLeavesItToTheTopLeft(shell: String) {
+        let output = "%1\t0\tnode\n%4\t1\t\(shell)\n"
+        #expect(AgentDeckCLI.agentPane(listOutput: output) == nil)
+    }
+
+    @Test func noActivePaneLeavesItToTheTopLeft() {
+        #expect(AgentDeckCLI.agentPane(listOutput: "%1\t0\tnode\n") == nil)
+        #expect(AgentDeckCLI.agentPane(listOutput: "") == nil)
+    }
+}

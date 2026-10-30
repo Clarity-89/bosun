@@ -24,6 +24,16 @@ extension PullRequestState {
     }
 }
 
+extension AgentRequest {
+    /// GitHub's colour for what the request ends in: a merge, an open pull request.
+    var color: Color {
+        switch self {
+        case .mergeMain: PullRequestState.merged.color
+        case .submitPullRequest: PullRequestState.open.color
+        }
+    }
+}
+
 extension IssueState {
     var symbol: String {
         switch self {

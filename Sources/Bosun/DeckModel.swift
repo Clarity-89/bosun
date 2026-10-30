@@ -541,6 +541,18 @@ final class DeckModel {
         }
     }
 
+    /// Types the request into the session's agent, which carries it out as
+    /// it would one you typed. A session without a tmux server has no agent
+    /// to ask.
+    func ask(_ request: AgentRequest, of session: DeckSession) {
+        guard let tmuxSession = session.tmuxSession else { return }
+        run(request.title) { [cli] in
+            // The space after the command closes the agent's completion
+            // list, so Return submits the line rather than completing it.
+            try await cli.typeIntoAgent(request.command + " ", tmuxSession: tmuxSession)
+        }
+    }
+
     /// The session's view when Bosun has one, whose current window is the
     /// one Bosun shows; else agent-deck's session.
     private func shellTarget(_ session: DeckSession) -> String? {
