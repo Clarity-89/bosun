@@ -85,11 +85,12 @@ struct MainWindowView: View {
         .navigationTitle(titleText)
         .toolbar {
             if model.tab == .sessions, let selected = model.selectedSession {
+                let github = model.inbox[selected]
                 // Before the links: what to ask the agent for, then what it
                 // has made. A stopped session has no agent to ask.
                 if selected.status != .stopped {
                     ToolbarItemGroup(placement: .primaryAction) {
-                        ForEach(AgentRequest.allCases, id: \.self) { request in
+                        ForEach(AgentRequest.requests(for: github.branch.pullRequest), id: \.self) { request in
                             Button(request.title) { model.ask(request, of: selected) }
                                 .help(request.help)
                         }
@@ -97,7 +98,7 @@ struct MainWindowView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
-                    GitHubToolbarLinks(github: model.inbox[selected])
+                    GitHubToolbarLinks(github: github)
                 }
                 // In a grouping of their own, apart from the actions beside
                 // them: they say what the session works on, they do nothing to it.

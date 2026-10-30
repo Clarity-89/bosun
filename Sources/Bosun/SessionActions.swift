@@ -24,7 +24,7 @@ struct SessionActionItems: View {
             Button("Open in Ghostty", action: perform(session, model.openInGhostty)).shortcut(.openInGhostty)
             Divider()
             if session?.status != .stopped {
-                ForEach(AgentRequest.allCases, id: \.self) { request in
+                ForEach(AgentRequest.requests(for: session.flatMap { model.inbox[$0].branch.pullRequest }), id: \.self) { request in
                     Button(request.menuTitle, action: perform(session) { model.ask(request, of: $0) })
                 }
                 Divider()
