@@ -268,7 +268,7 @@ final class DeckModel {
     /// pane goes away. A stopped session gets Restart instead, as its attach
     /// would exit at once. Every other status attaches: `error` can be an
     /// agent that is alive but blocked, and an attach that finds nothing
-    /// falls back to Restart through `paneExited`. A group row leaves the
+    /// restarts the session through `paneExited`. A group row leaves the
     /// pane as it is.
     func select(_ item: SidebarItem?) {
         selection = item
@@ -281,7 +281,7 @@ final class DeckModel {
         if let live = recent.touch(target.sessionID) {
             showWindow(target.windowID, in: live)
         } else if sessions.first(where: { $0.id == target.sessionID })?.status != .stopped {
-            attach(target)
+            attach(target, restartsIfDead: true)
         }
         shownChanged()
     }
@@ -353,8 +353,8 @@ final class DeckModel {
 
     /// Opens a terminal for the target's session, which the pane shows
     /// meanwhile, and keeps it with the recent ones, unless the pane moved
-    /// on while tmux answered.
-    private func attach(_ target: PaneTarget) {
+    /// on while tmux answered. `restartsIfDead` goes on the pane.
+    private func attach(_ target: PaneTarget, restartsIfDead: Bool = false) {
         guard let binary else {
             lastError = "agent-deck is still starting"
             return
@@ -363,7 +363,7 @@ final class DeckModel {
         guard attachingSessionIDs.insert(sessionID).inserted else { return }
         let tmuxSession = sessions.first { $0.id == sessionID }?.tmuxSession
         Task {
-            let live = await openPane(sessionID: sessionID, tmuxSession: tmuxSession, window: target.windowID, binary: binary)
+            let live = await openPane(sessionID: sessionID, tmuxSession: tmuxSession, window: target.windowID, binary: binary, restartsIfDead: restartsIfDead)
             attachingSessionIDs.remove(sessionID)
             guard shownSessionID == sessionID else {
                 end(live)
@@ -389,7 +389,7 @@ final class DeckModel {
     /// else is on that window. A session tmux's default server does not have
     /// attaches through agent-deck instead, which knows its socket; so does
     /// every session on a tmux older than 3.2.
-    private func openPane(sessionID: String, tmuxSession: String?, window: String?, binary: AgentDeckBinary) async -> AttachedPane {
+    private func openPane(sessionID: String, tmuxSession: String?, window: String?, binary: AgentDeckBinary, restartsIfDead: Bool) async -> AttachedPane {
         let id = UUID()
         if let tmuxSession {
             let view = ViewSession.name(paneID: id)
@@ -398,7 +398,7 @@ final class DeckModel {
                 try? await cli.selectWindow(window, inView: view)
                 let yields = await cli.someoneElseOnWindow(ofView: view)
                 let launch = try cli.viewAttachLaunch(view, yieldsSize: yields)
-                return AttachedPane(id: id, sessionID: sessionID, view: view, launch: launch, yieldsSize: yields)
+                return AttachedPane(id: id, sessionID: sessionID, view: view, launch: launch, yieldsSize: yields, restartsIfDead: restartsIfDead)
             } catch {
                 await cli.killView(view)
                 logger.info("no view of \(tmuxSession, privacy: .public), attaching through agent-deck: \(error.localizedDescription, privacy: .public)")
@@ -407,7 +407,10 @@ final class DeckModel {
         if let window {
             try? await cli.selectWindow(windowID: window)
         }
-        return AttachedPane(id: id, sessionID: sessionID, view: nil, launch: binary.attachLaunch(sessionID: sessionID), yieldsSize: false)
+        return AttachedPane(
+            id: id, sessionID: sessionID, view: nil, launch: binary.attachLaunch(sessionID: sessionID), yieldsSize: false,
+            restartsIfDead: restartsIfDead
+        )
     }
 
     /// Its terminal goes with it once it leaves `recent`; the view would
@@ -596,9 +599,10 @@ final class DeckModel {
 
     /// One action per session at a time; the list reloads after it, so the
     /// row changes even before the bus reports it. `done` runs once it
-    /// succeeds, before the reload. A deleted session's pane goes with its
-    /// tmux client, through `paneExited`, or with the list that no longer
-    /// has it.
+    /// succeeds, after the reload, so it sees the session as agent-deck now
+    /// lists it: a restart gives it a new tmux session. A deleted session's
+    /// pane goes with its tmux client, through `paneExited`, or with the list
+    /// that no longer has it.
     private func lifecycle(
         _ label: String,
         _ session: DeckSession,
@@ -608,8 +612,8 @@ final class DeckModel {
         guard busySessionIDs.insert(session.id).inserted else { return }
         run(label, operation) { [weak self] in
             logger.info("\(label, privacy: .public) \(session.id, privacy: .public) done")
-            done?()
             await self?.refresh()
+            done?()
         } finally: { [weak self] in
             self?.busySessionIDs.remove(session.id)
         }
@@ -619,10 +623,15 @@ final class DeckModel {
         recent.update(paneID) { $0.title = title }
     }
 
+    func paneFocusChanged(paneID: UUID, focused: Bool) {
+        recent.update(paneID) { $0.hasKeyboard = focused }
+    }
+
     /// The tmux client ended. A tmux detach or a stop closes the pane; the
     /// agent itself is untouched. An attach that ended at once found nothing
-    /// to attach to, whatever the row said, so the pane offers to restart the
-    /// session and the list catches up. A hidden pane just goes.
+    /// to attach to, whatever the row said: a session you switched to
+    /// restarts, one attached after a restart or a recreate offers Restart,
+    /// and the list catches up. A hidden pane just goes.
     func paneExited(paneID: UUID, exit: ProcessExit) {
         guard let ended = recent.remove(paneID) else { return }
         end(ended)
@@ -633,6 +642,9 @@ final class DeckModel {
             logger.info("pane for \(ended.sessionID, privacy: .public) exited")
         case .abnormal:
             logger.info("attach to \(ended.sessionID, privacy: .public) ended at once")
+            if ended.restartsIfDead, let session = sessions.first(where: { $0.id == ended.sessionID }), session.status != .stopped {
+                restartSession(session)
+            }
             Task { await refresh() }
         }
     }
@@ -796,8 +808,11 @@ final class DeckModel {
             scheduleRefresh()
             return
         }
-        // `from` is missing, or empty, on a session's first status.
-        let from = change.from.flatMap { $0 == .unknown ? nil : $0 } ?? sessions[index].status
+        // Against the row, not the frame's `from`: a list can report a change
+        // first. After a reboot the first list finds every session dead
+        // before agent-deck's status pass publishes it.
+        let from = sessions[index].status
+        guard change.to != from else { return }
         sessions[index].status = change.to
         // The bus carries no substate, and the old one described the previous status.
         sessions[index].substate = nil

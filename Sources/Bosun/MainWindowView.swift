@@ -14,6 +14,7 @@ struct MainWindowView: View {
     /// The Inbox row whose detail covers the terminals.
     @State private var inboxSelection: String?
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -62,6 +63,9 @@ struct MainWindowView: View {
                 ToolbarItemGroup(placement: .primaryAction) {
                     GitHubToolbarLinks(github: model.inbox[selected])
                 }
+                // In a grouping of their own, apart from the actions beside
+                // them: they say what the session works on, they do nothing to it.
+                .sharedBackgroundVisibility(.hidden)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -105,12 +109,11 @@ struct MainWindowView: View {
         return "\(shown.title) · \(title)"
     }
 
-    /// The sidebar's two lists; Inbox counts what asks for your review.
+    /// The sidebar's two lists.
     private var tabPicker: some View {
-        let reviews = model.inbox.inbox?.reviewRequests.total ?? 0
-        return Picker("List", selection: $model.tab) {
+        Picker("List", selection: $model.tab) {
             Text("Sessions").tag(SidebarTab.sessions)
-            Text(reviews > 0 ? "Inbox \(reviews)" : "Inbox").tag(SidebarTab.inbox)
+            Text("Inbox").tag(SidebarTab.inbox)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -264,6 +267,7 @@ struct MainWindowView: View {
     /// Every live pane stays in the view tree, hidden unless shown, so its
     /// tmux client outlives a switch and showing it again is instant. The
     /// terminal being opened shows a spinner; a session without one, Restart.
+    /// Over a shown terminal, `keyboardHint` says when typing would miss it.
     private var detail: some View {
         let shown = model.attachedPane?.id
         return ZStack {
@@ -275,8 +279,11 @@ struct MainWindowView: View {
                         model.paneReceivedInput(paneID: live.id)
                     } onExit: { exit in
                         model.paneExited(paneID: live.id, exit: exit)
+                    } onFocusChange: { focused in
+                        model.paneFocusChanged(paneID: live.id, focused: focused)
                     }
                 }
+                KeyboardElsewhereHint(message: keyboardHint)
                 if shown == nil {
                     if model.isAttaching {
                         ProgressView()
@@ -301,6 +308,18 @@ struct MainWindowView: View {
         }
     }
 
+    /// Why typing would not reach the shown terminal, and how to type in it;
+    /// nil while it would. The first click on a window in the background only
+    /// brings it forward, so the keyboard then stays where it was.
+    private var keyboardHint: String? {
+        guard let shown = model.attachedPane, model.tab == .sessions else { return nil }
+        guard controlActiveState == .key else { return "Click to type here" }
+        guard !shown.hasKeyboard else { return nil }
+        // Return hands the keyboard over from the list; elsewhere only the menu shortcut does.
+        let key = sidebarFocused ? Shortcut.activate.listKeyLabel : Shortcut.focusTerminal.menuLabel
+        return "Press \(key) or click to type here"
+    }
+
     private var footer: some View {
         VStack(alignment: .leading, spacing: 4) {
             StatusNotices(model: model)
@@ -310,6 +329,28 @@ struct MainWindowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(.bar)
+    }
+}
+
+/// Over a shown terminal that typing would miss: a dimmed pane and how to
+/// type in it. Clicks pass through, so a click lands in the terminal and
+/// gives it the keyboard, as it always has.
+private struct KeyboardElsewhereHint: View {
+    let message: String?
+
+    var body: some View {
+        ZStack {
+            if let message {
+                Color.black.opacity(0.35)
+                Label(message, systemImage: "keyboard")
+                    .font(.callout)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: .capsule)
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.15), value: message)
     }
 }
 
@@ -336,10 +377,11 @@ private struct NotRunningPane: View {
     }
 }
 
-/// A sidebar row: highlighted on hover, with Rename, Delete and the drag
-/// handle fading in at the trailing edge so the common actions need no
-/// context menu. They take room only while shown, so the subtitle uses the
-/// full width otherwise.
+/// A sidebar row: highlighted on hover, with the drag handle fading in at
+/// the leading edge and Rename and Delete in a plate over the end of the
+/// text, so the common actions need no context menu and nothing moves
+/// when they show. The chip comes after the text, so the plate never
+/// covers it.
 @MainActor
 private struct SidebarSessionRow: View {
     let model: DeckModel
@@ -347,22 +389,28 @@ private struct SidebarSessionRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        let github = model.inbox[session]
+        return HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention[session], github: model.inbox[session])
-            Spacer(minLength: 0)
-            if isHovered {
-                HStack(spacing: 4) {
-                    RowActionButton(systemImage: "pencil", help: "Rename (\(Shortcut.rename.listKeyLabel))") {
-                        SessionPrompts.rename(session, model: model)
-                    }
-                    RowActionButton(systemImage: "trash", help: "Delete (\(Shortcut.delete.listKeyLabel))", destructive: true) {
-                        SessionPrompts.confirmDelete(session, model: model)
+            SessionRow(session: session, attention: model.attention[session], github: github)
+                .overlay(alignment: .trailing) {
+                    if isHovered {
+                        HStack(spacing: 4) {
+                            RowActionButton(systemImage: "pencil", help: "Rename (\(Shortcut.rename.listKeyLabel))") {
+                                SessionPrompts.rename(session, model: model)
+                            }
+                            RowActionButton(systemImage: "trash", help: "Delete (\(Shortcut.delete.listKeyLabel))", destructive: true) {
+                                SessionPrompts.confirmDelete(session, model: model)
+                            }
+                        }
+                        .padding(2)
+                        // Material reads over the hover plate and the selection alike.
+                        .background(.regularMaterial, in: .rect(cornerRadius: 7))
+                        .disabled(model.busySessionIDs.contains(session.id))
+                        .transition(.opacity)
                     }
                 }
-                .disabled(model.busySessionIDs.contains(session.id))
-                .transition(.opacity)
-            }
+            BranchChip(branch: github.branch)
         }
         .modifier(SidebarHover(isHovered: $isHovered))
     }
@@ -440,9 +488,10 @@ private struct RowActionButton: View {
     }
 }
 
-/// Bold with a dot while something in the session is unread; an open
-/// question turns its status dot orange. The issue it works on follows its
-/// status; its branch's pull request sits at the trailing edge.
+/// Bold with a ring round its status dot while something in the session is
+/// unread; an open question turns the dot orange. The issue it works on
+/// follows its status. The text takes the room left in its row, so what a
+/// row puts after it stays put.
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
@@ -450,7 +499,7 @@ struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            StatusBadge(status: session.status, asks: attention.asks)
+            StatusBadge(status: session.status, asks: attention.asks, unread: attention.unread)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title)
                     .fontWeight(attention.unread ? .semibold : nil)
@@ -466,34 +515,33 @@ struct SessionRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            Spacer(minLength: 4)
-            if attention.unread {
-                Circle()
-                    .fill(.tint)
-                    .frame(width: 7, height: 7)
-                    .accessibilityLabel("Unread")
-            }
-            BranchChip(branch: github.branch)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // With the row's spacing, the gap a spacer kept before the chip.
+            .padding(.trailing, 12)
         }
-        // What GitHub says fades in over its placeholder.
-        .animation(.easeOut(duration: 0.25), value: github)
         // The full text when the row is too narrow for it.
         .help(help)
+        // What GitHub says about the issue fades in over its placeholder.
+        .animation(.easeOut(duration: 0.25), value: github)
     }
 
+    /// The dot alone says Running and Idle, so the row leaves those words to
+    /// its tooltip; At prompt shares Idle's dot, and the rest differ by colour only.
     private var subtitle: String {
+        describe(withStatus: session.status != .running && session.status != .idle)
+    }
+
+    /// The tool, then what needs you, else the status and its substate.
+    private func describe(withStatus: Bool) -> String {
         let tool = session.tool.isEmpty ? "agent" : session.tool
         if let summary = attention.summary {
             return "\(tool) · \(summary)"
         }
-        if let substate = session.substate {
-            return "\(tool) · \(session.status.label) · \(substate)"
-        }
-        return "\(tool) · \(session.status.label)"
+        return [tool, withStatus ? session.status.label : nil, session.substate].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var help: String {
-        var lines = [session.title, subtitle]
+        var lines = [session.title, describe(withStatus: true)]
         if let issue = github.issue {
             lines.append(issue.summary)
         }

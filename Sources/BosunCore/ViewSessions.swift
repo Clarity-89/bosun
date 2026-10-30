@@ -82,7 +82,12 @@ extension AgentDeckCLI {
     public func createView(_ view: String, grouping tmuxSession: String) async throws {
         let version = try await tmuxVersion()
         guard version >= ViewSession.minimumTmux else { throw ViewSessionError.tmuxTooOld(version) }
-        try await tmux(["new-session", "-d", "-t", "=\(tmuxSession)", "-s", view]).checkSucceeded()
+        // `new-session -t` given a name no session has starts a group of that
+        // name around a fresh shell. In one command list a failed
+        // `has-session` stops tmux before `new-session`.
+        try await tmux([
+            "has-session", "-t", "=\(tmuxSession)", ";", "new-session", "-d", "-t", "=\(tmuxSession)", "-s", view,
+        ]).checkSucceeded()
     }
 
     /// Shows `windowID` in the view, or the agent's window, tmux's first.

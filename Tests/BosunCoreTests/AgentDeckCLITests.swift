@@ -106,14 +106,42 @@ import Testing
     @Test func binaryDirectoryLeadsPathAndPackageManagerPrefixesFollow() {
         let environment = AgentDeckCLI.childEnvironment(
             binaryDirectory: "/Users/me/.local/bin",
-            inherited: ["PATH": "/usr/bin:/custom:/Users/me/.local/bin"]
+            inherited: ["PATH": "/usr/bin:/custom:/Users/me/.local/bin"],
+            loginPath: nil
         )
         #expect(environment["PATH"] == "/Users/me/.local/bin:/usr/bin:/custom:/opt/homebrew/bin:/usr/local/bin:/bin:/usr/sbin:/sbin")
     }
 
+    /// A tmux server Bosun starts hands this PATH to every pane, and
+    /// agent-deck runs the tool as the pane's first process, so a tool the
+    /// login shell finds must be on it.
+    @Test func loginShellPathFollowsTheBinaryDirectory() {
+        let environment = AgentDeckCLI.childEnvironment(
+            binaryDirectory: "/Users/me/.local/bin",
+            inherited: ["PATH": "/usr/bin:/bin"],
+            loginPath: "/Users/me/.bun/bin:/opt/homebrew/bin:/usr/bin"
+        )
+        #expect(environment["PATH"] == "/Users/me/.local/bin:/Users/me/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin")
+    }
+
+    /// Profile scripts print before the marked line, `.zlogout` after it.
+    @Test func loginPathIsTheMarkedLine() {
+        #expect(AgentDeckCLI.loginPath(fromShellOutput: "Last login: Fri\nBOSUN_PATH=/Users/me/.bun/bin:/usr/bin\nBye\n") == "/Users/me/.bun/bin:/usr/bin")
+        #expect(AgentDeckCLI.loginPath(fromShellOutput: "/Users/me/.bun/bin:/usr/bin\n") == nil)
+        #expect(AgentDeckCLI.loginPath(fromShellOutput: "BOSUN_PATH=\n") == nil)
+        #expect(AgentDeckCLI.loginPath(fromShellOutput: "zsh: command not found: pyenv\n") == nil)
+    }
+
+    /// `binary()` probes every copy on the child PATH; `tmux`, `gh` and `git`
+    /// run as the first.
+    @Test func executablePathsSkipDirectoriesWithoutTheName() {
+        let found = Array(AgentDeckCLI.executablePaths(named: "sh", environment: ["PATH": "/nonexistent:/bin:/usr/bin"]))
+        #expect(found == ["/bin/sh"])
+    }
+
     /// A LaunchServices launch carries little more than `USER` and `HOME`.
     @Test func fallsBackWhenTheLauncherIsSparse() {
-        let environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil, inherited: ["USER": "me"])
+        let environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil, inherited: ["USER": "me"], loginPath: nil)
         #expect(environment["LOGNAME"] == "me")
         #expect(environment["SHELL"] == "/bin/zsh")
         #expect(environment["LANG"] == "en_US.UTF-8")

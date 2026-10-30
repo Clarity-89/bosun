@@ -14,6 +14,8 @@ struct TerminalHost: NSViewRepresentable {
     /// A key, click or scroll in the terminal.
     let onInput: () -> Void
     let onExit: (ProcessExit) -> Void
+    /// The keyboard came into the terminal, or left it.
+    let onFocusChange: (Bool) -> Void
 
     final class Coordinator {
         var handledFocusRequest: Int
@@ -30,6 +32,7 @@ struct TerminalHost: NSViewRepresentable {
         pane.onTitleChange = onTitleChange
         pane.onInput = onInput
         pane.onProcessExit = onExit
+        pane.onFocusChange = onFocusChange
         pane.yieldsKeyEquivalent = { Shortcut.menuAction(for: $0) != nil }
         return pane
     }

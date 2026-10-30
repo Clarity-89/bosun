@@ -37,6 +37,8 @@ class SurfaceView: NSView {
     var onProcessExit: ((ProcessExit) -> Void)?
     /// BOSUN: a key, click or scroll in the terminal, before the engine gets it.
     var onInput: (() -> Void)?
+    /// BOSUN: the keyboard came into the terminal, or left it.
+    var onFocusChange: ((Bool) -> Void)?
 
     func applyTitle(_ value: String) {
         title = value
@@ -196,6 +198,9 @@ class SurfaceView: NSView {
         self.layer = metalLayer
 
         // BOSUN: Calyx observed its smooth-scroll setting here; Bosun has no such setting.
+
+        // BOSUN: Calyx did not take drops; see SurfaceView+Drops.swift.
+        registerForDraggedTypes(Self.dropTypes)
     }
 
     /// Initialize the ghostty surface for this view.
@@ -347,6 +352,7 @@ class SurfaceView: NSView {
         if passwordInput {
             SecureInput.shared.setScoped(ObjectIdentifier(self), focused: newFocused)
         }
+        onFocusChange?(newFocused) // BOSUN
     }
 
     // MARK: - Cursor Shape

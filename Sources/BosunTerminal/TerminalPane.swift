@@ -27,6 +27,8 @@ public final class TerminalPane: NSView {
     /// A key typed, or a click or scroll, in the terminal; ⌘ keys go to the
     /// menu bar or the engine's keybinds and are not reported.
     public var onInput: (() -> Void)?
+    /// The keyboard came into the terminal, or left it.
+    public var onFocusChange: ((Bool) -> Void)?
 
     private let command: String
     private let environment: [String: String]
@@ -56,6 +58,7 @@ public final class TerminalPane: NSView {
         surfaceView.onTitleChange = { [weak self] title in self?.onTitleChange?(title) }
         surfaceView.onProcessExit = { [weak self] exit in self?.onProcessExit?(exit) }
         surfaceView.onInput = { [weak self] in self?.onInput?() }
+        surfaceView.onFocusChange = { [weak self] focused in self?.onFocusChange?(focused) }
     }
 
     @available(*, unavailable)
