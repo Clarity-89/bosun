@@ -1,4 +1,7 @@
 @preconcurrency import Foundation
+import os
+
+private let gitHubLog = Logger(subsystem: "com.bosun.Bosun", category: "GitHub")
 
 public enum GitHubCLIError: Error, LocalizedError, Equatable, Sendable {
     case notInstalled
@@ -39,10 +42,32 @@ public struct GitHubCLI: Sendable {
         return try GitHubQueries.decodeIssues(try await run(GitHubQueries.issues(refs)), count: refs.count)
     }
 
+    /// Up to three more tries, 1 s, 2 s and 4 s apart: gh often cannot reach
+    /// GitHub for a moment, as while the network comes up at launch.
+    private static let backoff = Backoff()
+
+    private func run(_ request: GraphQLRequest) async throws -> Data {
+        try await Self.backoff.run(retrying: Self.isTransient, onRetry: { error, delay in
+            gitHubLog.info("GitHub request failed, retrying in \(delay, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }) {
+            try await attempt(request)
+        }
+    }
+
+    /// What another try can fix: gh not reaching GitHub (a dial timeout, a
+    /// 502) or not finishing in time. A missing gh or sign-in stays missing,
+    /// and an answer GitHub gave, errors and all, is its answer.
+    static func isTransient(_ error: any Error) -> Bool {
+        switch error {
+        case GitHubCLIError.failed, SubprocessError.timedOut: true
+        default: false
+        }
+    }
+
     /// gh exits non-zero when GitHub answers with errors, partial data
     /// included; any JSON on stdout goes to the decoder, which keeps what
     /// came.
-    private func run(_ request: GraphQLRequest) async throws -> Data {
+    private func attempt(_ request: GraphQLRequest) async throws -> Data {
         guard let gh = try? AgentDeckCLI.executablePath(named: "gh") else { throw GitHubCLIError.notInstalled }
         let result = try await Subprocess.run(
             executable: gh, arguments: request.arguments, environment: Self.environment(), timeout: .seconds(30)
