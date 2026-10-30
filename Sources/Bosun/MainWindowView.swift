@@ -139,18 +139,17 @@ struct MainWindowView: View {
                     case .group(let group, let expanded):
                         // A row, not a Section header, so arrows and Tab reach it as
                         // they reach a group in the TUI.
-                        GroupRow(
-                            name: group.name, isExpanded: expanded,
-                            onDelete: model.canDelete(group) ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
-                        ) { animated { model.toggleGroup(group.name) } }
+                        let deleteGroup: (() -> Void)? = model.canDeleteGroup(group)
+                            ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
+                        GroupRow(name: group.name, isExpanded: expanded, onDelete: deleteGroup) { animated { model.toggleGroup(group.name) } }
                             .tag(row.item)
                             .listRowInsets(.leading, Self.rowLeadingInset)
                             .contextMenu {
                                 Button("New Session…") { model.promptNewSession(inGroup: group.name) }
                                 Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
-                                if model.canDelete(group) {
+                                if let deleteGroup {
                                     Divider()
-                                    Button("Delete Group…", role: .destructive) { SessionPrompts.confirmDeleteGroup(group, model: model) }
+                                    Button("Delete Group…", role: .destructive, action: deleteGroup)
                                 }
                             }
                     case .session(let session):
@@ -247,7 +246,7 @@ struct MainWindowView: View {
         case (.stop, _):
             if let session, session.status != .stopped { SessionPrompts.confirmStop(session, model: model) }
         case (.delete, .group(let name)?):
-            if let group = model.groups.first(where: { $0.name == name }), model.canDelete(group) {
+            if let group = model.groups.first(where: { $0.name == name }), model.canDeleteGroup(group) {
                 SessionPrompts.confirmDeleteGroup(group, model: model)
             }
         case (.delete, _):
@@ -528,7 +527,7 @@ struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
     let github: SessionGitHub
-    var action: SessionAction?
+    var action: LifecycleAction?
 
     var body: some View {
         HStack(spacing: 8) {

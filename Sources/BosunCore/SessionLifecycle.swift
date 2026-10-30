@@ -42,16 +42,10 @@ extension AgentDeckCLI {
         _ = try await run(["session", "remove", id, "--force", "--prune-worktree", "--json"])
     }
 
-    /// Deletes every session in the group and its subgroups, archived ones
-    /// included, as `deleteSession` does one, then the group and its
-    /// subgroups. A failure stops it there: what is left keeps its group.
-    /// agent-deck refuses the default group.
+    /// Deletes the group and its subgroups. Sessions still in them move up
+    /// a level rather than failing the delete, so delete them first with
+    /// `deleteSession`. agent-deck refuses the default group.
     public func deleteGroup(path: String) async throws {
-        for session in try await list() where session.isIn(groupTree: path) {
-            try await deleteSession(id: session.id)
-        }
-        // Forced, so a session added meanwhile moves up a level rather than
-        // failing the delete.
         _ = try await run(["group", "delete", path, "--force", "--json"])
     }
 }

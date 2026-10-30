@@ -134,9 +134,10 @@ enum SessionPrompts {
         ) { model.deleteSession(session) }
     }
 
-    /// As Delete asks for one session, for all of the group's at once.
+    /// As Delete asks for one session, for all of the group's at once; the
+    /// count is what `deleteGroup` deletes, archived ones included.
     static func confirmDeleteGroup(_ group: SessionGroup, model: DeckModel) {
-        let count = model.sessionCount(inGroupTree: group.path)
+        let count = model.sessions(inGroupTree: group.path).count
         confirm(
             "Delete the group “\(group.name)” and its \(count == 1 ? "session" : "\(count) sessions")?",
             "Every session in it and its subgroups goes, archived ones included. Each stops all of its processes, deletes its git worktree if it has one and no other session works in it, uncommitted changes included, and leaves agent-deck. The agents' own conversation files are kept.",
