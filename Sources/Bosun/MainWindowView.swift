@@ -287,7 +287,7 @@ struct MainWindowView: View {
                         }
                     }
                 }
-                KeyboardElsewhereHint(hint: keyboardHint)
+                KeyboardElsewhereHint(message: keyboardHint)
                 if shown == nil {
                     if model.isAttaching {
                         ProgressView()
@@ -313,17 +313,15 @@ struct MainWindowView: View {
     }
 
     /// Why typing would not reach the shown terminal, and how to type in it;
-    /// nil while it would. With keys going to another window or app there is
-    /// no dimming, which would only make a session watched from there harder
-    /// to read. The first click on this window only brings it forward, so the
-    /// keyboard then stays where it was.
-    private var keyboardHint: KeyboardHint? {
+    /// nil while it would. The first click on a window in the background only
+    /// brings it forward, so the keyboard then stays where it was.
+    private var keyboardHint: String? {
         guard let shown = model.attachedPane?.id, model.tab == .sessions else { return nil }
-        guard controlActiveState == .key else { return KeyboardHint(dims: false, message: "Click to type here") }
+        guard controlActiveState == .key else { return "Click to type here" }
         guard shown != keyboardPaneID else { return nil }
         // Return hands the keyboard over from the list; elsewhere only the menu shortcut does.
         let key = sidebarFocused ? Shortcut.activate.listKeyLabel : Shortcut.focusTerminal.menuLabel
-        return KeyboardHint(dims: true, message: "Press \(key) or click to type here")
+        return "Press \(key) or click to type here"
     }
 
     private var footer: some View {
@@ -338,33 +336,25 @@ struct MainWindowView: View {
     }
 }
 
-/// What `KeyboardElsewhereHint` shows: a message, over a dimmed pane or not.
-private struct KeyboardHint: Equatable {
-    let dims: Bool
-    let message: String
-}
-
-/// Over a shown terminal that typing would miss: the hint, over a dimmed
-/// pane while the keyboard is elsewhere in this window. Clicks pass through,
-/// so a click lands in the terminal and gives it the keyboard, as it always
-/// has.
+/// Over a shown terminal that typing would miss: a dimmed pane and how to
+/// type in it. Clicks pass through, so a click lands in the terminal and
+/// gives it the keyboard, as it always has.
 private struct KeyboardElsewhereHint: View {
-    let hint: KeyboardHint?
+    let message: String?
 
     var body: some View {
         ZStack {
-            Color.black.opacity(hint?.dims == true ? 0.35 : 0)
-            if let hint {
-                Label(hint.message, systemImage: "keyboard")
+            if let message {
+                Color.black.opacity(0.35)
+                Label(message, systemImage: "keyboard")
                     .font(.callout)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(.regularMaterial, in: .capsule)
-                    .transition(.opacity)
             }
         }
         .allowsHitTesting(false)
-        .animation(.easeOut(duration: 0.15), value: hint)
+        .animation(.easeOut(duration: 0.15), value: message)
     }
 }
 
