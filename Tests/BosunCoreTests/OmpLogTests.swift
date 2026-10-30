@@ -32,14 +32,14 @@ import Testing
     @Test func skipsALineCutShort() {
         let log = Self.lines([
             #"{"type":"custom","data":"#,
-            #"{"type":"message","message":{"role":"user","content":"https://github.com/grafana/grafana/issues/136268"}}"#,
+            #"{"type":"message","message":{"role":"user","content":"https://github.com/octo-org/octo-repo/issues/136268"}}"#,
         ])
         #expect(OmpLog.firstIssue(inLog: log)?.number == 136268)
     }
 
     @Test(arguments: [
         ("/Users/me/dev/agent-deck", "/Users/me/.omp/agent/sessions/-dev-agent-deck"),
-        ("/Users/me/dev/worktrees/grafana/alexk/git-sync-sdk", "/Users/me/.omp/agent/sessions/-dev-worktrees-grafana-alexk-git-sync-sdk"),
+        ("/Users/me/dev/worktrees/octo-repo/me/feature", "/Users/me/.omp/agent/sessions/-dev-worktrees-octo-repo-me-feature"),
         ("/Users/me/.omp/wt/wt-20261013", "/Users/me/.omp/agent/sessions/-.omp-wt-wt-20261013"),
     ])
     func findsOmpsFolderForASession(path: String, folder: String) {
