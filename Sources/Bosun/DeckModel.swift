@@ -363,8 +363,7 @@ final class DeckModel {
         guard attachingSessionIDs.insert(sessionID).inserted else { return }
         let tmuxSession = sessions.first { $0.id == sessionID }?.tmuxSession
         Task {
-            var live = await openPane(sessionID: sessionID, tmuxSession: tmuxSession, window: target.windowID, binary: binary)
-            live.restartsIfDead = restartsIfDead
+            let live = await openPane(sessionID: sessionID, tmuxSession: tmuxSession, window: target.windowID, binary: binary, restartsIfDead: restartsIfDead)
             attachingSessionIDs.remove(sessionID)
             guard shownSessionID == sessionID else {
                 end(live)
@@ -390,7 +389,7 @@ final class DeckModel {
     /// else is on that window. A session tmux's default server does not have
     /// attaches through agent-deck instead, which knows its socket; so does
     /// every session on a tmux older than 3.2.
-    private func openPane(sessionID: String, tmuxSession: String?, window: String?, binary: AgentDeckBinary) async -> AttachedPane {
+    private func openPane(sessionID: String, tmuxSession: String?, window: String?, binary: AgentDeckBinary, restartsIfDead: Bool) async -> AttachedPane {
         let id = UUID()
         if let tmuxSession {
             let view = ViewSession.name(paneID: id)
@@ -399,7 +398,7 @@ final class DeckModel {
                 try? await cli.selectWindow(window, inView: view)
                 let yields = await cli.someoneElseOnWindow(ofView: view)
                 let launch = try cli.viewAttachLaunch(view, yieldsSize: yields)
-                return AttachedPane(id: id, sessionID: sessionID, view: view, launch: launch, yieldsSize: yields)
+                return AttachedPane(id: id, sessionID: sessionID, view: view, launch: launch, yieldsSize: yields, restartsIfDead: restartsIfDead)
             } catch {
                 await cli.killView(view)
                 logger.info("no view of \(tmuxSession, privacy: .public), attaching through agent-deck: \(error.localizedDescription, privacy: .public)")
@@ -408,7 +407,10 @@ final class DeckModel {
         if let window {
             try? await cli.selectWindow(windowID: window)
         }
-        return AttachedPane(id: id, sessionID: sessionID, view: nil, launch: binary.attachLaunch(sessionID: sessionID), yieldsSize: false)
+        return AttachedPane(
+            id: id, sessionID: sessionID, view: nil, launch: binary.attachLaunch(sessionID: sessionID), yieldsSize: false,
+            restartsIfDead: restartsIfDead
+        )
     }
 
     /// Its terminal goes with it once it leaves `recent`; the view would
@@ -621,11 +623,15 @@ final class DeckModel {
         recent.update(paneID) { $0.title = title }
     }
 
+    func paneFocusChanged(paneID: UUID, focused: Bool) {
+        recent.update(paneID) { $0.hasKeyboard = focused }
+    }
+
     /// The tmux client ended. A tmux detach or a stop closes the pane; the
     /// agent itself is untouched. An attach that ended at once found nothing
     /// to attach to, whatever the row said: a session you switched to
-    /// restarts, any other offers Restart, and the list catches up. A hidden
-    /// pane just goes.
+    /// restarts, one attached after a restart or a recreate offers Restart,
+    /// and the list catches up. A hidden pane just goes.
     func paneExited(paneID: UUID, exit: ProcessExit) {
         guard let ended = recent.remove(paneID) else { return }
         end(ended)

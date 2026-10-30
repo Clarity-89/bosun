@@ -13,8 +13,6 @@ struct MainWindowView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// The Inbox row whose detail covers the terminals.
     @State private var inboxSelection: String?
-    /// The pane whose terminal holds the keyboard; nil while it is elsewhere.
-    @State private var keyboardPaneID: UUID?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
 
@@ -282,11 +280,7 @@ struct MainWindowView: View {
                     } onExit: { exit in
                         model.paneExited(paneID: live.id, exit: exit)
                     } onFocusChange: { focused in
-                        if focused {
-                            keyboardPaneID = live.id
-                        } else if keyboardPaneID == live.id {
-                            keyboardPaneID = nil
-                        }
+                        model.paneFocusChanged(paneID: live.id, focused: focused)
                     }
                 }
                 KeyboardElsewhereHint(message: keyboardHint)
@@ -318,9 +312,9 @@ struct MainWindowView: View {
     /// nil while it would. The first click on a window in the background only
     /// brings it forward, so the keyboard then stays where it was.
     private var keyboardHint: String? {
-        guard let shown = model.attachedPane?.id, model.tab == .sessions else { return nil }
+        guard let shown = model.attachedPane, model.tab == .sessions else { return nil }
         guard controlActiveState == .key else { return "Click to type here" }
-        guard shown != keyboardPaneID else { return nil }
+        guard !shown.hasKeyboard else { return nil }
         // Return hands the keyboard over from the list; elsewhere only the menu shortcut does.
         let key = sidebarFocused ? Shortcut.activate.listKeyLabel : Shortcut.focusTerminal.menuLabel
         return "Press \(key) or click to type here"

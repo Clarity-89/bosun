@@ -19,10 +19,12 @@ struct AttachedPane: Identifiable {
     /// What the terminal reports as its title.
     var title = ""
     /// Opened by switching to the session: an attach that ends at once
-    /// restarts it, since a session you switch to should run. A re-attach of
-    /// the session shown does not, so one that dies in front of you stays
-    /// as it ended.
+    /// restarts it, since a session you switch to should run. An attach
+    /// that follows a restart or a recreate does not, so a session that
+    /// cannot start is offered Restart instead of restarting in a loop.
     var restartsIfDead = false
+    /// Whether its terminal has the keyboard, as the window's first responder.
+    var hasKeyboard = false
 }
 
 /// The panes kept attached, the most recently shown last. A hidden one
