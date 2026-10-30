@@ -1,5 +1,6 @@
 APP     := Bosun
 BUNDLE  := build/$(APP).app
+ICON    := Resources/AppIcon.icns
 BINDIR   = $(shell swift build -c release --show-bin-path)
 
 .PHONY: vendor build test bundle run stop clean
@@ -17,12 +18,17 @@ test: vendor
 
 # SwiftPM emits a bare binary; menu bar apps need a bundle for LSUIElement
 # and a stable bundle identifier.
-bundle: build
+bundle: build $(ICON)
 	rm -rf $(BUNDLE)
-	mkdir -p $(BUNDLE)/Contents/MacOS
+	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(BINDIR)/$(APP) $(BUNDLE)/Contents/MacOS/$(APP)
 	cp Resources/Info.plist $(BUNDLE)/Contents/Info.plist
+	cp $(ICON) $(BUNDLE)/Contents/Resources/
 	codesign --force --sign - $(BUNDLE)
+
+# Drawn by the script, so the icon has a source and no binary in git.
+$(ICON): scripts/make-icon.swift
+	swift $< $@
 
 # `open` launches through LaunchServices, so the app never inherits a
 # tmux or agent-deck environment from the calling shell.
@@ -33,4 +39,4 @@ stop:
 	-pkill -x $(APP)
 
 clean:
-	rm -rf .build build
+	rm -rf .build build $(ICON)

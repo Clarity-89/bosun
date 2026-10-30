@@ -5,3 +5,5 @@ build/
 .DS_Store
 # libghostty binary (141 MB); `make vendor` fetches it
 Vendor/
+# Drawn by scripts/make-icon.swift; `make bundle` generates it
+Resources/AppIcon.icns
