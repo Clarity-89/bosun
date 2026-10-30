@@ -136,11 +136,18 @@ struct MainWindowView: View {
                     case .group(let group, let expanded):
                         // A row, not a Section header, so arrows and Tab reach it as
                         // they reach a group in the TUI.
-                        GroupRow(name: group.name, isExpanded: expanded) { animated { model.toggleGroup(group.name) } }
+                        GroupRow(
+                            name: group.name, isExpanded: expanded,
+                            onDelete: model.canDelete(group) ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
+                        ) { animated { model.toggleGroup(group.name) } }
                             .tag(row.item)
                             .contextMenu {
                                 Button("New Session…") { model.promptNewSession(inGroup: group.name) }
                                 Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
+                                if model.canDelete(group) {
+                                    Divider()
+                                    Button("Delete Group…", role: .destructive) { SessionPrompts.confirmDeleteGroup(group, model: model) }
+                                }
                             }
                     case .session(let session):
                         SidebarSessionRow(model: model, session: session)
@@ -230,6 +237,10 @@ struct MainWindowView: View {
             if let session { model.restartSession(session) }
         case (.stop, _):
             if let session, session.status != .stopped { SessionPrompts.confirmStop(session, model: model) }
+        case (.delete, .group(let name)?):
+            if let group = model.groups.first(where: { $0.name == name }), model.canDelete(group) {
+                SessionPrompts.confirmDeleteGroup(group, model: model)
+            }
         case (.delete, _):
             guard let session else { break }
             if let window = model.selectedWindow {
@@ -417,10 +428,12 @@ private struct SidebarSessionRow: View {
 }
 
 /// A group header the selection can land on, with the handle that drags it
-/// with its sessions and a chevron that folds it.
+/// with its sessions, a chevron that folds it and, on hover, Delete.
 private struct GroupRow: View {
     let name: String
     let isExpanded: Bool
+    /// Nil for a group agent-deck will not delete.
+    let onDelete: (() -> Void)?
     let toggle: () -> Void
     @State private var isHovered = false
 
@@ -442,6 +455,13 @@ private struct GroupRow: View {
             Spacer(minLength: 0)
         }
         .foregroundStyle(.secondary)
+        // Over the row, as on a session's, so the header keeps its height.
+        .overlay(alignment: .trailing) {
+            if isHovered, let onDelete {
+                RowActionButton(systemImage: "trash", help: "Delete Group (\(Shortcut.delete.listKeyLabel))", destructive: true, action: onDelete)
+                    .transition(.opacity)
+            }
+        }
         .modifier(SidebarHover(isHovered: $isHovered))
         .padding(.top, 4)
     }

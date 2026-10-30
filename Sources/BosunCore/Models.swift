@@ -58,6 +58,14 @@ public struct DeckSession: Decodable, Identifiable, Equatable, Sendable {
     }
 }
 
+extension DeckSession {
+    /// In the group at `path` or one of its subgroups; a group whose path
+    /// only starts the same, `pa2` for `pa`, is another group.
+    public func isIn(groupTree path: String) -> Bool {
+        group == path || group.hasPrefix(path + "/")
+    }
+}
+
 extension Date {
     /// Go's RFC3339Nano: up to nine fractional digits, where
     /// ISO8601DateFormatter reads exactly three. Nil for anything else.

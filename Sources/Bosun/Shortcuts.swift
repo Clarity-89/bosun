@@ -52,7 +52,7 @@ enum Shortcut: CaseIterable {
         case .rename: "Rename the session…"
         case .restart: "Restart the session, or start a stopped one"
         case .stop: "Stop the session…"
-        case .delete: "Delete the session, or close the selected window…"
+        case .delete: "Delete the session or group, or close the selected window…"
         case .splitSideBySide: "Open a shell beside the session's agent"
         case .openInGhostty: "Open the session in a Ghostty window"
         case .toggleSessionList: "Hide or show the session list"

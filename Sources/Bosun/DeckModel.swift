@@ -567,6 +567,34 @@ final class DeckModel {
         lifecycle("delete", session) { [cli] in try await cli.deleteSession(id: session.id) }
     }
 
+    /// Delete for every session in the group and its subgroups at once, then
+    /// the group. The list reloads either way, so one that failed part way
+    /// shows what is left.
+    func deleteGroup(_ group: SessionGroup) {
+        let ids = Set(sessions.filter { $0.isIn(groupTree: group.path) }.map(\.id))
+        // One action per session at a time, as `lifecycle` has it.
+        guard busySessionIDs.isDisjoint(with: ids) else { return }
+        busySessionIDs.formUnion(ids)
+        run("delete group \(group.path)") { [cli] in try await cli.deleteGroup(path: group.path) } then: { [weak self] in
+            self?.collapsedGroups.remove(group.name)
+        } finally: { [weak self] in
+            self?.busySessionIDs.subtract(ids)
+            await self?.refresh()
+        }
+    }
+
+    /// Not agent-deck's default group, which it refuses to delete, nor the
+    /// row of sessions without a group.
+    func canDelete(_ group: SessionGroup) -> Bool {
+        !group.path.isEmpty && group.path != DeckGroup.defaultPath
+    }
+
+    /// The sessions deleting the group deletes that the list shows: its own
+    /// and its subgroups'.
+    func sessionCount(inGroupTree path: String) -> Int {
+        sessions.count { $0.isIn(groupTree: path) }
+    }
+
     /// A row moved by drag or by key. The rows reorder at once; agent-deck
     /// then stores the order, and the list that follows confirms it or,
     /// after a refusal, puts it back. A group moves with its sessions.

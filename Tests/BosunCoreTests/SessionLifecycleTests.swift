@@ -31,3 +31,19 @@ import Testing
         }
     }
 }
+
+/// Which sessions a group's Delete takes with it: a session in a group whose
+/// name only starts the same must survive.
+@Suite struct GroupTreeTests {
+    private func session(in group: String) -> DeckSession {
+        DeckSession(id: group, title: group, path: "/p", group: group, tool: "shell", status: .idle, substate: nil, tmuxSession: nil, archived: false, lastActivityAt: nil)
+    }
+
+    @Test func groupAndSubgroupsOnly() {
+        #expect(session(in: "pa").isIn(groupTree: "pa"))
+        #expect(session(in: "pa/work").isIn(groupTree: "pa"))
+        #expect(!session(in: "pa2").isIn(groupTree: "pa"))
+        #expect(!session(in: "pa-work/x").isIn(groupTree: "pa"))
+        #expect(!session(in: "my/pa").isIn(groupTree: "pa"))
+    }
+}

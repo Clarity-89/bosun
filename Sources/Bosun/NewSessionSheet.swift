@@ -9,7 +9,10 @@ import SwiftUI
 struct NewSessionSheet: View {
     let model: DeckModel
 
-    @State private var groupPath: String
+    @State private var group: GroupChoice
+    /// The name typed for `.new`.
+    @State private var newGroupName = ""
+    @FocusState private var isNamingGroup: Bool
     @State private var title = ""
     @State private var directory: String
     @State private var command: String
@@ -22,7 +25,7 @@ struct NewSessionSheet: View {
 
     init(model: DeckModel, prompt: NewSessionPrompt) {
         self.model = model
-        _groupPath = State(initialValue: prompt.groupPath)
+        _group = State(initialValue: .existing(prompt.groupPath))
         _directory = State(initialValue: prompt.directory)
         _command = State(initialValue: prompt.command)
     }
@@ -75,7 +78,23 @@ struct NewSessionSheet: View {
         // The list behind the dialog goes on; a group that vanished from it
         // gives way to the first, as when the dialog opened.
         .onChange(of: model.deckGroups) { _, groups in
-            groupPath = DeckGroup.listedPath(groupPath, in: groups)
+            if case .existing(let path) = group {
+                group = .existing(DeckGroup.listedPath(path, in: groups))
+            }
+        }
+    }
+
+    /// A group agent-deck lists, or one to create, which `add` does when a
+    /// session names a group it does not have.
+    private enum GroupChoice: Hashable {
+        case existing(String)
+        case new
+    }
+
+    private var groupPath: String {
+        switch group {
+        case .existing(let path): path
+        case .new: newGroupName.trimmingCharacters(in: .whitespaces)
         }
     }
 
@@ -87,10 +106,17 @@ struct NewSessionSheet: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            Picker("Group", selection: $groupPath) {
+            Picker("Group", selection: $group) {
                 ForEach(model.deckGroups) { group in
-                    Text(group.label).tag(group.path)
+                    Text(group.label).tag(GroupChoice.existing(group.path))
                 }
+                Divider()
+                Text("New Group…").tag(GroupChoice.new)
+            }
+            if group == .new {
+                TextField("Group name", text: $newGroupName, prompt: Text("New group"))
+                    .focused($isNamingGroup)
+                    .onAppear { isNamingGroup = true }
             }
         }
     }
@@ -116,6 +142,7 @@ struct NewSessionSheet: View {
     private var canCreate: Bool {
         !directory.trimmingCharacters(in: .whitespaces).isEmpty
             && (!worktree || !branch.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
+            && !(group == .new && groupPath.isEmpty)
     }
 
     private func chooseDirectory() {
