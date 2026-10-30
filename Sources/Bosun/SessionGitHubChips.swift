@@ -1,0 +1,117 @@
+import BosunCore
+import SwiftUI
+
+/// The pull request from a session's branch, or the bare branch with its
+/// unpushed commits; a placeholder of its size while Bosun has yet to read
+/// the folder or GitHub to say.
+struct BranchChip: View {
+    let branch: SessionGitHub.Branch
+
+    var body: some View {
+        switch branch {
+        case .loading:
+            Text(verbatim: "#000000")
+                .monospacedDigit()
+                .chip()
+                .modifier(LoadingPulse())
+                // Redacted text is hidden from VoiceOver; a fresh element says what loads.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Loading pull request")
+        case .none:
+            EmptyView()
+        case .unpushed(let name, let commits):
+            HStack(spacing: 2) {
+                Image(systemName: "arrow.triangle.branch")
+                if let commits, commits > 0 {
+                    Text(verbatim: "\(commits)↑").monospacedDigit()
+                }
+            }
+            .chip()
+            .help(Self.help(branch: name, commits: commits))
+        case .pullRequest(let pr):
+            HStack(spacing: 3) {
+                Image(systemName: pr.state.symbol).foregroundStyle(pr.state.color)
+                Text(verbatim: "#\(pr.number)").monospacedDigit()
+                if pr.state == .open || pr.state == .draft {
+                    if let checks = pr.checks { Image(systemName: checks.symbol).foregroundStyle(checks.color) }
+                    if pr.unresolvedThreads > 0 { Image(systemName: "bubble.left.fill").foregroundStyle(.orange) }
+                }
+            }
+            .chip()
+            .help("\(pr.state.label) pull request #\(pr.number): \(pr.title)")
+        }
+    }
+
+    private static func help(branch: String, commits: Int?) -> String {
+        guard let commits, commits > 0 else { return "\(branch), no pull request" }
+        return "\(branch), no pull request, \(commits) commit\(commits == 1 ? "" : "s") not pushed"
+    }
+}
+
+private extension View {
+    func chip() -> some View {
+        font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(.quaternary.opacity(0.6), in: .capsule)
+    }
+}
+
+/// An issue as a row's subtitle names it: its state, number and title, the
+/// title a placeholder while GitHub has yet to describe it.
+struct IssueMark: View {
+    let issue: LinkedIssue
+
+    var body: some View {
+        HStack(spacing: 3) {
+            switch issue.answer {
+            case .issue(let described):
+                Image(systemName: described.state.symbol).foregroundStyle(described.state.color)
+                Text(verbatim: "#\(described.number) \(described.title)")
+            case .pending:
+                Text(verbatim: "#\(issue.ref.number)")
+                Text(verbatim: "Issue title here")
+                    .modifier(LoadingPulse())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading issue")
+            case .missing:
+                Text(verbatim: "#\(issue.ref.number)")
+            }
+        }
+    }
+}
+
+/// The selected session's issue and pull request, each opening on GitHub.
+struct GitHubToolbarLinks: View {
+    let github: SessionGitHub
+
+    var body: some View {
+        if let issue = github.issue {
+            Button {
+                GitHubLinks.open(issue.ref.url)
+            } label: {
+                Label {
+                    Text(verbatim: "#\(issue.ref.number)")
+                } icon: {
+                    Image(systemName: (issue.issue?.state ?? .open).symbol)
+                }
+            }
+            .labelStyle(.titleAndIcon)
+            .help(issue.summary)
+        }
+        if let pr = github.branch.pullRequest {
+            Button {
+                GitHubLinks.open(pr.url)
+            } label: {
+                Label {
+                    Text(verbatim: "#\(pr.number)")
+                } icon: {
+                    Image(systemName: pr.state.symbol)
+                }
+            }
+            .labelStyle(.titleAndIcon)
+            .help(pr.summary)
+        }
+    }
+}

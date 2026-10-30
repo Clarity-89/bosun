@@ -22,8 +22,12 @@ final class AttentionCenter {
     /// Notifications waiting out their 3 s, by what they are about.
     @ObservationIgnored private var pending: [AttentionKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var seenTask: Task<Void, Never>?
-    /// Bosun is active with the main window on screen: the pane is in front of you.
-    @ObservationIgnored private var inFront = false
+    /// Bosun is active with the main window on screen.
+    @ObservationIgnored private var windowInFront = false
+    /// The Inbox has the pane's place.
+    @ObservationIgnored private var paneCovered = false
+    /// What the pane shows is in front of you.
+    private var inFront: Bool { windowInFront && !paneCovered }
     /// The session the pane shows, and its window when Bosun knows it.
     @ObservationIgnored private var shownSessionID: String?
     @ObservationIgnored private var shownWindowID: String?
@@ -82,8 +86,16 @@ final class AttentionCenter {
     /// Bosun became active or not, or the main window came on screen or
     /// went off it.
     func inFront(_ inFront: Bool) {
-        guard inFront != self.inFront else { return }
-        self.inFront = inFront
+        guard inFront != windowInFront else { return }
+        windowInFront = inFront
+        scheduleSeen()
+    }
+
+    /// The Inbox took the pane's place, or gave it back: a covered session
+    /// is neither seen nor spared its notifications.
+    func paneCovered(_ covered: Bool) {
+        guard covered != paneCovered else { return }
+        paneCovered = covered
         scheduleSeen()
     }
 

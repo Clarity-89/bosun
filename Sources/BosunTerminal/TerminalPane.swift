@@ -32,6 +32,9 @@ public final class TerminalPane: NSView {
     private let environment: [String: String]
     private let surfaceView = SurfaceView(frame: .zero)
     private var started = false
+    /// Focus asked for before the view was in a window: SwiftUI can update
+    /// a pane before it places it.
+    private var focusWhenInWindow = false
 
     /// libghostty runs `command` as `sh -c "exec <command>"` through `login`.
     /// `environment` is added to the child's, with `TERM_PROGRAM` naming Bosun.
@@ -60,9 +63,15 @@ public final class TerminalPane: NSView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil, !started else { return }
-        started = true
-        createSurface()
+        guard let window else { return }
+        if !started {
+            started = true
+            createSurface()
+        }
+        if focusWhenInWindow {
+            focusWhenInWindow = false
+            window.makeFirstResponder(surfaceView)
+        }
     }
 
     /// The window asks the views for a key equivalent before the menu bar,
@@ -78,7 +87,11 @@ public final class TerminalPane: NSView {
     /// by itself: the host decides, so creating a pane cannot steal keys
     /// from whatever created it.
     public func focusTerminal() {
-        window?.makeFirstResponder(surfaceView)
+        guard let window else {
+            focusWhenInWindow = true
+            return
+        }
+        window.makeFirstResponder(surfaceView)
     }
 
     /// A hidden pane keeps its command running but draws nothing and gives
@@ -87,8 +100,9 @@ public final class TerminalPane: NSView {
     public func setShown(_ shown: Bool) {
         guard isHidden == shown else { return }
         isHidden = !shown
-        if !shown, let window, window.firstResponder === surfaceView {
-            window.makeFirstResponder(nil)
+        if !shown {
+            focusWhenInWindow = false
+            if let window, window.firstResponder === surfaceView { window.makeFirstResponder(nil) }
         }
         surfaceView.surfaceController?.setVisible(shown)
     }

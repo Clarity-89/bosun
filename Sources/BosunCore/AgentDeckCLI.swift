@@ -199,6 +199,16 @@ public actor AgentDeckCLI {
         return environment
     }
 
+    /// `name` on the child environment's PATH, which already includes the
+    /// package-manager prefixes a GUI launch would otherwise miss.
+    static func executablePath(named name: String) throws -> String {
+        let path = (childEnvironment(binaryDirectory: nil)["PATH"] ?? "").split(separator: ":").lazy
+            .map { "\($0)/\(name)" }
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let path else { throw SubprocessError.launchFailed(command: name, reason: "not found on PATH") }
+        return path
+    }
+
     public func list() async throws -> [DeckSession] {
         try await decode([DeckSession].self, ["list", "--json"])
     }

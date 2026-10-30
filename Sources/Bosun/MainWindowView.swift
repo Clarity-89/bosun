@@ -11,14 +11,34 @@ struct MainWindowView: View {
     @State private var terminalFocusRequest = 0
     /// The session list's toolbar button and ⌃Q both hide and show it.
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    /// The Inbox row whose detail covers the terminals.
+    @State private var inboxSelection: String?
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+            VStack(spacing: 0) {
+                tabPicker
+                switch model.tab {
+                case .sessions:
+                    sessionList
+                case .inbox:
+                    InboxSidebar(inbox: model.inbox, selection: $inboxSelection)
+                        .focused($sidebarFocused)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                footer
+            }
+            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
         } detail: {
             detail
+        }
+        // Into the Inbox list, never left in a terminal out of sight. Back
+        // in Sessions, Show Session puts it in the terminal.
+        .onChange(of: model.tab) {
+            guard model.tab == .inbox else { return }
+            Task { sidebarFocused = true }
         }
         // The keyboard follows the list, as ⌃Q in the TUI goes back to its
         // list: into it as it shows, into the terminal as it hides.
@@ -34,10 +54,15 @@ struct MainWindowView: View {
             terminalFocusRequest += 1
         }
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
-        .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil ? nil : $terminalFocusRequest)
+        .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab == .inbox ? nil : $terminalFocusRequest)
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
         .navigationTitle(titleText)
         .toolbar {
+            if model.tab == .sessions, let selected = model.selectedSession {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    GitHubToolbarLinks(github: model.inbox[selected])
+                }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     model.promptNewSession()
@@ -60,7 +85,7 @@ struct MainWindowView: View {
                     .help("Open this session in a separate Ghostty window")
                 }
                 Button {
-                    Task { await model.refresh() }
+                    Task { await model.refreshAll() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -74,12 +99,26 @@ struct MainWindowView: View {
 
     /// Names what the pane shows, which a selected group row leaves as it was.
     private var titleText: String {
+        if model.tab == .inbox { return "Inbox" }
         guard let shown = model.paneSession else { return "Bosun" }
         guard let title = model.attachedPane?.title, !title.isEmpty else { return shown.title }
         return "\(shown.title) · \(title)"
     }
 
-    private var sidebar: some View {
+    /// The sidebar's two lists; Inbox counts what asks for your review.
+    private var tabPicker: some View {
+        let reviews = model.inbox.inbox?.reviewRequests.total ?? 0
+        return Picker("List", selection: $model.tab) {
+            Text("Sessions").tag(SidebarTab.sessions)
+            Text(reviews > 0 ? "Inbox \(reviews)" : "Inbox").tag(SidebarTab.inbox)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private var sessionList: some View {
         let rows = sidebarRows
         return ScrollViewReader { proxy in
             List(selection: Binding(
@@ -140,9 +179,6 @@ struct MainWindowView: View {
                 guard let action = Shortcut.listAction(key: press.key, modifiers: press.modifiers) else { return .ignored }
                 guard press.phase == .down || action.repeats else { return .handled }
                 return perform(action, rows: rows, scroll: proxy)
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                footer
             }
         }
     }
@@ -231,27 +267,36 @@ struct MainWindowView: View {
     private var detail: some View {
         let shown = model.attachedPane?.id
         return ZStack {
-            ForEach(model.livePanes) { live in
-                TerminalHost(launch: live.launch, isShown: live.id == shown, focusRequest: terminalFocusRequest) { title in
-                    model.paneTitleChanged(paneID: live.id, title: title)
-                } onInput: {
-                    model.paneReceivedInput(paneID: live.id)
-                } onExit: { exit in
-                    model.paneExited(paneID: live.id, exit: exit)
+            Group {
+                ForEach(model.livePanes) { live in
+                    TerminalHost(launch: live.launch, isShown: live.id == shown, focusRequest: terminalFocusRequest) { title in
+                        model.paneTitleChanged(paneID: live.id, title: title)
+                    } onInput: {
+                        model.paneReceivedInput(paneID: live.id)
+                    } onExit: { exit in
+                        model.paneExited(paneID: live.id, exit: exit)
+                    }
+                }
+                if shown == nil {
+                    if model.isAttaching {
+                        ProgressView()
+                    } else if let session = model.paneSession {
+                        NotRunningPane(model: model, session: session)
+                    } else {
+                        ContentUnavailableView(
+                            "Select a session",
+                            systemImage: "rectangle.stack",
+                            description: Text(model.engineError ?? "The session attaches here, inside Bosun.")
+                        )
+                    }
                 }
             }
-            if shown == nil {
-                if model.isAttaching {
-                    ProgressView()
-                } else if let session = model.paneSession {
-                    NotRunningPane(model: model, session: session)
-                } else {
-                    ContentUnavailableView(
-                        "Select a session",
-                        systemImage: "rectangle.stack",
-                        description: Text(model.engineError ?? "The session attaches here, inside Bosun.")
-                    )
-                }
+            // Out of sight under the Inbox, so out of VoiceOver's reach too.
+            .accessibilityHidden(model.tab == .inbox)
+            // Over the terminals, which stay in the tree, so their tmux
+            // clients live on while the Inbox shows.
+            if model.tab == .inbox {
+                InboxDetail(inbox: model.inbox, entryID: inboxSelection) { model.reveal($0) }
             }
         }
     }
@@ -304,7 +349,7 @@ private struct SidebarSessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention[session])
+            SessionRow(session: session, attention: model.attention[session], github: model.inbox[session])
             Spacer(minLength: 0)
             if isHovered {
                 HStack(spacing: 4) {
@@ -396,10 +441,12 @@ private struct RowActionButton: View {
 }
 
 /// Bold with a dot while something in the session is unread; an open
-/// question turns its status dot orange.
+/// question turns its status dot orange. The issue it works on follows its
+/// status; its branch's pull request sits at the trailing edge.
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
+    let github: SessionGitHub
 
     var body: some View {
         HStack(spacing: 8) {
@@ -408,21 +455,30 @@ struct SessionRow: View {
                 Text(session.title)
                     .fontWeight(attention.unread ? .semibold : nil)
                     .lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 3) {
+                    Text(subtitle).layoutPriority(1)
+                    if let issue = github.issue {
+                        Text("·")
+                        IssueMark(issue: issue)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
+            Spacer(minLength: 4)
             if attention.unread {
-                Spacer(minLength: 4)
                 Circle()
                     .fill(.tint)
                     .frame(width: 7, height: 7)
                     .accessibilityLabel("Unread")
             }
+            BranchChip(branch: github.branch)
         }
+        // What GitHub says fades in over its placeholder.
+        .animation(.easeOut(duration: 0.25), value: github)
         // The full text when the row is too narrow for it.
-        .help("\(session.title)\n\(subtitle)")
+        .help(help)
     }
 
     private var subtitle: String {
@@ -434,6 +490,14 @@ struct SessionRow: View {
             return "\(tool) · \(session.status.label) · \(substate)"
         }
         return "\(tool) · \(session.status.label)"
+    }
+
+    private var help: String {
+        var lines = [session.title, subtitle]
+        if let issue = github.issue {
+            lines.append(issue.summary)
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
