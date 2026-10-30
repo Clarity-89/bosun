@@ -19,9 +19,10 @@ test: vendor
 # and a stable bundle identifier.
 bundle: build
 	rm -rf $(BUNDLE)
-	mkdir -p $(BUNDLE)/Contents/MacOS
+	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	cp $(BINDIR)/$(APP) $(BUNDLE)/Contents/MacOS/$(APP)
 	cp Resources/Info.plist $(BUNDLE)/Contents/Info.plist
+	cp Resources/AppIcon.icns $(BUNDLE)/Contents/Resources/
 	codesign --force --sign - $(BUNDLE)
 
 # `open` launches through LaunchServices, so the app never inherits a
