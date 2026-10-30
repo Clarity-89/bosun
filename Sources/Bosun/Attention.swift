@@ -235,6 +235,24 @@ struct AttentionState: Equatable, Sendable {
         return SessionAttention(unread: !mine.isEmpty, asks: asks, summary: summary)
     }
 
+    /// The sessions that want you, most urgent first: an open question,
+    /// seen or not, then a failure, then a finished turn; the latest first
+    /// among equals.
+    func wantingYou(_ sessions: [DeckSession]) -> [DeckSession] {
+        sessions.compactMap { session -> (session: DeckSession, rank: Int, since: Date)? in
+            let top = unread
+                .filter { $0.key.sessionID == session.id }
+                .map(\.value)
+                .max { ($0.kind.rank, $0.since) < ($1.kind.rank, $1.since) }
+            let asks = session.asksInAgentDeck
+                || panes.values.contains { $0.sessionID == session.id && $0.pane.title.state == .asks }
+            guard let rank = asks ? AttentionKind.asks.rank : top?.kind.rank else { return nil }
+            return (session, rank, top?.since ?? .distantPast)
+        }
+        .sorted { ($0.rank, $0.since) > ($1.rank, $1.since) }
+        .map(\.session)
+    }
+
     /// Where to show what is unread for a session: the window of its most
     /// recent omp pane that wants you, nil for the session itself.
     func window(for sessionID: String) -> String? {

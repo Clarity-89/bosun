@@ -55,6 +55,22 @@ private let sessionIDs = ["agentdeck_a": "a", "agentdeck_b": "b"]
     }
 }
 
+/// The menu bar's Needs attention section: what wants you, most urgent first.
+@Suite struct AttentionOrderTests {
+    @Test func questionsThenFailuresThenTurnsNewestFirst() {
+        var state = AttentionState()
+        _ = state.statusChanged(sessionID: "old", from: .running, to: .waiting, at: t0)
+        _ = state.statusChanged(sessionID: "new", from: .running, to: .waiting, at: t0.addingTimeInterval(60))
+        _ = state.statusChanged(sessionID: "failed", from: .running, to: .error, at: t0)
+        let sessions = [
+            session("quiet"), session("old"), session("failed"), session("new"),
+            // A question waits whether or not you saw it ask.
+            session("asks", status: .waiting, substate: "interactive-menu"),
+        ]
+        #expect(state.wantingYou(sessions).map(\.id) == ["asks", "failed", "new", "old"])
+    }
+}
+
 /// What omp's pane titles mean for unread.
 @Suite struct AttentionPaneTests {
     @Test func paneBackAtItsPromptIsUnreadWithItsTask() throws {
