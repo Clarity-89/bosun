@@ -51,8 +51,9 @@ final class DeckModel {
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
-    /// Sessions with a lifecycle action in flight; their actions wait for it.
-    private(set) var busySessionIDs: Set<String> = []
+    /// Sessions with a lifecycle action in flight, and which; their actions
+    /// wait for it, and their rows say what runs.
+    private(set) var busySessions: [String: SessionAction] = [:]
     /// The New Session dialog while it is open.
     private(set) var newSessionPrompt: NewSessionPrompt?
     /// agent-deck's groups as `group list` last reported them, the empty
@@ -548,23 +549,23 @@ final class DeckModel {
     }
 
     func stopSession(_ session: DeckSession) {
-        lifecycle("stop", session) { [cli] in try await cli.stopSession(id: session.id) }
+        lifecycle(.stop, session) { [cli] in try await cli.stopSession(id: session.id) }
     }
 
     /// Restart also starts a stopped session; a pane offering it attaches
     /// what it started.
     func restartSession(_ session: DeckSession) {
-        lifecycle("restart", session, { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
+        lifecycle(.restart, session, { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
             if let self, self.shownSessionID == session.id, self.attachedPane == nil { self.attach(PaneTarget(sessionID: session.id)) }
         }
     }
 
     func renameSession(_ session: DeckSession, to title: String) {
-        lifecycle("rename", session) { [cli] in try await cli.renameSession(id: session.id, to: title) }
+        lifecycle(.rename, session) { [cli] in try await cli.renameSession(id: session.id, to: title) }
     }
 
     func deleteSession(_ session: DeckSession) {
-        lifecycle("delete", session) { [cli] in try await cli.deleteSession(id: session.id) }
+        lifecycle(.delete, session) { [cli] in try await cli.deleteSession(id: session.id) }
     }
 
     /// Delete for every session in the group and its subgroups at once, then
@@ -573,12 +574,12 @@ final class DeckModel {
     func deleteGroup(_ group: SessionGroup) {
         let ids = Set(sessions.filter { $0.isIn(groupTree: group.path) }.map(\.id))
         // One action per session at a time, as `lifecycle` has it.
-        guard busySessionIDs.isDisjoint(with: ids) else { return }
-        busySessionIDs.formUnion(ids)
+        guard ids.allSatisfy({ busySessions[$0] == nil }) else { return }
+        for id in ids { busySessions[id] = .delete }
         run("delete group \(group.path)") { [cli] in try await cli.deleteGroup(path: group.path) } then: { [weak self] in
             self?.collapsedGroups.remove(group.name)
         } finally: { [weak self] in
-            self?.busySessionIDs.subtract(ids)
+            for id in ids { self?.busySessions[id] = nil }
             await self?.refresh()
         }
     }
@@ -632,18 +633,19 @@ final class DeckModel {
     /// pane goes with its tmux client, through `paneExited`, or with the list
     /// that no longer has it.
     private func lifecycle(
-        _ label: String,
+        _ action: SessionAction,
         _ session: DeckSession,
         _ operation: @escaping @Sendable () async throws -> Void,
         then done: (@MainActor () -> Void)? = nil
     ) {
-        guard busySessionIDs.insert(session.id).inserted else { return }
-        run(label, operation) { [weak self] in
-            logger.info("\(label, privacy: .public) \(session.id, privacy: .public) done")
+        guard busySessions[session.id] == nil else { return }
+        busySessions[session.id] = action
+        run(action.rawValue, operation) { [weak self] in
+            logger.info("\(action.rawValue, privacy: .public) \(session.id, privacy: .public) done")
             await self?.refresh()
             done?()
         } finally: { [weak self] in
-            self?.busySessionIDs.remove(session.id)
+            self?.busySessions[session.id] = nil
         }
     }
 
@@ -899,6 +901,22 @@ final class DeckModel {
             try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled else { return }
             await refresh()
+        }
+    }
+}
+
+/// A lifecycle action in flight on a session.
+enum SessionAction: String {
+    case stop, restart, rename, delete
+
+    /// What the session's row says meanwhile. agent-deck reports no progress,
+    /// only the end.
+    var progressLabel: String {
+        switch self {
+        case .stop: "Stopping…"
+        case .restart: "Restarting…"
+        case .rename: "Renaming…"
+        case .delete: "Deleting…"
         }
     }
 }

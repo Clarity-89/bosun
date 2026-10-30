@@ -47,7 +47,7 @@ struct SessionActionItems: View {
                 .shortcut(.delete)
             }
         }
-        .disabled(session.map { model.busySessionIDs.contains($0.id) } ?? true)
+        .disabled(session.map { model.busySessions[$0.id] != nil } ?? true)
     }
 }
 

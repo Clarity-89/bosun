@@ -202,7 +202,7 @@ struct MainWindowView: View {
     /// the row is still handled, so the list never type-selects by it.
     private func perform(_ action: Shortcut, rows: [SidebarRow], scroll proxy: ScrollViewProxy) -> KeyPress.Result {
         // The session actions wait out an action in flight, as the menu items do.
-        let session = model.selectedSession.flatMap { model.busySessionIDs.contains($0.id) ? nil : $0 }
+        let session = model.selectedSession.flatMap { model.busySessions[$0.id] != nil ? nil : $0 }
         switch (action, model.selection) {
         case (.moveDown, let selection), (.moveUp, let selection):
             guard let row = SidebarRow.step(by: action == .moveDown ? 1 : -1, from: selection, in: rows) else { break }
@@ -373,7 +373,7 @@ private struct NotRunningPane: View {
     let session: DeckSession
 
     var body: some View {
-        let busy = model.busySessionIDs.contains(session.id)
+        let busy = model.busySessions[session.id] != nil
         ContentUnavailableView {
             Label(session.title, systemImage: "stop.circle")
         } description: {
@@ -403,7 +403,7 @@ private struct SidebarSessionRow: View {
         let github = model.inbox[session]
         return HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention[session], github: github)
+            SessionRow(session: session, attention: model.attention[session], github: github, action: model.busySessions[session.id])
                 .overlay(alignment: .trailing) {
                     if isHovered {
                         HStack(spacing: 4) {
@@ -417,7 +417,7 @@ private struct SidebarSessionRow: View {
                         .padding(2)
                         // Material reads over the hover plate and the selection alike.
                         .background(.regularMaterial, in: .rect(cornerRadius: 7))
-                        .disabled(model.busySessionIDs.contains(session.id))
+                        .disabled(model.busySessions[session.id] != nil)
                         .transition(.opacity)
                     }
                 }
@@ -510,12 +510,15 @@ private struct RowActionButton: View {
 
 /// Bold with a ring round its status dot while something in the session is
 /// unread; an open question turns the dot orange. The issue it works on
-/// follows its status. The text takes the room left in its row, so what a
-/// row puts after it stays put.
+/// follows its status. While `action` runs, the subtitle names it beside a
+/// bar that only moves, as agent-deck reports no progress; a session being
+/// deleted fades. The text takes the room left in its row, so what a row
+/// puts after it stays put.
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
     let github: SessionGitHub
+    var action: SessionAction?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -525,10 +528,19 @@ struct SessionRow: View {
                     .fontWeight(attention.unread ? .semibold : nil)
                     .lineLimit(1)
                 HStack(spacing: 3) {
-                    Text(subtitle).layoutPriority(1)
-                    if let issue = github.issue {
-                        Text("·")
-                        IssueMark(issue: issue)
+                    if let action {
+                        Text(action.progressLabel)
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                            .controlSize(.mini)
+                            .frame(maxWidth: 80)
+                            .padding(.leading, 3)
+                    } else {
+                        Text(subtitle).layoutPriority(1)
+                        if let issue = github.issue {
+                            Text("·")
+                            IssueMark(issue: issue)
+                        }
                     }
                 }
                 .font(.caption)
@@ -539,6 +551,7 @@ struct SessionRow: View {
             // With the row's spacing, the gap a spacer kept before the chip.
             .padding(.trailing, 12)
         }
+        .opacity(action == .delete ? 0.55 : 1)
         // The full text when the row is too narrow for it.
         .help(help)
         // What GitHub says about the issue fades in over its placeholder.
