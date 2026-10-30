@@ -21,6 +21,58 @@ enum LifecycleAction: String {
     }
 }
 
+/// A request typed into a session's agent as a skill's slash command, for
+/// the work a session ends with: the branch caught up with main, then its
+/// pull request opened, or pushed to once it has one.
+enum AgentRequest {
+    case mergeMain, submitPullRequest, updatePullRequest
+
+    /// The toolbar's and the Session menu's requests, in order: the merge,
+    /// then Push while the branch has a live pull request, else Open PR. A
+    /// merged or closed one takes a new pull request, as no pull request does.
+    static func requests(for pullRequest: GitHubPullRequest?) -> [AgentRequest] {
+        switch pullRequest?.state {
+        case .open, .draft: [.mergeMain, .updatePullRequest]
+        default: [.mergeMain, .submitPullRequest]
+        }
+    }
+
+    var command: String {
+        switch self {
+        case .mergeMain: "/merge-main"
+        case .submitPullRequest: "/submit-pr"
+        case .updatePullRequest: "/update-pr"
+        }
+    }
+
+    /// The toolbar's word for it.
+    var title: String {
+        switch self {
+        case .mergeMain: "Update Branch"
+        case .submitPullRequest: "Open PR"
+        case .updatePullRequest: "Push"
+        }
+    }
+
+    /// The Session menu's, with room to say what is merged or pushed to.
+    var menuTitle: String {
+        switch self {
+        case .mergeMain: "Update Branch from Main"
+        case .submitPullRequest: "Open Pull Request"
+        case .updatePullRequest: "Push to Pull Request"
+        }
+    }
+
+    /// What the agent is asked to do, for a tooltip, with the command typed.
+    var help: String {
+        switch self {
+        case .mergeMain: "Ask the agent to merge the latest main into this branch (\(command))"
+        case .submitPullRequest: "Ask the agent to open a pull request for this session (\(command))"
+        case .updatePullRequest: "Ask the agent to push the branch and bring its pull request up to date (\(command))"
+        }
+    }
+}
+
 struct SessionGroup: Identifiable {
     let name: String
     var sessions: [DeckSession]

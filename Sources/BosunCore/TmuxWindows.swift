@@ -109,6 +109,17 @@ extension AgentDeckCLI {
         _ = try await run(["session", "window", "close", sessionID, windowID, "--yes"])
     }
 
+    /// Types `line` into the agent and presses Return, as you would: the
+    /// agent's own completion list takes the Return when it is open, as it
+    /// does for you. The agent is in the first window's first pane, where
+    /// agent-deck started it; a split opened beside it lands to its right or
+    /// below, so it stays top left. Keys, not a paste, so the agent's input
+    /// takes them as typing.
+    public func typeIntoAgent(_ line: String, tmuxSession: String) async throws {
+        let pane = "=\(tmuxSession):^.{top-left}"
+        try await tmux(["send-keys", "-t", pane, "-l", line, ";", "send-keys", "-t", pane, "Enter"]).checkSucceeded()
+    }
+
     /// The user's shell, which "open shell here" runs.
     public static var userShell: String {
         childEnvironment(binaryDirectory: nil)["SHELL"] ?? "/bin/sh"

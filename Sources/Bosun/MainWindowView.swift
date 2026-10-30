@@ -40,6 +40,11 @@ struct MainWindowView: View {
         } detail: {
             HStack(spacing: 0) {
                 detail
+                    // The terminal's own floor. A floor on the window's root
+                    // becomes the detail column's, and showing the list then
+                    // widens the window by a list, off the screen if need be,
+                    // instead of narrowing the terminal.
+                    .frame(minWidth: 400)
                 // Once the pair runs, so the shells' split view starts with
                 // both and halves the height; a child added later keeps the
                 // first one's size.
@@ -85,8 +90,20 @@ struct MainWindowView: View {
         .navigationTitle(titleText)
         .toolbar {
             if model.tab == .sessions, let selected = model.selectedSession {
+                let github = model.inbox[selected]
+                // Before the links: what to ask the agent for, then what it
+                // has made. A stopped session has no agent to ask.
+                if selected.status != .stopped {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        ForEach(AgentRequest.requests(for: github.branch.pullRequest), id: \.self) { request in
+                            Button(request.title) { model.ask(request, of: selected) }
+                                .help(request.help)
+                        }
+                        .disabled(model.busySessions[selected.id] != nil)
+                    }
+                }
                 ToolbarItemGroup(placement: .primaryAction) {
-                    GitHubToolbarLinks(github: model.inbox[selected])
+                    GitHubToolbarLinks(github: github)
                 }
                 // In a grouping of their own, apart from the actions beside
                 // them: they say what the session works on, they do nothing to it.
