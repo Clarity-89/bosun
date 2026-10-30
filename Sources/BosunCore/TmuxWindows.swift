@@ -109,31 +109,15 @@ extension AgentDeckCLI {
         _ = try await run(["session", "window", "close", sessionID, windowID, "--yes"])
     }
 
-    /// Types `line` into the agent and presses Return. The agent is in the
-    /// session's first window: in its active pane, where the keyboard is,
-    /// unless that pane sits at a shell prompt, as a split opened beside
-    /// the agent does; then top left, where agent-deck started it. Keys,
-    /// not a paste, so the agent's input takes them as typing.
+    /// Types `line` into the agent and presses Return, as you would: the
+    /// agent's own completion list takes the Return when it is open, as it
+    /// does for you. The agent is in the first window's first pane, where
+    /// agent-deck started it; a split opened beside it lands to its right or
+    /// below, so it stays top left. Keys, not a paste, so the agent's input
+    /// takes them as typing.
     public func typeIntoAgent(_ line: String, tmuxSession: String) async throws {
-        let window = "=\(tmuxSession):^"
-        let panes = try? await tmux(["list-panes", "-t", window, "-F", Self.paneFormat])
-        let pane = Self.agentPane(listOutput: panes?.stdout ?? "") ?? "\(window).{top-left}"
+        let pane = "=\(tmuxSession):^.{top-left}"
         try await tmux(["send-keys", "-t", pane, "-l", line, ";", "send-keys", "-t", pane, "Enter"]).checkSucceeded()
-    }
-
-    /// `tmux list-panes -F` format that `agentPane(listOutput:)` reads back.
-    static let paneFormat = "#{pane_id}\t#{pane_active}\t#{pane_current_command}"
-
-    /// The active pane's id, unless its foreground process is a shell; nil
-    /// then, and for output with no active pane.
-    static func agentPane(listOutput: String) -> String? {
-        let shells: Set<String> = ["sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]
-        for line in listOutput.split(whereSeparator: \.isNewline) {
-            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
-            guard fields.count == 3, fields[1] == "1" else { continue }
-            return shells.contains(String(fields[2])) ? nil : String(fields[0])
-        }
-        return nil
     }
 
     /// The user's shell, which "open shell here" runs.

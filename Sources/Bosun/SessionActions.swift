@@ -3,7 +3,7 @@ import BosunCore
 import SwiftUI
 
 /// A session's actions, the same in its row's context menu and the Session
-/// menu: a shell here, Open in Ghostty, the pull request and the merge to
+/// menu: a shell here, Open in Ghostty, the merge and the pull request to
 /// ask its agent for, Stop and Restart, Mark as Unread, the issue it works
 /// on, then Rename and Delete, each with its shortcut. A stopped session
 /// has nothing to stop or to ask; Restart starts it. With a window row
@@ -28,8 +28,6 @@ struct SessionActionItems: View {
                     Button(request.menuTitle, action: perform(session) { model.ask(request, of: $0) })
                 }
                 Divider()
-            }
-            if session?.status != .stopped {
                 Button("Stop…", action: perform(session) { SessionPrompts.confirmStop($0, model: model) }).shortcut(.stop)
             }
             Button("Restart", action: perform(session, model.restartSession)).shortcut(.restart)
@@ -76,59 +74,6 @@ struct ShellActionItems: View {
         .shortcut(.splitSideBySide)
         Button(action: perform(session) { model.split($0, .topAndBottom) }) {
             Label("Split Top and Bottom", systemImage: "rectangle.split.1x2")
-        }
-    }
-}
-
-/// The toolbar's requests to the selected session's agent, by name, each
-/// outlined in GitHub's colour for what it ends in: nothing for a stopped
-/// session, which has no agent, and disabled while an action runs on it,
-/// as the menu's items are.
-@MainActor
-struct AgentRequestButtons: View {
-    let model: DeckModel
-    let session: DeckSession
-
-    var body: some View {
-        if session.status != .stopped {
-            ForEach(AgentRequest.allCases, id: \.self) { request in
-                Button(request.title) { model.ask(request, of: session) }
-                    .tint(request.color)
-                    .help(request.help)
-            }
-            .buttonStyle(OutlinedButtonStyle())
-            .disabled(model.busySessions[session.id] != nil)
-        }
-    }
-}
-
-/// The tint as a hairline round the title, with the title in it; a light
-/// wash of it under the pointer, more while pressed. The toolbar's own
-/// styles fill the button or colour its text only.
-private struct OutlinedButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        OutlinedButton(configuration: configuration)
-    }
-
-    private struct OutlinedButton: View {
-        let configuration: Configuration
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var isHovered = false
-
-        var body: some View {
-            let shape = RoundedRectangle(cornerRadius: 7)
-            configuration.label
-                .font(.callout.weight(.medium))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .foregroundStyle(.tint)
-                .background(.tint.opacity(configuration.isPressed ? 0.28 : isHovered ? 0.16 : 0), in: shape)
-                .overlay(shape.strokeBorder(.tint.opacity(isHovered ? 1 : 0.6), lineWidth: 1))
-                .contentShape(shape)
-                .opacity(isEnabled ? 1 : 0.4)
-                .onHover { isHovered = $0 }
-                .pointerStyle(.link)
-                .animation(.easeOut(duration: 0.12), value: isHovered)
         }
     }
 }
