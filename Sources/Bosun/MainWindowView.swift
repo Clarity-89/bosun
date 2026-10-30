@@ -378,8 +378,9 @@ private struct NotRunningPane: View {
 }
 
 /// A sidebar row: highlighted on hover, with the drag handle fading in at
-/// the leading edge and Rename and Delete over the end of the text, so the
-/// common actions need no context menu and nothing moves when they show.
+/// the leading edge and Rename and Delete in a plate over the trailing
+/// edge, so the common actions need no context menu and nothing moves
+/// when they show.
 @MainActor
 private struct SidebarSessionRow: View {
     let model: DeckModel
@@ -389,17 +390,24 @@ private struct SidebarSessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention[session], github: model.inbox[session], showsActions: isHovered) {
-                HStack(spacing: 4) {
-                    RowActionButton(systemImage: "pencil", help: "Rename (\(Shortcut.rename.listKeyLabel))") {
-                        SessionPrompts.rename(session, model: model)
-                    }
-                    RowActionButton(systemImage: "trash", help: "Delete (\(Shortcut.delete.listKeyLabel))", destructive: true) {
-                        SessionPrompts.confirmDelete(session, model: model)
+            SessionRow(session: session, attention: model.attention[session], github: model.inbox[session])
+                .overlay(alignment: .trailing) {
+                    if isHovered {
+                        HStack(spacing: 4) {
+                            RowActionButton(systemImage: "pencil", help: "Rename (\(Shortcut.rename.listKeyLabel))") {
+                                SessionPrompts.rename(session, model: model)
+                            }
+                            RowActionButton(systemImage: "trash", help: "Delete (\(Shortcut.delete.listKeyLabel))", destructive: true) {
+                                SessionPrompts.confirmDelete(session, model: model)
+                            }
+                        }
+                        .padding(2)
+                        // Material reads over the hover plate and the selection alike.
+                        .background(.regularMaterial, in: .rect(cornerRadius: 7))
+                        .disabled(model.busySessionIDs.contains(session.id))
+                        .transition(.opacity)
                     }
                 }
-                .disabled(model.busySessionIDs.contains(session.id))
-            }
         }
         .modifier(SidebarHover(isHovered: $isHovered))
     }
@@ -480,15 +488,11 @@ private struct RowActionButton: View {
 /// Bold with a ring round its status dot while something in the session is
 /// unread; an open question turns the dot orange. The issue it works on
 /// follows its status; its branch's pull request, or the commits it has yet
-/// to push, sit at the trailing edge. `actions` show, while `showsActions`,
-/// over the end of the text, which fades out under them: in the row's
-/// layout they would push the chip aside.
-struct SessionRow<Actions: View>: View {
+/// to push, sit at the trailing edge.
+struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
     let github: SessionGitHub
-    var showsActions = false
-    @ViewBuilder let actions: Actions
 
     var body: some View {
         HStack(spacing: 8) {
@@ -509,27 +513,11 @@ struct SessionRow<Actions: View>: View {
                 .lineLimit(1)
             }
             // The full text when the row is too narrow for it; only on the
-            // text, as the chip and the actions have tooltips of their own.
+            // text, as the chip has a tooltip of its own.
             .help(help)
             .frame(maxWidth: .infinity, alignment: .leading)
             // With the stack's spacing, the gap a spacer kept before the chip.
             .padding(.trailing, 12)
-            // The text alone: the unread ring draws outside the badge's frame.
-            .mask {
-                HStack(spacing: 0) {
-                    Rectangle()
-                    if showsActions {
-                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                            .frame(width: 12)
-                        actions.hidden()
-                    }
-                }
-            }
-            .overlay(alignment: .trailing) {
-                if showsActions {
-                    actions.transition(.opacity)
-                }
-            }
             BranchChip(branch: github.branch)
         }
         // What GitHub says fades in over its placeholder.
@@ -557,12 +545,6 @@ struct SessionRow<Actions: View>: View {
             lines.append(issue.summary)
         }
         return lines.joined(separator: "\n")
-    }
-}
-
-extension SessionRow where Actions == EmptyView {
-    init(session: DeckSession, attention: SessionAttention, github: SessionGitHub) {
-        self.init(session: session, attention: attention, github: github) { EmptyView() }
     }
 }
 
