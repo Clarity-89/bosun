@@ -176,10 +176,10 @@ private let sessionIDs = ["agentdeck_a": "a", "agentdeck_b": "b"]
     /// leaves the question open.
     @Test func rowSaysTheMostUrgentThing() {
         var state = Self.twoWindows()
-        #expect(state.attention(for: session("a")) == SessionAttention(unread: true, asks: false, summary: "Failed"))
+        #expect(state.attention(for: session("a")) == SessionAttention(unread: true, asks: false, summary: "Failed", urgency: Urgency(kind: .failed, since: t0)))
         _ = state.panesPolled([pane("%1", in: "a", window: "@1", "π ! Pick one"), pane("%2", in: "a", window: "@2", "π > y")], sessionIDs: sessionIDs, at: t0)
         state.seen(sessionID: "a", windowID: nil)
-        #expect(state.attention(for: session("a")) == SessionAttention(unread: false, asks: true, summary: "Asks for input: Pick one"))
+        #expect(state.attention(for: session("a")) == SessionAttention(unread: false, asks: true, summary: "Asks for input: Pick one", urgency: Urgency(kind: .asks, since: .distantPast)))
     }
 
     /// Mark as Unread holds through looking at the session, until another

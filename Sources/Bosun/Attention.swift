@@ -73,6 +73,21 @@ struct SessionAttention: Equatable, Sendable {
     var asks = false
     /// What to say about it: the most urgent thing and, from omp, its task.
     var summary: String?
+    /// The most urgent thing, to order sessions by; nil while nothing wants you.
+    var urgency: Urgency?
+}
+
+/// How much a session wants you: an open question over a failure over a
+/// finished turn, the latest first among equals. A question Bosun knows only
+/// from a pane or agent-deck's substate has no time, and goes last among
+/// questions.
+struct Urgency: Comparable, Sendable {
+    let kind: AttentionKind
+    let since: Date
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        (lhs.kind.rank, lhs.since) < (rhs.kind.rank, rhs.since)
+    }
 }
 
 /// Bosun's own idea of what needs you. agent-deck's status changes and omp's
@@ -226,31 +241,24 @@ struct AttentionState: Equatable, Sendable {
         let mine = unread.filter { $0.key.sessionID == session.id }.map(\.value)
         let asking = panes.values.filter { $0.sessionID == session.id && $0.pane.title.state == .asks }.map(\.pane)
         let asks = !asking.isEmpty || session.asksInAgentDeck
+        let top = mine.max { ($0.kind.rank, $0.since) < ($1.kind.rank, $1.since) }
         var summary: String?
+        var urgency: Urgency?
         if asks {
             summary = Self.say(.asks, asking.first?.title.label ?? mine.first { $0.kind == .asks }?.label)
-        } else if let top = mine.max(by: { ($0.kind.rank, $0.since) < ($1.kind.rank, $1.since) }) {
+            urgency = Urgency(kind: .asks, since: top?.since ?? .distantPast)
+        } else if let top {
             summary = Self.say(top.kind, top.label)
+            urgency = Urgency(kind: top.kind, since: top.since)
         }
-        return SessionAttention(unread: !mine.isEmpty, asks: asks, summary: summary)
+        return SessionAttention(unread: !mine.isEmpty, asks: asks, summary: summary, urgency: urgency)
     }
 
-    /// The sessions that want you, most urgent first: an open question,
-    /// seen or not, then a failure, then a finished turn; the latest first
-    /// among equals.
+    /// The sessions that want you, most urgent first.
     func wantingYou(_ sessions: [DeckSession]) -> [DeckSession] {
-        sessions.compactMap { session -> (session: DeckSession, rank: Int, since: Date)? in
-            let top = unread
-                .filter { $0.key.sessionID == session.id }
-                .map(\.value)
-                .max { ($0.kind.rank, $0.since) < ($1.kind.rank, $1.since) }
-            let asks = session.asksInAgentDeck
-                || panes.values.contains { $0.sessionID == session.id && $0.pane.title.state == .asks }
-            guard let rank = asks ? AttentionKind.asks.rank : top?.kind.rank else { return nil }
-            return (session, rank, top?.since ?? .distantPast)
-        }
-        .sorted { ($0.rank, $0.since) > ($1.rank, $1.since) }
-        .map(\.session)
+        sessions.compactMap { session in attention(for: session).urgency.map { (session, $0) } }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
     }
 
     /// Where to show what is unread for a session: the window of its most
