@@ -65,36 +65,51 @@ struct IssueMark: View {
     }
 }
 
-/// The selected session's issue and pull request, each opening on GitHub.
+/// The selected session's issue and pull request, each opening on GitHub,
+/// the icon in its state's colour as on the session's row.
 struct GitHubToolbarLinks: View {
     let github: SessionGitHub
 
     var body: some View {
         if let issue = github.issue {
-            Button {
-                GitHubLinks.open(issue.ref.url)
-            } label: {
-                Label {
-                    Text(verbatim: "#\(issue.ref.number)")
-                } icon: {
-                    Image(systemName: (issue.issue?.state ?? .open).symbol)
-                }
-            }
-            .labelStyle(.titleAndIcon)
-            .help(issue.summary)
+            let state = issue.issue?.state ?? .open
+            // Uncoloured until GitHub describes it.
+            ToolbarLink(symbol: state.symbol, color: issue.issue == nil ? .secondary : state.color,
+                        number: issue.ref.number, help: issue.summary, url: issue.ref.url)
         }
         if let pr = github.branch.pullRequest {
-            Button {
-                GitHubLinks.open(pr.url)
-            } label: {
-                Label {
-                    Text(verbatim: "#\(pr.number)")
-                } icon: {
-                    Image(systemName: pr.state.symbol)
-                }
+            ToolbarLink(symbol: pr.state.symbol, color: pr.state.color, number: pr.number, help: pr.summary, url: pr.url)
+        }
+    }
+}
+
+/// Looks like a link, not a button: no hover plate, which sat badly beside
+/// the toolbar's glass, but the pointing hand and an underline under the
+/// pointer.
+private struct ToolbarLink: View {
+    let symbol: String
+    let color: Color
+    let number: Int
+    let help: String
+    let url: URL
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            GitHubLinks.open(url)
+        } label: {
+            Label {
+                Text(verbatim: "#\(number)").underline(isHovered)
+            } icon: {
+                Image(systemName: symbol).foregroundStyle(color)
             }
             .labelStyle(.titleAndIcon)
-            .help(pr.summary)
+            .padding(.horizontal, 4)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .onHover { isHovered = $0 }
+        .help(help)
     }
 }

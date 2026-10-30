@@ -65,6 +65,9 @@ struct MainWindowView: View {
                 ToolbarItemGroup(placement: .primaryAction) {
                     GitHubToolbarLinks(github: model.inbox[selected])
                 }
+                // In a grouping of their own, apart from the actions beside
+                // them: they say what the session works on, they do nothing to it.
+                .sharedBackgroundVisibility(.hidden)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
