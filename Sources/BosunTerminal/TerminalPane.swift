@@ -32,16 +32,22 @@ public final class TerminalPane: NSView {
 
     private let command: String
     private let environment: [String: String]
+    private let workingDirectory: String?
+    private let fontSizeOffset: Float
     private let surfaceView = SurfaceView(frame: .zero)
     private var started = false
     /// Focus asked for before the view was in a window: SwiftUI can update
     /// a pane before it places it.
     private var focusWhenInWindow = false
 
-    /// libghostty runs `command` as `sh -c "exec <command>"` through `login`.
+    /// libghostty runs `command` as `sh -c "exec <command>"` through `login`,
+    /// in `workingDirectory` if given, else the engine's default, with
+    /// `fontSizeOffset` points added to the user's Ghostty font size.
     /// `environment` is added to the child's, with `TERM_PROGRAM` naming Bosun.
-    public init(command: String, environment: [String: String]) {
+    public init(command: String, environment: [String: String], workingDirectory: String? = nil, fontSizeOffset: Float = 0) {
         self.command = command
+        self.workingDirectory = workingDirectory
+        self.fontSizeOffset = fontSizeOffset
         var environment = environment
         environment["TERM_PROGRAM"] = "Bosun"
         self.environment = environment
@@ -126,12 +132,15 @@ public final class TerminalPane: NSView {
         var config = GhosttyFFI.surfaceConfigNew()
         config.scale_factor = Double(window?.backingScaleFactor ?? (NSScreen.main?.backingScaleFactor ?? 2.0))
         config.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
+        // Zero leaves the config's own size.
+        if fontSizeOffset != 0 { config.font_size = controller.fontSize + fontSizeOffset }
 
         // ghostty_surface_new copies the strings, so they only need to outlive the call.
         let keys = Array(environment.keys)
         let values = keys.map { environment[$0]! }
-        command.withCString { command in
-            config.command = command
+        [command, workingDirectory ?? ""].withCStrings { launch in
+            config.command = launch[0]
+            config.working_directory = workingDirectory == nil ? nil : launch[1]
             keys.withCStrings { keyPointers in
                 values.withCStrings { valuePointers in
                     var envVars = zip(keyPointers, valuePointers).map { ghostty_env_var_s(key: $0, value: $1) }

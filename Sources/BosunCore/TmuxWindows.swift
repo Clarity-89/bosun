@@ -109,11 +109,16 @@ extension AgentDeckCLI {
         _ = try await run(["session", "window", "close", sessionID, windowID, "--yes"])
     }
 
+    /// The user's shell, which "open shell here" runs.
+    public static var userShell: String {
+        childEnvironment(binaryDirectory: nil)["SHELL"] ?? "/bin/sh"
+    }
+
     /// Runs `$SHELL` in `workingDirectory` through the given tmux command.
     private func openShell(_ arguments: [String], workingDirectory: String?) async throws {
         var arguments = arguments
         if let workingDirectory { arguments += ["-c", workingDirectory] }
-        arguments.append(Self.childEnvironment(binaryDirectory: nil)["SHELL"] ?? "/bin/sh")
+        arguments.append(Self.userShell)
         try await tmux(arguments).checkSucceeded()
     }
 

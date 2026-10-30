@@ -87,6 +87,11 @@ public final class GhosttyAppController {
         configManager?.abnormalExitRuntimeMs ?? 250
     }
 
+    /// From the current config, so a reload is honoured.
+    var fontSize: Float {
+        configManager?.fontSize ?? 13
+    }
+
     func register(_ surface: GhosttySurfaceController) {
         surfaces.add(surface)
     }

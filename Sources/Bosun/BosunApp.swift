@@ -50,11 +50,13 @@ struct BosunApp: App {
 }
 
 /// Keyboard focus moves between the list and the terminal only on request,
-/// so each direction gets a View menu item, beside hiding the list.
+/// so each direction gets a View menu item, beside hiding the list and
+/// showing the side shells.
 struct FocusCommands: Commands {
     @FocusedBinding(\.sidebarFocused) private var sidebarFocused
     @FocusedBinding(\.terminalFocusRequest) private var terminalFocusRequest
     @FocusedBinding(\.sessionListVisibility) private var sessionListVisibility
+    @FocusedBinding(\.sideTerminalsShown) private var sideTerminalsShown
 
     var body: some Commands {
         CommandGroup(after: .sidebar) {
@@ -63,6 +65,9 @@ struct FocusCommands: Commands {
             }
             .shortcut(.toggleSessionList)
             .disabled(sessionListVisibility == nil)
+            Button(sideTerminalsShown == true ? "Hide Side Shells" : "Show Side Shells") { sideTerminalsShown?.toggle() }
+                .shortcut(.toggleSideTerminals)
+                .disabled(sideTerminalsShown == nil)
             // A hidden list comes back to take the focus.
             Button("Focus Sidebar") {
                 if sessionListVisibility == .detailOnly {
@@ -101,6 +106,9 @@ extension FocusedValues {
     @Entry var terminalFocusRequest: Binding<Int>?
     /// The key window's session list: shown, or hidden behind the terminal.
     @Entry var sessionListVisibility: Binding<NavigationSplitViewVisibility>?
+    /// Whether the key window shows the side shells. Nil while its pane has
+    /// no session for them.
+    @Entry var sideTerminalsShown: Binding<Bool>?
 }
 
 @MainActor
