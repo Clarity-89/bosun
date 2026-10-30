@@ -78,6 +78,8 @@ public enum AgentDeckCLIError: Error, LocalizedError, Equatable, Sendable {
 public actor AgentDeckCLI {
     private let configuredPath: String?
     private var resolved: AgentDeckBinary?
+    /// The resolution in flight, so concurrent callers wait for it.
+    private var resolving: Task<AgentDeckBinary, any Error>?
     /// `tmux -V` once `tmuxVersion()` has run.
     var probedTmuxVersion: TmuxVersion?
 
@@ -88,26 +90,35 @@ public actor AgentDeckCLI {
     /// Picks the newest installed agent-deck. Several copies commonly coexist
     /// (a stale Homebrew install, a dev build, ~/.local/bin) and login-shell
     /// PATH order is not a safe tie-breaker: an old binary must never run
-    /// against a newer state.db.
+    /// against a newer state.db. One resolution at a time: it starts a login
+    /// shell and probes every copy, and a caller arriving meanwhile waits
+    /// for that instead of starting its own.
     public func binary() async throws -> AgentDeckBinary {
         if let resolved, FileManager.default.isExecutableFile(atPath: resolved.path) {
             return resolved
         }
+        if let resolving {
+            return try await resolving.value
+        }
+        let task = Task { try await resolve() }
+        resolving = task
+        defer { resolving = nil }
+        let chosen = try await task.value
+        resolved = chosen
+        return chosen
+    }
 
-        let loginPath = await Self.resolveLoginPath()
+    /// The configured path, then every copy on the child PATH, then the
+    /// places an install lands that a login shell may not list.
+    private func resolve() async throws -> AgentDeckBinary {
+        await Self.readLoginPath()
         let environment = Self.childEnvironment(binaryDirectory: nil)
-        var candidates: [String] = []
-        if let configuredPath { candidates.append(configuredPath) }
-        candidates += (loginPath ?? "").split(separator: ":").map { "\($0)/agent-deck" }.filter { $0.hasPrefix("/") }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        candidates += [
-            "\(home)/.local/bin/agent-deck",
-            "\(home)/go/bin/agent-deck",
-            "/opt/homebrew/bin/agent-deck",
-            "/usr/local/bin/agent-deck",
-        ]
         var seen = Set<String>()
-        candidates = candidates.filter { seen.insert($0).inserted && FileManager.default.isExecutableFile(atPath: $0) }
+        let candidates = ([configuredPath].compactMap { $0 }
+            + Self.executablePaths(named: "agent-deck", environment: environment)
+            + ["\(home)/.local/bin/agent-deck", "\(home)/go/bin/agent-deck"])
+            .filter { seen.insert($0).inserted && FileManager.default.isExecutableFile(atPath: $0) }
 
         var versions: [String: AgentDeckVersion] = [:]
         await withTaskGroup(of: (String, AgentDeckVersion?).self) { group in
@@ -119,9 +130,7 @@ public actor AgentDeckCLI {
             }
         }
 
-        let chosen = try Self.select(probed: candidates.map { ($0, versions[$0]) }, configuredPath: configuredPath)
-        resolved = chosen
-        return chosen
+        return try Self.select(probed: candidates.map { ($0, versions[$0]) }, configuredPath: configuredPath)
     }
 
     /// Picks the binary to use from the probed candidates: a configured path
@@ -160,37 +169,40 @@ public actor AgentDeckCLI {
         return AgentDeckVersion(versionOutput: result.stdout)
     }
 
-    /// The login shell's PATH once `resolveLoginPath()` has read it.
-    static let loginPathCache = OSAllocatedUnfairLock<String?>(initialState: nil)
+    /// The login shell's PATH once `readLoginPath()` has read it.
+    private static let loginPathCache = OSAllocatedUnfairLock<String?>(initialState: nil)
 
-    /// The login shell knows the user's PATH; a LaunchServices-launched app
-    /// does not. Interactive too, because installers such as bun's add to
-    /// PATH in `.zshrc`. A failed read leaves the cache empty so the next
-    /// `binary()` resolution retries.
-    static func resolveLoginPath() async -> String? {
-        if let cached = loginPathCache.withLock({ $0 }) { return cached }
+    /// Starts the line `readLoginPath()` has the shell print its PATH on.
+    static let loginPathMarker = "BOSUN_PATH="
+
+    /// Reads the login shell's PATH into the cache, once. The login shell
+    /// knows the user's PATH; a LaunchServices-launched app does not.
+    /// Interactive too, because installers such as bun's add to PATH in
+    /// `.zshrc`; an rc file that waits for input or execs tmux runs out the
+    /// timeout. A failed read leaves the cache empty so the next `binary()`
+    /// resolution retries.
+    static func readLoginPath() async {
+        guard loginPathCache.withLock({ $0 }) == nil else { return }
         let result = try? await Subprocess.run(
             executable: "/bin/zsh",
-            arguments: ["-lic", #"printf '%s\n' "$PATH""#],
-            environment: childEnvironment(binaryDirectory: nil, loginPath: nil),
+            arguments: ["-lic", #"printf '\n\#(loginPathMarker)%s\n' "$PATH""#],
+            environment: childEnvironment(binaryDirectory: nil),
             timeout: .seconds(10)
         )
         guard let result, result.succeeded, let path = loginPath(fromShellOutput: result.stdout) else {
             log.warning("no PATH from the login shell; children get the launcher's")
-            return nil
+            return
         }
         loginPathCache.withLock { $0 = path }
-        return path
     }
 
-    /// The last non-empty line of a login shell's output, when it looks like
-    /// a PATH; profile scripts may print before it.
+    /// The PATH on the marked line of a login shell's output; profile and
+    /// logout scripts may print before and after it.
     static func loginPath(fromShellOutput output: String) -> String? {
-        let line = output.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { !$0.isEmpty }
-        guard let line, line.hasPrefix("/") else { return nil }
-        return line
+        output.split(whereSeparator: \.isNewline)
+            .first { $0.hasPrefix(loginPathMarker) }
+            .map { String($0.dropFirst(loginPathMarker.count)) }
+            .flatMap { $0.hasPrefix("/") ? $0 : nil }
     }
 
     /// A minimal environment for agent-deck children: never the launching
@@ -227,13 +239,22 @@ public actor AgentDeckCLI {
         return environment
     }
 
-    /// `name` on the child environment's PATH, which includes the login
-    /// shell's PATH.
-    static func executablePath(named name: String) throws -> String {
-        let path = (childEnvironment(binaryDirectory: nil)["PATH"] ?? "").split(separator: ":").lazy
+    /// Every executable `name` on the child environment's PATH, in PATH
+    /// order; the PATH includes the login shell's.
+    static func executablePaths(
+        named name: String,
+        environment: [String: String] = childEnvironment(binaryDirectory: nil)
+    ) -> some Collection<String> {
+        (environment["PATH"] ?? "").split(separator: ":").lazy
             .map { "\($0)/\(name)" }
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-        guard let path else { throw SubprocessError.launchFailed(command: name, reason: "not found on PATH") }
+            .filter { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// The first of `executablePaths(named:)`.
+    static func executablePath(named name: String) throws -> String {
+        guard let path = executablePaths(named: name).first else {
+            throw SubprocessError.launchFailed(command: name, reason: "not found on PATH")
+        }
         return path
     }
 

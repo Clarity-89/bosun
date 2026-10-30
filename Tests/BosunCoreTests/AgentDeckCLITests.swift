@@ -124,11 +124,19 @@ import Testing
         #expect(environment["PATH"] == "/Users/me/.local/bin:/Users/me/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin")
     }
 
-    /// Profile scripts may print before the shell echoes PATH.
-    @Test func loginPathIsTheShellsLastLine() {
-        #expect(AgentDeckCLI.loginPath(fromShellOutput: "Last login: Fri\n/Users/me/.bun/bin:/usr/bin\n") == "/Users/me/.bun/bin:/usr/bin")
-        #expect(AgentDeckCLI.loginPath(fromShellOutput: "") == nil)
+    /// Profile scripts print before the marked line, `.zlogout` after it.
+    @Test func loginPathIsTheMarkedLine() {
+        #expect(AgentDeckCLI.loginPath(fromShellOutput: "Last login: Fri\nBOSUN_PATH=/Users/me/.bun/bin:/usr/bin\nBye\n") == "/Users/me/.bun/bin:/usr/bin")
+        #expect(AgentDeckCLI.loginPath(fromShellOutput: "/Users/me/.bun/bin:/usr/bin\n") == nil)
+        #expect(AgentDeckCLI.loginPath(fromShellOutput: "BOSUN_PATH=\n") == nil)
         #expect(AgentDeckCLI.loginPath(fromShellOutput: "zsh: command not found: pyenv\n") == nil)
+    }
+
+    /// `binary()` probes every copy on the child PATH; `tmux`, `gh` and `git`
+    /// run as the first.
+    @Test func executablePathsSkipDirectoriesWithoutTheName() {
+        let found = Array(AgentDeckCLI.executablePaths(named: "sh", environment: ["PATH": "/nonexistent:/bin:/usr/bin"]))
+        #expect(found == ["/bin/sh"])
     }
 
     /// A LaunchServices launch carries little more than `USER` and `HOME`.
