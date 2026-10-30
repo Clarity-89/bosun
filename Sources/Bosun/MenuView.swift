@@ -36,8 +36,12 @@ struct MenuView: View {
         .padding(.bottom, 8)
     }
 
+    /// What wants you first, most urgent at the top, then each group's other
+    /// sessions; the main window's list keeps every session in its group.
     private var sessionList: some View {
-        ScrollView {
+        let wanting = model.attention.wantingYou(model.sessions)
+        let wantingIDs = Set(wanting.map(\.id))
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
                 if !model.hasLoadedSessions {
                     SessionListPlaceholder()
@@ -52,25 +56,35 @@ struct MenuView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 50)
                 } else {
+                    if !wanting.isEmpty {
+                        section("Needs attention", wanting)
+                    }
                     ForEach(model.groups) { group in
-                        Section {
-                            ForEach(group.sessions) { session in
-                                MenuSessionRow(session: session, attention: model.attention[session], github: model.inbox[session]) {
-                                    openInWindow(session)
-                                }
-                            }
-                        } header: {
-                            Text(group.name)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 12)
-                                .padding(.top, 8)
-                                .padding(.bottom, 2)
+                        let rest = group.sessions.filter { !wantingIDs.contains($0.id) }
+                        if !rest.isEmpty {
+                            section(group.name, rest)
                         }
                     }
                 }
             }
             .padding(.bottom, 8)
+        }
+    }
+
+    private func section(_ title: String, _ sessions: [DeckSession]) -> some View {
+        Section {
+            ForEach(sessions) { session in
+                MenuSessionRow(session: session, attention: model.attention[session], github: model.inbox[session]) {
+                    openInWindow(session)
+                }
+            }
+        } header: {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
         }
     }
 

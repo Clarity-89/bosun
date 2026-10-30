@@ -47,7 +47,7 @@ struct SessionActionItems: View {
                 .shortcut(.delete)
             }
         }
-        .disabled(session.map { model.busySessionIDs.contains($0.id) } ?? true)
+        .disabled(session.map { model.busySessions[$0.id] != nil } ?? true)
     }
 }
 
@@ -132,6 +132,17 @@ enum SessionPrompts {
             "This stops all of its processes, deletes its git worktree if it has one and no other session works in it, uncommitted changes included, and removes it from agent-deck. The agent's own conversation files are kept.",
             button: "Delete"
         ) { model.deleteSession(session) }
+    }
+
+    /// As Delete asks for one session, for all of the group's at once; the
+    /// count is what `deleteGroup` deletes, archived ones included.
+    static func confirmDeleteGroup(_ group: SessionGroup, model: DeckModel) {
+        let count = model.sessions(inGroupTree: group.path).count
+        confirm(
+            "Delete the group “\(group.name)” and its \(count == 1 ? "session" : "\(count) sessions")?",
+            "Every session in it and its subgroups goes, archived ones included. Each stops all of its processes, deletes its git worktree if it has one and no other session works in it, uncommitted changes included, and leaves agent-deck. The agents' own conversation files are kept.",
+            button: "Delete Group"
+        ) { model.deleteGroup(group) }
     }
 
     /// As the TUI asks before D: the agent ends; the session stays listed,

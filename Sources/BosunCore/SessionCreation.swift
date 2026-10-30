@@ -46,6 +46,10 @@ public struct DeckGroup: Identifiable, Equatable, Sendable {
 
     public var id: String { path }
 
+    /// agent-deck's `DefaultGroupPath`: where a session without a group goes,
+    /// and the one group it will not delete.
+    public static let defaultPath = "my-sessions"
+
     /// `path` when `groups` lists it, else the first group's; `path` as it
     /// is when there is no list to go by.
     public static func listedPath(_ path: String, in groups: [DeckGroup]) -> String {

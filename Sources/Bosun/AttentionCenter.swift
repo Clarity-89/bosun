@@ -39,6 +39,11 @@ final class AttentionCenter {
         state.attention(for: session)
     }
 
+    /// Of `sessions`, those that want you, most urgent first.
+    func wantingYou(_ sessions: [DeckSession]) -> [DeckSession] {
+        state.wantingYou(sessions)
+    }
+
     /// Where to show a session's unread: the window of its most recent omp
     /// pane that wants you, nil for the session itself.
     func window(for sessionID: String) -> String? {

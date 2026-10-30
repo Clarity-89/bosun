@@ -136,11 +136,17 @@ struct MainWindowView: View {
                     case .group(let group, let expanded):
                         // A row, not a Section header, so arrows and Tab reach it as
                         // they reach a group in the TUI.
-                        GroupRow(name: group.name, isExpanded: expanded) { animated { model.toggleGroup(group.name) } }
+                        let deleteGroup: (() -> Void)? = model.canDeleteGroup(group)
+                            ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
+                        GroupRow(name: group.name, isExpanded: expanded, onDelete: deleteGroup) { animated { model.toggleGroup(group.name) } }
                             .tag(row.item)
                             .contextMenu {
                                 Button("New Session…") { model.promptNewSession(inGroup: group.name) }
                                 Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
+                                if let deleteGroup {
+                                    Divider()
+                                    Button("Delete Group…", role: .destructive, action: deleteGroup)
+                                }
                             }
                     case .session(let session):
                         SidebarSessionRow(model: model, session: session)
@@ -161,8 +167,14 @@ struct MainWindowView: View {
                 .onMove { source, destination in
                     if let move = SidebarMove(rows: rows, from: source, to: destination) { model.move(move) }
                 }
+                // None of the List's own leading inset: the rows' hover plate
+                // and drag handle hold room there.
+                .listRowInsets(.leading, 0)
             }
             .listStyle(.sidebar)
+            // Less of the sidebar's own margin around the rows, whose hover
+            // plate and drag handle hold room of their own.
+            .contentMargins(.horizontal, 4, for: .scrollContent)
             // Over the list, which has no rows yet, so selection, keys and
             // drags never meet a placeholder.
             .overlay(alignment: .topLeading) {
@@ -195,7 +207,7 @@ struct MainWindowView: View {
     /// the row is still handled, so the list never type-selects by it.
     private func perform(_ action: Shortcut, rows: [SidebarRow], scroll proxy: ScrollViewProxy) -> KeyPress.Result {
         // The session actions wait out an action in flight, as the menu items do.
-        let session = model.selectedSession.flatMap { model.busySessionIDs.contains($0.id) ? nil : $0 }
+        let session = model.selectedSession.flatMap { model.busySessions[$0.id] != nil ? nil : $0 }
         switch (action, model.selection) {
         case (.moveDown, let selection), (.moveUp, let selection):
             guard let row = SidebarRow.step(by: action == .moveDown ? 1 : -1, from: selection, in: rows) else { break }
@@ -230,6 +242,10 @@ struct MainWindowView: View {
             if let session { model.restartSession(session) }
         case (.stop, _):
             if let session, session.status != .stopped { SessionPrompts.confirmStop(session, model: model) }
+        case (.delete, .group(let name)?):
+            if let group = model.groups.first(where: { $0.name == name }), model.canDeleteGroup(group) {
+                SessionPrompts.confirmDeleteGroup(group, model: model)
+            }
         case (.delete, _):
             guard let session else { break }
             if let window = model.selectedWindow {
@@ -362,7 +378,7 @@ private struct NotRunningPane: View {
     let session: DeckSession
 
     var body: some View {
-        let busy = model.busySessionIDs.contains(session.id)
+        let busy = model.busySessions[session.id] != nil
         ContentUnavailableView {
             Label(session.title, systemImage: "stop.circle")
         } description: {
@@ -390,9 +406,9 @@ private struct SidebarSessionRow: View {
 
     var body: some View {
         let github = model.inbox[session]
-        return HStack(spacing: 8) {
+        return HStack(spacing: 6) {
             DragHandle(isVisible: isHovered)
-            SessionRow(session: session, attention: model.attention[session], github: github)
+            SessionRow(session: session, attention: model.attention[session], github: github, action: model.busySessions[session.id])
                 .overlay(alignment: .trailing) {
                     if isHovered {
                         HStack(spacing: 4) {
@@ -406,7 +422,7 @@ private struct SidebarSessionRow: View {
                         .padding(2)
                         // Material reads over the hover plate and the selection alike.
                         .background(.regularMaterial, in: .rect(cornerRadius: 7))
-                        .disabled(model.busySessionIDs.contains(session.id))
+                        .disabled(model.busySessions[session.id] != nil)
                         .transition(.opacity)
                     }
                 }
@@ -417,21 +433,24 @@ private struct SidebarSessionRow: View {
 }
 
 /// A group header the selection can land on, with the handle that drags it
-/// with its sessions and a chevron that folds it.
+/// with its sessions, a chevron that folds it and, on hover, Delete.
 private struct GroupRow: View {
     let name: String
     let isExpanded: Bool
+    /// Nil for a group agent-deck will not delete.
+    let onDelete: (() -> Void)?
     let toggle: () -> Void
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        // With the 14 pt chevron, its centre under the session rows' dots.
+        HStack(spacing: 3) {
             DragHandle(isVisible: isHovered)
             Button(action: toggle) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .frame(width: 16, height: 16)
+                    .frame(width: 14, height: 16)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -442,8 +461,15 @@ private struct GroupRow: View {
             Spacer(minLength: 0)
         }
         .foregroundStyle(.secondary)
+        // Over the row, as on a session's, so the header keeps its height.
+        .overlay(alignment: .trailing) {
+            if isHovered, let onDelete {
+                RowActionButton(systemImage: "trash", help: "Delete Group (\(Shortcut.delete.listKeyLabel))", destructive: true, action: onDelete)
+                    .transition(.opacity)
+            }
+        }
         .modifier(SidebarHover(isHovered: $isHovered))
-        .padding(.top, 4)
+        .padding(.top, 1)
     }
 }
 
@@ -490,12 +516,15 @@ private struct RowActionButton: View {
 
 /// Bold with a ring round its status dot while something in the session is
 /// unread; an open question turns the dot orange. The issue it works on
-/// follows its status. The text takes the room left in its row, so what a
-/// row puts after it stays put.
+/// follows its status. While `action` runs, the subtitle names it beside a
+/// bar that only moves, as agent-deck reports no progress; a session being
+/// deleted fades. The text takes the room left in its row, so what a row
+/// puts after it stays put.
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
     let github: SessionGitHub
+    var action: LifecycleAction?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -505,10 +534,19 @@ struct SessionRow: View {
                     .fontWeight(attention.unread ? .semibold : nil)
                     .lineLimit(1)
                 HStack(spacing: 3) {
-                    Text(subtitle).layoutPriority(1)
-                    if let issue = github.issue {
-                        Text("·")
-                        IssueMark(issue: issue)
+                    if let action {
+                        Text(action.progressLabel)
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                            .controlSize(.mini)
+                            .frame(maxWidth: 80)
+                            .padding(.leading, 3)
+                    } else {
+                        Text(subtitle).layoutPriority(1)
+                        if let issue = github.issue {
+                            Text("·")
+                            IssueMark(issue: issue)
+                        }
                     }
                 }
                 .font(.caption)
@@ -519,6 +557,7 @@ struct SessionRow: View {
             // With the row's spacing, the gap a spacer kept before the chip.
             .padding(.trailing, 12)
         }
+        .opacity(action == .delete ? 0.55 : 1)
         // The full text when the row is too narrow for it.
         .help(help)
         // What GitHub says about the issue fades in over its placeholder.
@@ -553,7 +592,8 @@ struct SessionRow: View {
 /// tooltip, shown on hover. It keeps its room while hidden, so the row never
 /// shifts; the whole row drags, not only the grip.
 private struct DragHandle: View {
-    static let width: CGFloat = 10
+    /// The grip's own width: two dots and the gap between them.
+    static let width: CGFloat = 7
     let isVisible: Bool
 
     var body: some View {

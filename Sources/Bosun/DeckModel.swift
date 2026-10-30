@@ -10,6 +10,9 @@ final class DeckModel {
     static let shared = DeckModel()
 
     private(set) var sessions: [DeckSession] = []
+    /// What `list` reports and the sidebar hides; deleting a group takes
+    /// them too.
+    private var archivedSessions: [DeckSession] = []
     /// False until the first `list` answers, or startup fails before one:
     /// the session lists show placeholder rows until then, and an empty
     /// list after it means there are no sessions.
@@ -51,8 +54,9 @@ final class DeckModel {
     /// Nil once libghostty is running; otherwise what the pane shows instead.
     private(set) var engineError: String?
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
-    /// Sessions with a lifecycle action in flight; their actions wait for it.
-    private(set) var busySessionIDs: Set<String> = []
+    /// Sessions with a lifecycle action in flight, and which; their actions
+    /// wait for it, and their rows say what runs.
+    private(set) var busySessions: [String: LifecycleAction] = [:]
     /// The New Session dialog while it is open.
     private(set) var newSessionPrompt: NewSessionPrompt?
     /// agent-deck's groups as `group list` last reported them, the empty
@@ -235,12 +239,13 @@ final class DeckModel {
             // still keeps each group's rows together.
             async let listed = cli.list()
             async let groupOrder = cli.groups()
-            let visible = try await listed.filter { !$0.archived }
+            let all = try await listed
             if let groups = try? await groupOrder {
                 deckGroups = groups
             }
             let previous = hasListed ? sessions : nil
-            sessions = DeckSession.inDeckOrder(visible, groupPaths: deckGroups.map(\.path))
+            archivedSessions = all.filter(\.archived)
+            sessions = DeckSession.inDeckOrder(all.filter { !$0.archived }, groupPaths: deckGroups.map(\.path))
             hasLoadedSessions = true
             hasListed = true
             lastError = nil
@@ -548,23 +553,50 @@ final class DeckModel {
     }
 
     func stopSession(_ session: DeckSession) {
-        lifecycle("stop", session) { [cli] in try await cli.stopSession(id: session.id) }
+        lifecycle(.stop, on: [session.id]) { [cli] in try await cli.stopSession(id: session.id) }
     }
 
     /// Restart also starts a stopped session; a pane offering it attaches
     /// what it started.
     func restartSession(_ session: DeckSession) {
-        lifecycle("restart", session, { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
+        lifecycle(.restart, on: [session.id], { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
             if let self, self.shownSessionID == session.id, self.attachedPane == nil { self.attach(PaneTarget(sessionID: session.id)) }
         }
     }
 
     func renameSession(_ session: DeckSession, to title: String) {
-        lifecycle("rename", session) { [cli] in try await cli.renameSession(id: session.id, to: title) }
+        lifecycle(.rename, on: [session.id]) { [cli] in try await cli.renameSession(id: session.id, to: title) }
     }
 
     func deleteSession(_ session: DeckSession) {
-        lifecycle("delete", session) { [cli] in try await cli.deleteSession(id: session.id) }
+        lifecycle(.delete, on: [session.id]) { [cli] in try await cli.deleteSession(id: session.id) }
+    }
+
+    /// Delete for every session in the group and its subgroups, archived
+    /// ones included, one at a time, each a write to agent-deck's store;
+    /// then the group. A failure stops it there, and the list that follows
+    /// shows what is left, still in its group.
+    func deleteGroup(_ group: SessionGroup) {
+        guard group.isDeletable else { return }
+        let doomed = sessions(inGroupTree: group.path)
+        lifecycle(.delete, on: Set(doomed.map(\.id)), { [cli] in
+            for session in doomed { try await cli.deleteSession(id: session.id) }
+            try await cli.deleteGroup(path: group.path)
+        }) { [weak self] in
+            self?.collapsedGroups.remove(group.name)
+        }
+    }
+
+    /// Whether Delete Group can run now: not on a group agent-deck will not
+    /// delete, nor while an action runs on a session it would delete.
+    func canDeleteGroup(_ group: SessionGroup) -> Bool {
+        group.isDeletable && !sessions(inGroupTree: group.path).contains { busySessions[$0.id] != nil }
+    }
+
+    /// Every session agent-deck lists in the group at `path` or one of its
+    /// subgroups, archived ones included: what deleting the group deletes.
+    func sessions(inGroupTree path: String) -> [DeckSession] {
+        (sessions + archivedSessions).filter { $0.isIn(groupTree: path) }
     }
 
     /// A row moved by drag or by key. The rows reorder at once; agent-deck
@@ -597,25 +629,30 @@ final class DeckModel {
         }
     }
 
-    /// One action per session at a time; the list reloads after it, so the
-    /// row changes even before the bus reports it. `done` runs once it
-    /// succeeds, after the reload, so it sees the session as agent-deck now
-    /// lists it: a restart gives it a new tmux session. A deleted session's
-    /// pane goes with its tmux client, through `paneExited`, or with the list
-    /// that no longer has it.
+    /// One action at a time on each of `ids`; they stay busy until the list
+    /// after it, refused or failed part way alike, so their rows change
+    /// before the bus reports it and never flip back before they go. `done`
+    /// runs once it succeeds, after the reload, so it sees the session as
+    /// agent-deck now lists it: a restart gives it a new tmux session. A
+    /// deleted session's pane goes with its tmux client, through
+    /// `paneExited`, or with the list that no longer has it.
     private func lifecycle(
-        _ label: String,
-        _ session: DeckSession,
+        _ action: LifecycleAction,
+        on ids: Set<String>,
         _ operation: @escaping @Sendable () async throws -> Void,
         then done: (@MainActor () -> Void)? = nil
     ) {
-        guard busySessionIDs.insert(session.id).inserted else { return }
-        run(label, operation) { [weak self] in
-            logger.info("\(label, privacy: .public) \(session.id, privacy: .public) done")
-            await self?.refresh()
-            done?()
+        guard ids.allSatisfy({ busySessions[$0] == nil }) else { return }
+        for id in ids { busySessions[id] = action }
+        let label = "\(action.rawValue) \(ids.sorted().joined(separator: " "))"
+        var succeeded = false
+        run(label, operation) {
+            logger.info("\(label, privacy: .public) done")
+            succeeded = true
         } finally: { [weak self] in
-            self?.busySessionIDs.remove(session.id)
+            await self?.refresh()
+            for id in ids { self?.busySessions[id] = nil }
+            if succeeded { done?() }
         }
     }
 
@@ -873,81 +910,4 @@ final class DeckModel {
             await refresh()
         }
     }
-}
-
-struct SessionGroup: Identifiable {
-    let name: String
-    var sessions: [DeckSession]
-    var id: String { name }
-    /// The agent-deck path its sessions share; empty for "Ungrouped".
-    var path: String { sessions.first?.group ?? "" }
-}
-
-/// What the pane shows: a session, optionally one of its extra tmux windows.
-struct PaneTarget: Hashable {
-    let sessionID: String
-    let windowID: String?
-
-    init(sessionID: String, windowID: String? = nil) {
-        self.sessionID = sessionID
-        self.windowID = windowID
-    }
-}
-
-/// A sidebar row: a group header or a pane target.
-enum SidebarItem: Hashable {
-    case group(String)
-    case pane(PaneTarget)
-}
-
-/// The sidebar's two lists.
-enum SidebarTab: String {
-    case sessions, inbox
-}
-
-/// The New Session dialog's starting values.
-struct NewSessionPrompt: Identifiable {
-    let id = UUID()
-    /// A group's path; empty when nothing selected names a group.
-    let groupPath: String
-    let directory: String
-    let command: String
-}
-
-extension DeckSession {
-    var groupName: String {
-        let name = group.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? "Ungrouped" : name
-    }
-}
-
-extension SessionWindow {
-    /// tmux names a window after its command, but a rename can clear it.
-    var title: String {
-        name.isEmpty ? "window \(index)" : name
-    }
-}
-
-enum ConnectionState: Equatable, Sendable {
-    case starting
-    case live
-    case reconnecting
-    case unavailable
-
-    var label: String {
-        switch self {
-        case .starting: "Starting"
-        case .live: "Live"
-        case .reconnecting: "Reconnecting"
-        case .unavailable: "Unavailable"
-        }
-    }
-}
-
-/// Why no `session.status` frame can arrive.
-enum StatusFeedGap {
-    /// The `macapp.status_events` gate is off.
-    case eventsOff
-    /// No TUI and no notify daemon writes transitions.
-    case noPublisher
 }

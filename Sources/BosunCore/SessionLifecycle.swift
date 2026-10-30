@@ -1,6 +1,6 @@
 import Foundation
 
-/// `session start|stop|restart|remove` and `rename`. A refusal arrives as
+/// `session start|stop|restart|remove`, `rename` and `group delete`. A refusal
 /// `AgentDeckCLIError.reported` with agent-deck's own message.
 extension AgentDeckCLI {
     /// For a session that has never run, which has no tmux session for
@@ -40,6 +40,13 @@ extension AgentDeckCLI {
     /// files are kept either way.
     public func deleteSession(id: String) async throws {
         _ = try await run(["session", "remove", id, "--force", "--prune-worktree", "--json"])
+    }
+
+    /// Deletes the group and its subgroups. Sessions still in them move up
+    /// a level rather than failing the delete, so delete them first with
+    /// `deleteSession`. agent-deck refuses the default group.
+    public func deleteGroup(path: String) async throws {
+        _ = try await run(["group", "delete", path, "--force", "--json"])
     }
 }
 
