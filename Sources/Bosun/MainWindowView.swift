@@ -108,12 +108,11 @@ struct MainWindowView: View {
         return "\(shown.title) · \(title)"
     }
 
-    /// The sidebar's two lists; Inbox counts what asks for your review.
+    /// The sidebar's two lists.
     private var tabPicker: some View {
-        let reviews = model.inbox.inbox?.reviewRequests.total ?? 0
-        return Picker("List", selection: $model.tab) {
+        Picker("List", selection: $model.tab) {
             Text("Sessions").tag(SidebarTab.sessions)
-            Text(reviews > 0 ? "Inbox \(reviews)" : "Inbox").tag(SidebarTab.inbox)
+            Text("Inbox").tag(SidebarTab.inbox)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
