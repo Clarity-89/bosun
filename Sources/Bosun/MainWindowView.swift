@@ -465,11 +465,11 @@ private struct SidebarSessionRow: View {
                         .transition(.opacity)
                     }
                 }
-            if model.sideTerminals.hasShells(in: session.path) {
+            if model.sideTerminals.isBusy(in: session.path) {
                 Image(systemName: "terminal")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .help("Side shells running in this session's directory (\(Shortcut.toggleSideTerminals.menuLabel))")
+                    .help("A command runs in this session's side shells (\(Shortcut.toggleSideTerminals.menuLabel))")
             }
             BranchChip(branch: github.branch)
         }
