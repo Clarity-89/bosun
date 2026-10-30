@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 struct MainWindowView: View {
     static let windowID = "main"
+    /// The List's own leading inset, on every row alike; the rows' hover
+    /// plate and drag handle already hold room there.
+    static let rowLeadingInset: CGFloat = 0
 
     @Bindable var model: DeckModel
     @FocusState private var sidebarFocused: Bool
@@ -141,6 +144,7 @@ struct MainWindowView: View {
                             onDelete: model.canDelete(group) ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
                         ) { animated { model.toggleGroup(group.name) } }
                             .tag(row.item)
+                            .listRowInsets(.leading, Self.rowLeadingInset)
                             .contextMenu {
                                 Button("New Session…") { model.promptNewSession(inGroup: group.name) }
                                 Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
@@ -152,10 +156,12 @@ struct MainWindowView: View {
                     case .session(let session):
                         SidebarSessionRow(model: model, session: session)
                             .tag(row.item)
+                            .listRowInsets(.leading, Self.rowLeadingInset)
                             .contextMenu { SessionActionItems(model: model, session: session) }
                     case .window(let window, let session):
                         WindowRow(window: window)
                             .tag(row.item)
+                            .listRowInsets(.leading, Self.rowLeadingInset)
                             .contextMenu {
                                 Button("Close Window…", role: .destructive) {
                                     SessionPrompts.confirmClose(window, in: session, model: model)
@@ -170,6 +176,9 @@ struct MainWindowView: View {
                 }
             }
             .listStyle(.sidebar)
+            // Less of the sidebar's own margin around the rows, whose hover
+            // plate and drag handle hold room of their own.
+            .contentMargins(.horizontal, 4, for: .scrollContent)
             // Over the list, which has no rows yet, so selection, keys and
             // drags never meet a placeholder.
             .overlay(alignment: .topLeading) {
@@ -401,7 +410,7 @@ private struct SidebarSessionRow: View {
 
     var body: some View {
         let github = model.inbox[session]
-        return HStack(spacing: 8) {
+        return HStack(spacing: 6) {
             DragHandle(isVisible: isHovered)
             SessionRow(session: session, attention: model.attention[session], github: github, action: model.busySessions[session.id])
                 .overlay(alignment: .trailing) {
@@ -438,13 +447,14 @@ private struct GroupRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        // With the 14 pt chevron, its centre under the session rows' dots.
+        HStack(spacing: 3) {
             DragHandle(isVisible: isHovered)
             Button(action: toggle) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .frame(width: 16, height: 16)
+                    .frame(width: 14, height: 16)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -463,7 +473,7 @@ private struct GroupRow: View {
             }
         }
         .modifier(SidebarHover(isHovered: $isHovered))
-        .padding(.top, 4)
+        .padding(.top, 1)
     }
 }
 
@@ -586,7 +596,8 @@ struct SessionRow: View {
 /// tooltip, shown on hover. It keeps its room while hidden, so the row never
 /// shifts; the whole row drags, not only the grip.
 private struct DragHandle: View {
-    static let width: CGFloat = 10
+    /// The grip's own width: two dots and the gap between them.
+    static let width: CGFloat = 7
     let isVisible: Bool
 
     var body: some View {
