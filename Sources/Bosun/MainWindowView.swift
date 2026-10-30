@@ -539,19 +539,23 @@ struct SessionRow<Actions: View>: View {
         .animation(.easeOut(duration: 0.25), value: github)
     }
 
+    /// The dot alone says Running and Idle, so the row leaves those words to
+    /// its tooltip; At prompt shares Idle's dot, and the rest differ by colour only.
     private var subtitle: String {
+        describe(withStatus: session.status != .running && session.status != .idle)
+    }
+
+    /// The tool, then what needs you, else the status and its substate.
+    private func describe(withStatus: Bool) -> String {
         let tool = session.tool.isEmpty ? "agent" : session.tool
         if let summary = attention.summary {
             return "\(tool) · \(summary)"
         }
-        if let substate = session.substate {
-            return "\(tool) · \(session.status.label) · \(substate)"
-        }
-        return "\(tool) · \(session.status.label)"
+        return [tool, withStatus ? session.status.label : nil, session.substate].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var help: String {
-        var lines = [session.title, subtitle]
+        var lines = [session.title, describe(withStatus: true)]
         if let issue = github.issue {
             lines.append(issue.summary)
         }

@@ -29,9 +29,11 @@ struct StatusBadge: View {
                 Circle()
                     .strokeBorder(.primary, lineWidth: 1.5)
                     .frame(width: 14, height: 14)
-                    .accessibilityLabel("Unread")
             }
         }
+        // The status the row's subtitle may leave to the dot.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([asks ? "Asks for input" : status.label, unread ? "unread" : nil].compactMap { $0 }.joined(separator: ", "))
     }
 
     private var fill: Color {

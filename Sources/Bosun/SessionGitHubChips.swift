@@ -50,26 +50,17 @@ private extension View {
     }
 }
 
-/// An issue as a row's subtitle names it: its state, number and title, the
-/// title a placeholder while GitHub has yet to describe it.
+/// An issue as a row's subtitle names it: its state and number, the state
+/// once GitHub describes it. Its title is in the row's tooltip.
 struct IssueMark: View {
     let issue: LinkedIssue
 
     var body: some View {
         HStack(spacing: 3) {
-            switch issue.answer {
-            case .issue(let described):
+            if case .issue(let described) = issue.answer {
                 Image(systemName: described.state.symbol).foregroundStyle(described.state.color)
-                Text(verbatim: "#\(described.number) \(described.title)")
-            case .pending:
-                Text(verbatim: "#\(issue.ref.number)")
-                Text(verbatim: "Issue title here")
-                    .modifier(LoadingPulse())
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Loading issue")
-            case .missing:
-                Text(verbatim: "#\(issue.ref.number)")
             }
+            Text(verbatim: "#\(issue.ref.number)")
         }
     }
 }
