@@ -49,9 +49,9 @@ enum SidebarItem: Hashable {
     case pane(PaneTarget)
 }
 
-/// The sidebar's two lists.
+/// The sidebar's tabs: its two lists, and two shells.
 enum SidebarTab: String {
-    case sessions, inbox
+    case sessions, inbox, terminal
 }
 
 /// The New Session dialog's starting values.

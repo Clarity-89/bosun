@@ -13,6 +13,9 @@ struct MainWindowView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// The Inbox row whose detail covers the terminals.
     @State private var inboxSelection: String?
+    /// The side pane's two shells. They show in one place at a time, so the
+    /// sidebar's Terminal tab closes the pane, and opening it leaves the tab.
+    @State private var terminalPaneShown = false
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
 
@@ -26,20 +29,33 @@ struct MainWindowView: View {
                 case .inbox:
                     InboxSidebar(inbox: model.inbox, selection: $inboxSelection)
                         .focused($sidebarFocused)
+                case .terminal:
+                    SideTerminalsView(terminals: model.sideTerminals, directory: sideTerminalsDirectory)
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 footer
             }
-            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+            // Wider for the shells than for the lists.
+            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: model.tab == .terminal ? 720 : 420)
         } detail: {
             detail
+        }
+        .inspector(isPresented: $terminalPaneShown) {
+            SideTerminalsView(terminals: model.sideTerminals, directory: sideTerminalsDirectory)
+                .inspectorColumnWidth(min: 320, ideal: 480, max: 900)
         }
         // Into the Inbox list, never left in a terminal out of sight. Back
         // in Sessions, Show Session puts it in the terminal.
         .onChange(of: model.tab) {
             guard model.tab == .inbox else { return }
             Task { sidebarFocused = true }
+        }
+        .onChange(of: model.tab) {
+            if model.tab == .terminal { terminalPaneShown = false }
+        }
+        .onChange(of: terminalPaneShown) {
+            if terminalPaneShown, model.tab == .terminal { model.tab = .sessions }
         }
         // The keyboard follows the list, as ⌃Q in the TUI goes back to its
         // list: into it as it shows, into the terminal as it hides.
@@ -59,7 +75,7 @@ struct MainWindowView: View {
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
         .navigationTitle(titleText)
         .toolbar {
-            if model.tab == .sessions, let selected = model.selectedSession {
+            if model.tab != .inbox, let selected = model.selectedSession {
                 ToolbarItemGroup(placement: .primaryAction) {
                     GitHubToolbarLinks(github: model.inbox[selected])
                 }
@@ -94,6 +110,12 @@ struct MainWindowView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(model.isRefreshing)
+                Button {
+                    terminalPaneShown.toggle()
+                } label: {
+                    Label("Terminal", systemImage: "terminal")
+                }
+                .help(terminalPaneShown ? "Hide the two shells" : "Show two shells beside the session")
             }
         }
         .sheet(item: Binding(get: { model.newSessionPrompt }, set: { if $0 == nil { model.dismissNewSession() } })) { prompt in
@@ -109,11 +131,18 @@ struct MainWindowView: View {
         return "\(shown.title) · \(title)"
     }
 
-    /// The sidebar's two lists.
+    /// Where the side terminals start: the directory of the session the
+    /// pane shows, else the selected one's.
+    private var sideTerminalsDirectory: String? {
+        (model.paneSession ?? model.selectedSession)?.path
+    }
+
+    /// The sidebar's tabs.
     private var tabPicker: some View {
         Picker("List", selection: $model.tab) {
             Text("Sessions").tag(SidebarTab.sessions)
             Text("Inbox").tag(SidebarTab.inbox)
+            Text("Terminal").tag(SidebarTab.terminal)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -328,7 +357,7 @@ struct MainWindowView: View {
     /// nil while it would. The first click on a window in the background only
     /// brings it forward, so the keyboard then stays where it was.
     private var keyboardHint: String? {
-        guard let shown = model.attachedPane, model.tab == .sessions else { return nil }
+        guard let shown = model.attachedPane, model.tab != .inbox else { return nil }
         guard controlActiveState == .key else { return "Click to type here" }
         guard !shown.hasKeyboard else { return nil }
         // Return hands the keyboard over from the list; elsewhere only the menu shortcut does.

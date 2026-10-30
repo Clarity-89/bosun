@@ -38,6 +38,14 @@ final class GhosttyConfigManager {
         return UInt64(value)
     }
 
+    /// `font-size`, in points.
+    var fontSize: Float {
+        var value: Float = 13
+        let key = "font-size"
+        _ = key.withCString { GhosttyFFI.configGet(config, &value, $0, UInt(key.utf8.count)) }
+        return value
+    }
+
     deinit {
         GhosttyFFI.configFree(config)
     }

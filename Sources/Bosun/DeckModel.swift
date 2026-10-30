@@ -46,6 +46,9 @@ final class DeckModel {
     let attention = AttentionCenter()
     /// GitHub: the Inbox tab, and each session's branch, pull request and issue.
     let inbox = InboxCenter()
+    /// Two shells beside the sessions: in the side pane, or the sidebar's
+    /// Terminal tab.
+    let sideTerminals = SideTerminals()
     /// Counts notification clicks, so the window puts the keyboard in the
     /// terminal of the session shown.
     private(set) var revealRequests = 0
