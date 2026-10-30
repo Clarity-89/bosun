@@ -4,9 +4,6 @@ import SwiftUI
 @MainActor
 struct MainWindowView: View {
     static let windowID = "main"
-    /// The List's own leading inset, on every row alike; the rows' hover
-    /// plate and drag handle already hold room there.
-    static let rowLeadingInset: CGFloat = 0
 
     @Bindable var model: DeckModel
     @FocusState private var sidebarFocused: Bool
@@ -143,7 +140,6 @@ struct MainWindowView: View {
                             ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
                         GroupRow(name: group.name, isExpanded: expanded, onDelete: deleteGroup) { animated { model.toggleGroup(group.name) } }
                             .tag(row.item)
-                            .listRowInsets(.leading, Self.rowLeadingInset)
                             .contextMenu {
                                 Button("New Session…") { model.promptNewSession(inGroup: group.name) }
                                 Button("Quick Session") { model.quickCreateSession(inGroup: group.name) }
@@ -155,12 +151,10 @@ struct MainWindowView: View {
                     case .session(let session):
                         SidebarSessionRow(model: model, session: session)
                             .tag(row.item)
-                            .listRowInsets(.leading, Self.rowLeadingInset)
                             .contextMenu { SessionActionItems(model: model, session: session) }
                     case .window(let window, let session):
                         WindowRow(window: window)
                             .tag(row.item)
-                            .listRowInsets(.leading, Self.rowLeadingInset)
                             .contextMenu {
                                 Button("Close Window…", role: .destructive) {
                                     SessionPrompts.confirmClose(window, in: session, model: model)
@@ -173,6 +167,9 @@ struct MainWindowView: View {
                 .onMove { source, destination in
                     if let move = SidebarMove(rows: rows, from: source, to: destination) { model.move(move) }
                 }
+                // None of the List's own leading inset: the rows' hover plate
+                // and drag handle hold room there.
+                .listRowInsets(.leading, 0)
             }
             .listStyle(.sidebar)
             // Less of the sidebar's own margin around the rows, whose hover
