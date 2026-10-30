@@ -46,8 +46,7 @@ final class DeckModel {
     let attention = AttentionCenter()
     /// GitHub: the Inbox tab, and each session's branch, pull request and issue.
     let inbox = InboxCenter()
-    /// Two shells beside the sessions: in the side pane, or the sidebar's
-    /// Terminal tab.
+    /// Two shells in each session's directory, beside its terminal.
     let sideTerminals = SideTerminals()
     /// Counts notification clicks, so the window puts the keyboard in the
     /// terminal of the session shown.
@@ -255,6 +254,7 @@ final class DeckModel {
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
             attention.listed(sessions, previous: previous)
             inbox.listed(sessions)
+            sideTerminals.listed(sessions)
             inbox.start()
             dropStalePanes(loneViews: await cli.loneViews())
             await loadAllWindows()

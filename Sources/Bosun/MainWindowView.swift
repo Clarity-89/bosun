@@ -13,9 +13,11 @@ struct MainWindowView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// The Inbox row whose detail covers the terminals.
     @State private var inboxSelection: String?
-    /// The side pane's two shells. They show in one place at a time, so the
-    /// sidebar's Terminal tab closes the pane, and opening it leaves the tab.
-    @State private var terminalPaneShown = false
+    /// Whether the side terminals show beside the pane, while it has a
+    /// session.
+    @State private var sideTerminalsShown = false
+    /// Kept across hiding and showing them.
+    @State private var sideTerminalsWidth: CGFloat = 480
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var controlActiveState
 
@@ -29,33 +31,39 @@ struct MainWindowView: View {
                 case .inbox:
                     InboxSidebar(inbox: model.inbox, selection: $inboxSelection)
                         .focused($sidebarFocused)
-                case .terminal:
-                    SideTerminalsView(terminals: model.sideTerminals, directory: sideTerminalsDirectory)
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 footer
             }
-            // Wider for the shells than for the lists.
-            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: model.tab == .terminal ? 720 : 420)
+            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
         } detail: {
-            detail
+            HStack(spacing: 0) {
+                detail
+                // Once the pair runs, so the shells' split view starts with
+                // both and halves the height; a child added later keeps the
+                // first one's size.
+                if let directory = sideTerminalsDirectory, let panes = model.sideTerminals.panes[directory] {
+                    SideTerminalsView(panes: panes, respawn: { model.sideTerminals.respawn($0, in: directory) }, width: $sideTerminalsWidth)
+                }
+            }
         }
-        .inspector(isPresented: $terminalPaneShown) {
-            SideTerminalsView(terminals: model.sideTerminals, directory: sideTerminalsDirectory)
-                .inspectorColumnWidth(min: 320, ideal: 480, max: 900)
+        // The keyboard follows the shells as it follows the list: into the
+        // top one as they show, back into the session's terminal as they
+        // hide. A switch to another session's shells leaves it be.
+        .onChange(of: sideTerminalsDirectory) { previous, directory in
+            guard let directory else {
+                if model.attachedPane != nil { terminalFocusRequest += 1 }
+                return
+            }
+            model.sideTerminals.start(in: directory)
+            if previous == nil { model.sideTerminals.panes[directory]?[0]?.focusTerminal() }
         }
         // Into the Inbox list, never left in a terminal out of sight. Back
         // in Sessions, Show Session puts it in the terminal.
         .onChange(of: model.tab) {
             guard model.tab == .inbox else { return }
             Task { sidebarFocused = true }
-        }
-        .onChange(of: model.tab) {
-            if model.tab == .terminal { terminalPaneShown = false }
-        }
-        .onChange(of: terminalPaneShown) {
-            if terminalPaneShown, model.tab == .terminal { model.tab = .sessions }
         }
         // The keyboard follows the list, as ⌃Q in the TUI goes back to its
         // list: into it as it shows, into the terminal as it hides.
@@ -73,9 +81,10 @@ struct MainWindowView: View {
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
         .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab == .inbox ? nil : $terminalFocusRequest)
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
+        .focusedSceneValue(\.sideTerminalsShown, model.paneSession == nil ? nil : $sideTerminalsShown)
         .navigationTitle(titleText)
         .toolbar {
-            if model.tab != .inbox, let selected = model.selectedSession {
+            if model.tab == .sessions, let selected = model.selectedSession {
                 ToolbarItemGroup(placement: .primaryAction) {
                     GitHubToolbarLinks(github: model.inbox[selected])
                 }
@@ -84,6 +93,14 @@ struct MainWindowView: View {
                 .sharedBackgroundVisibility(.hidden)
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                if model.paneSession != nil {
+                    Button {
+                        sideTerminalsShown.toggle()
+                    } label: {
+                        Label("Shells", systemImage: "terminal")
+                    }
+                    .help((sideTerminalsShown ? "Hide the session's two shells" : "Show two shells in the session's directory") + " (\(Shortcut.toggleSideTerminals.menuLabel))")
+                }
                 Button {
                     model.promptNewSession()
                 } label: {
@@ -110,12 +127,6 @@ struct MainWindowView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(model.isRefreshing)
-                Button {
-                    terminalPaneShown.toggle()
-                } label: {
-                    Label("Terminal", systemImage: "terminal")
-                }
-                .help(terminalPaneShown ? "Hide the two shells" : "Show two shells beside the session")
             }
         }
         .sheet(item: Binding(get: { model.newSessionPrompt }, set: { if $0 == nil { model.dismissNewSession() } })) { prompt in
@@ -131,18 +142,17 @@ struct MainWindowView: View {
         return "\(shown.title) · \(title)"
     }
 
-    /// Where the side terminals start: the directory of the session the
-    /// pane shows, else the selected one's.
+    /// The directory whose shells show beside the pane: its session's,
+    /// while they are wanted.
     private var sideTerminalsDirectory: String? {
-        (model.paneSession ?? model.selectedSession)?.path
+        sideTerminalsShown ? model.paneSession?.path : nil
     }
 
-    /// The sidebar's tabs.
+    /// The sidebar's two lists.
     private var tabPicker: some View {
         Picker("List", selection: $model.tab) {
             Text("Sessions").tag(SidebarTab.sessions)
             Text("Inbox").tag(SidebarTab.inbox)
-            Text("Terminal").tag(SidebarTab.terminal)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -286,8 +296,8 @@ struct MainWindowView: View {
             if let session { model.split(session, .sideBySide) }
         case (.openInGhostty, _):
             if let session { model.openInGhostty(session) }
-        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.toggleSessionList, _), (.focusTerminal, _), (.focusSidebar, _), (.settings, _):
-            // Nothing to do on this row; the last four have no list key.
+        case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.toggleSessionList, _), (.toggleSideTerminals, _), (.focusTerminal, _), (.focusSidebar, _), (.settings, _):
+            // Nothing to do on this row; the last five have no list key.
             break
         }
         return .handled
@@ -357,7 +367,7 @@ struct MainWindowView: View {
     /// nil while it would. The first click on a window in the background only
     /// brings it forward, so the keyboard then stays where it was.
     private var keyboardHint: String? {
-        guard let shown = model.attachedPane, model.tab != .inbox else { return nil }
+        guard let shown = model.attachedPane, model.tab == .sessions else { return nil }
         guard controlActiveState == .key else { return "Click to type here" }
         guard !shown.hasKeyboard else { return nil }
         // Return hands the keyboard over from the list; elsewhere only the menu shortcut does.
@@ -425,8 +435,8 @@ private struct NotRunningPane: View {
 /// A sidebar row: highlighted on hover, with the drag handle fading in at
 /// the leading edge and Rename and Delete in a plate over the end of the
 /// text, so the common actions need no context menu and nothing moves
-/// when they show. The chip comes after the text, so the plate never
-/// covers it.
+/// when they show. The shells mark and the chip come after the text, so
+/// the plate never covers them.
 @MainActor
 private struct SidebarSessionRow: View {
     let model: DeckModel
@@ -455,6 +465,12 @@ private struct SidebarSessionRow: View {
                         .transition(.opacity)
                     }
                 }
+            if model.sideTerminals.hasShells(in: session.path) {
+                Image(systemName: "terminal")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Side shells running in this session's directory (\(Shortcut.toggleSideTerminals.menuLabel))")
+            }
             BranchChip(branch: github.branch)
         }
         .modifier(SidebarHover(isHovered: $isHovered))

@@ -20,7 +20,7 @@ enum Shortcut: CaseIterable {
     case newSession, quickSession
     case rename, restart, stop, delete
     case splitSideBySide, openInGhostty
-    case toggleSessionList, focusTerminal, focusSidebar, cheatSheet, settings
+    case toggleSessionList, toggleSideTerminals, focusTerminal, focusSidebar, cheatSheet, settings
 
     enum Section: String, CaseIterable {
         case sessionList = "Session list"
@@ -32,7 +32,7 @@ enum Shortcut: CaseIterable {
         switch self {
         case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: .sessionList
         case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty: .sessions
-        case .toggleSessionList, .focusTerminal, .focusSidebar, .cheatSheet, .settings: .window
+        case .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .cheatSheet, .settings: .window
         }
     }
 
@@ -56,6 +56,7 @@ enum Shortcut: CaseIterable {
         case .splitSideBySide: "Open a shell beside the session's agent"
         case .openInGhostty: "Open the session in a Ghostty window"
         case .toggleSessionList: "Hide or show the session list"
+        case .toggleSideTerminals: "Show or hide the side shells; the keyboard goes with them"
         case .focusTerminal: "Focus the terminal"
         case .focusSidebar: "Focus the session list"
         case .cheatSheet: "Show these shortcuts"
@@ -82,7 +83,7 @@ enum Shortcut: CaseIterable {
         case .delete: "d"
         case .splitSideBySide: "H"
         case .cheatSheet: "?"
-        case .toggleSessionList, .focusTerminal, .focusSidebar, .settings: nil
+        case .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .settings: nil
         }
     }
 
@@ -124,6 +125,9 @@ enum Shortcut: CaseIterable {
         // already swallows ⌃Q outside its own sessions, so in Bosun's views
         // the terminal never had it.
         case .toggleSessionList: KeyboardShortcut("q", modifiers: .control)
+        // Ghostty's `new_split:right`, which a single pane never performs:
+        // there too, a terminal beside this one.
+        case .toggleSideTerminals: KeyboardShortcut("d")
         case .focusTerminal: KeyboardShortcut("e", modifiers: [.command, .shift])
         case .focusSidebar: KeyboardShortcut("l", modifiers: [.command, .shift])
         case .cheatSheet: KeyboardShortcut("/")
