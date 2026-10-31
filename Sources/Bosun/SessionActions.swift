@@ -4,13 +4,14 @@ import SwiftUI
 
 /// A session's actions, the same in its row's context menu and the Session
 /// menu: a shell here, Open in Ghostty and in the code editor, the merge
-/// and the pull request to ask its agent for, Stop and Restart, Mark as
-/// Unread, the issue it works on, then Rename and Delete, each with its
-/// shortcut. A stopped session has nothing to stop or to ask; Restart
-/// starts it. With a window row selected, the items act on the window's
-/// session, and Delete closes the window instead, as d does on the TUI's
-/// window rows. Nil while nothing is selected, which leaves the items
-/// visible but disabled, as macOS menus do.
+/// and the pull request to ask its agent for, Stop and Restart, the
+/// worktree setup script to run again, Mark as Unread, the issue it works
+/// on, then Rename and Delete, each with its shortcut. A stopped session
+/// has nothing to stop or to ask; Restart starts it. With a window row
+/// selected, the items act on the window's session, and Delete closes the
+/// window instead, as d does on the TUI's window rows. Nil while nothing
+/// is selected, which leaves the items visible but disabled, as macOS
+/// menus do.
 @MainActor
 struct SessionActionItems: View {
     let model: DeckModel
@@ -34,6 +35,9 @@ struct SessionActionItems: View {
                 Button("Stop…", action: perform(session) { SessionPrompts.confirmStop($0, model: model) }).shortcut(.stop)
             }
             Button("Restart", action: perform(session, model.restartSession)).shortcut(.restart)
+            if session?.worktreePath != nil {
+                Button("Run Worktree Setup Script", action: perform(session, model.runWorktreeSetup)).shortcut(.worktreeSetup)
+            }
             Divider()
             Button("Mark as Unread", action: perform(session) { model.attention.markUnread(sessionID: $0.id) })
             Divider()

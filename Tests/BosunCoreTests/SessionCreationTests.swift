@@ -29,6 +29,17 @@ import Testing
         #expect(arguments.contains("-b") == createBranch)
     }
 
+    /// The hook only exists for a worktree, so the flag only goes with one.
+    @Test(arguments: [(true, false), (false, true)])
+    func theSetupHookIsSkippedOnlyWhenAsked(runsSetup: Bool, skips: Bool) {
+        let arguments = AgentDeckCLI.addArguments(NewSessionRequest(
+            directory: "/tmp/p", command: "omp", worktreeBranch: "feature/x", runsWorktreeSetup: runsSetup
+        ))
+        #expect(arguments.contains("--skip-hooks") == skips)
+        let plain = AgentDeckCLI.addArguments(NewSessionRequest(directory: "/tmp/p", command: "omp", runsWorktreeSetup: false))
+        #expect(!plain.contains("--skip-hooks"))
+    }
+
     @Test func quickSessionLeavesTheTitleToAgentDeck() {
         let arguments = AgentDeckCLI.addArguments(NewSessionRequest(
             title: "ignored", directory: "/tmp/p", command: "omp", quick: true

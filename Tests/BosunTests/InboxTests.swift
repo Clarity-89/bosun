@@ -9,7 +9,7 @@ private let branch = BranchRef(branch: "me/feature", repos: [octo])
 private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func session(_ id: String, path: String = "/p") -> DeckSession {
-    DeckSession(id: id, title: id, path: path, group: "g", tool: "omp", status: .idle, substate: nil, tmuxSession: nil, archived: false, lastActivityAt: nil)
+    DeckSession(id: id, title: id, path: path, group: "g", tool: "omp", status: .idle, substate: nil, tmuxSession: nil, worktreePath: nil, archived: false, lastActivityAt: nil)
 }
 
 private func issue(_ number: Int, in repo: RepoSlug = octo) -> GitHubIssue {

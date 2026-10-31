@@ -4,7 +4,7 @@ import Testing
 @testable import BosunCore
 
 private func session(_ id: String, title: String = "", group: String) -> DeckSession {
-    DeckSession(id: id, title: title.isEmpty ? id : title, path: "/p", group: group, tool: "shell", status: .idle, substate: nil, tmuxSession: nil, archived: false, lastActivityAt: nil)
+    DeckSession(id: id, title: title.isEmpty ? id : title, path: "/p", group: group, tool: "shell", status: .idle, substate: nil, tmuxSession: nil, worktreePath: nil, archived: false, lastActivityAt: nil)
 }
 
 /// The sidebar in agent-deck's own order, as the TUI shows it.

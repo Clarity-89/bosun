@@ -510,8 +510,8 @@ final class DeckModel {
             attach(PaneTarget(sessionID: sessionID))
         }
         // After the reload, which clears the footer; a start that failed
-        // is the bigger news.
-        if let notice = added.setupHookNotice, lastError == nil {
+        // is the bigger news, and a hook you asked to skip is none.
+        if let notice = added.setupHookNotice, request.runsWorktreeSetup, lastError == nil {
             lastError = notice
         }
     }
@@ -599,6 +599,12 @@ final class DeckModel {
         lifecycle(.restart, on: [session.id], { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
             if let self, self.shownSessionID == session.id, self.attachedPane == nil { self.attach(PaneTarget(sessionID: session.id)) }
         }
+    }
+
+    /// Runs the repository's worktree setup script again in the session's
+    /// worktree, as b does in the TUI; the row says so meanwhile.
+    func runWorktreeSetup(_ session: DeckSession) {
+        lifecycle(.setup, on: [session.id]) { [cli] in try await cli.runWorktreeSetup(sessionID: session.id) }
     }
 
     func renameSession(_ session: DeckSession, to title: String) {
