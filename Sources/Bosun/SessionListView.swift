@@ -114,6 +114,8 @@ struct SessionListView: View {
                         WindowRow(window: window)
                             .tag(row.item)
                             .contextMenu {
+                                Button("Rename Window…") { SessionPrompts.renameWindow(window, model: model) }
+                                    .shortcut(.rename)
                                 Button("Close Window…", role: .destructive) {
                                     SessionPrompts.confirmClose(window, in: session, model: model)
                                 }
@@ -211,7 +213,12 @@ struct SessionListView: View {
         case (.cheatSheet, _):
             openWindow(id: ShortcutsView.windowID)
         case (.rename, _):
-            if let session { SessionPrompts.rename(session, model: model) }
+            guard let session else { break }
+            if let window = model.selectedWindow {
+                SessionPrompts.renameWindow(window, model: model)
+            } else {
+                SessionPrompts.rename(session, model: model)
+            }
         case (.restart, _):
             if let session { model.restartSession(session) }
         case (.stop, _):

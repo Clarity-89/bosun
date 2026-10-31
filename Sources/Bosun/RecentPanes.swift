@@ -25,6 +25,8 @@ struct AttachedPane: Identifiable {
     var restartsIfDead = false
     /// Whether its terminal has the keyboard, as the window's first responder.
     var hasKeyboard = false
+    /// The view's current window at the last listing; nil before one.
+    var viewWindowID: String?
 }
 
 /// The panes kept attached, the most recently shown last. A hidden one

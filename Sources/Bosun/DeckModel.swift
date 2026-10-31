@@ -95,7 +95,7 @@ final class DeckModel {
     /// True once a `list` succeeded, so `sessions` is real; a failure leaves
     /// `hasLoadedSessions` true with nothing in it.
     @ObservationIgnored private var hasListed = false
-    @ObservationIgnored private var agentPanePollTask: Task<Void, Never>?
+    @ObservationIgnored private var tmuxPollTask: Task<Void, Never>?
     @ObservationIgnored private var pendingReveal: (sessionID: String, windowID: String?)?
     /// The session a reveal put in the pane before it had a terminal; the
     /// keyboard goes into the terminal once its attach lands.
@@ -226,7 +226,7 @@ final class DeckModel {
     }
 
     func stop() {
-        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask, agentPanePollTask] {
+        for task in [followerTask, reconcileTask, delayedRefreshTask, refreshTask, installTask, tmuxPollTask] {
             task?.cancel()
         }
         attention.stop()
@@ -253,19 +253,45 @@ final class DeckModel {
     }
 
     /// Window rows for every session, keyed back from tmux session name
-    /// to agent-deck id.
+    /// to agent-deck id. A listing with nothing new leaves the rows alone;
+    /// the shown pane's selection follows its view either way.
     private func loadAllWindows() async {
         do {
-            let byTmuxName = try await cli.listAllWindows()
-            windowsBySession = sessions.reduce(into: [:]) { result, session in
-                if let name = session.tmuxSession, let windows = byTmuxName[name] {
+            let listing = try await cli.listAllWindows()
+            let windows: [String: [SessionWindow]] = sessions.reduce(into: [:]) { result, session in
+                if let name = session.tmuxSession, let windows = listing.windows[name] {
                     result[session.id] = windows
                 }
             }
-            shownChanged()
+            if windows != windowsBySession {
+                windowsBySession = windows
+                shownChanged()
+            }
+            followShownWindow(currentWindows: listing.currentWindows)
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// The selection follows the window the shown pane is on, as tmux's
+    /// own keys move it, where a click on the row would have put it. Only
+    /// a window that changed since the pane's last listing counts: a
+    /// click's `select-window` may still be in flight when a listing
+    /// arrives, and must not be undone.
+    private func followShownWindow(currentWindows: [String: String]) {
+        guard let live = attachedPane, let view = live.view, let current = currentWindows[view] else { return }
+        let previous = live.viewWindowID
+        recent.update(live.id) { $0.viewWindowID = current }
+        guard let previous, previous != current,
+              case .pane(let target)? = selection, target.sessionID == live.sessionID else { return }
+        selection = .pane(paneTarget(live.sessionID, windowID: current))
+        shownChanged()
+    }
+
+    /// The row that shows a window: the session's own for the first window,
+    /// which runs the agent.
+    private func paneTarget(_ sessionID: String, windowID: String?) -> PaneTarget {
+        PaneTarget(sessionID: sessionID, windowID: windowID == windowsBySession[sessionID]?.first?.windowID ? nil : windowID)
     }
 
     /// Pops the session out into a separate Ghostty window.
@@ -627,6 +653,14 @@ final class DeckModel {
         }
     }
 
+    func renameWindow(_ window: SessionWindow, to name: String) {
+        run("rename window") { [cli] in
+            try await cli.renameWindow(windowID: window.windowID, to: name)
+        } then: { [weak self] in
+            await self?.loadAllWindows()
+        }
+    }
+
     func stopSession(_ session: DeckSession) {
         lifecycle(.stop, on: [session.id]) { [cli] in try await cli.stopSession(id: session.id) }
     }
@@ -804,7 +838,7 @@ final class DeckModel {
             let stats = try await cli.eventsStats()
             await refresh()
             startReconcileLoop()
-            startAgentPanePoll()
+            startTmuxPoll()
             record(stats)
             if stats.enabled {
                 startFollower(after: stats.cursor)
@@ -942,12 +976,16 @@ final class DeckModel {
 
     // MARK: Attention
 
-    /// omp's pane titles every 2 s: when its turns end and when it asks.
-    private func startAgentPanePoll() {
-        agentPanePollTask?.cancel()
-        agentPanePollTask = Task {
+    /// tmux every 2 s: omp's pane titles, for turn ends and questions, and
+    /// the windows, which tmux's own keys open, close, rename and switch
+    /// behind Bosun's back.
+    private func startTmuxPoll() {
+        tmuxPollTask?.cancel()
+        tmuxPollTask = Task {
             while !Task.isCancelled {
-                if let panes = await cli.listAgentPanes() {
+                async let panes = cli.listAgentPanes()
+                await loadAllWindows()
+                if let panes = await panes {
                     attention.panesPolled(panes, sessions: sessions)
                 }
                 try? await Task.sleep(for: .seconds(2))
@@ -967,8 +1005,7 @@ final class DeckModel {
         guard let session = sessions.first(where: { $0.id == sessionID }) else { return }
         tab = .sessions
         uncover(session)
-        let first = windowsBySession[sessionID]?.first?.windowID
-        select(.pane(PaneTarget(sessionID: sessionID, windowID: windowID == first ? nil : windowID)))
+        select(.pane(paneTarget(sessionID, windowID: windowID)))
         if attachedPane != nil {
             revealRequests += 1
         } else {

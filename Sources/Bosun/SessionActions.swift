@@ -8,8 +8,8 @@ import SwiftUI
 /// worktree setup script to run again, Mark as Unread, the issue it works
 /// on, then Rename and Delete, each with its shortcut. A stopped session
 /// has nothing to stop or to ask; Restart starts it. With a window row
-/// selected, the items act on the window's session, and Delete closes the
-/// window instead, as d does on the TUI's window rows. Nil while nothing
+/// selected, the items act on the window's session, and Rename and Delete
+/// act on the window instead, as the TUI's d closes it. Nil while nothing
 /// is selected, which leaves the items visible but disabled, as macOS
 /// menus do.
 @MainActor
@@ -46,13 +46,14 @@ struct SessionActionItems: View {
                 Button("Remove Issue Link", action: perform(session) { model.inbox.unlink(session: $0.id) })
             }
             Divider()
-            Button("Rename…", action: perform(session) { SessionPrompts.rename($0, model: model) }).shortcut(.rename)
             if let window {
+                Button("Rename Window…", action: perform(session) { _ in SessionPrompts.renameWindow(window, model: model) }).shortcut(.rename)
                 Button("Close Window…", role: .destructive, action: perform(session) {
                     SessionPrompts.confirmClose(window, in: $0, model: model)
                 })
                 .shortcut(.delete)
             } else {
+                Button("Rename…", action: perform(session) { SessionPrompts.rename($0, model: model) }).shortcut(.rename)
                 Button("Delete…", role: .destructive, action: perform(session) {
                     SessionPrompts.confirmDelete($0, model: model)
                 })
@@ -97,19 +98,29 @@ private func perform(_ session: DeckSession?, _ action: @escaping @MainActor (De
 @MainActor
 enum SessionPrompts {
     static func rename(_ session: DeckSession, model: DeckModel) {
+        guard let title = askName("Rename “\(session.title)”", current: session.title) else { return }
+        model.renameSession(session, to: title)
+    }
+
+    static func renameWindow(_ window: SessionWindow, model: DeckModel) {
+        guard let name = askName("Rename “\(window.title)”", current: window.name) else { return }
+        model.renameWindow(window, to: name)
+    }
+
+    /// A new name, or nil for Cancel, a blank, or the name as it was.
+    private static func askName(_ message: String, current: String) -> String? {
         let alert = NSAlert()
-        alert.messageText = "Rename “\(session.title)”"
-        let field = NSTextField(string: session.title)
+        alert.messageText = message
+        let field = NSTextField(string: current)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         NSApp.activate()
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title != session.title else { return }
-        model.renameSession(session, to: title)
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty || name == current ? nil : name
     }
 
     /// Your link wins over what Bosun works out, in Bosun only: GitHub is
