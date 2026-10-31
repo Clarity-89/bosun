@@ -235,6 +235,17 @@ final class DeckModel {
         }
     }
 
+    /// Opens the session's directory in the code editor. agent-deck lists
+    /// every session with a path, so an empty one is agent-deck's own bug.
+    func open(_ session: DeckSession, in editor: CodeEditor) {
+        run("open in \(editor.name)") {
+            guard !session.path.isEmpty else {
+                throw AgentDeckCLIError.reported("“\(session.title)” has no directory")
+            }
+            try await editor.open(directory: session.path)
+        }
+    }
+
     private func loadSessions() async {
         do {
             // Without the group order (a failed `group list`) the last one

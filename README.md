@@ -6,7 +6,7 @@ A macOS app over [agent-deck](https://github.com/asheshgoplani/agent-deck). Agen
 - Notifications when an agent finishes a turn, asks a question or errors; unread marks in the list and the menu bar.
 - New, stop, restart, rename and delete sessions, with git worktrees; extra shell windows and splits; two side shells in the session's directory.
 - Inbox: review requests, your pull requests and issues, and mentions, through `gh`. Each session shows its branch's pull request and the issue it works on.
-- Toolbar buttons that ask the session's agent to merge main, open a pull request, or push to it.
+- Toolbar buttons that open the session's directory in GoLand, VS Code or Cursor, and that ask its agent to merge main, open a pull request, or push to it.
 
 ## Requirements
 
