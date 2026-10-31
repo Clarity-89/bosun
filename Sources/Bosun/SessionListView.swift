@@ -115,14 +115,7 @@ struct SessionListView: View {
                     case .window(let window, let session):
                         WindowRow(window: window)
                             .tag(row.item)
-                            .contextMenu {
-                                Button("Rename Window…") { SessionPrompts.renameWindow(window, model: model) }
-                                    .shortcut(.rename)
-                                Button("Close Window…", role: .destructive) {
-                                    SessionPrompts.confirmClose(window, in: session, model: model)
-                                }
-                                .shortcut(.delete)
-                            }
+                            .contextMenu { WindowActionItems(model: model, session: session, window: window) }
                             .moveDisabled(true)
                     }
                 }

@@ -46,12 +46,8 @@ struct SessionActionItems: View {
                 Button("Remove Issue Link", action: perform(session) { model.inbox.unlink(session: $0.id) })
             }
             Divider()
-            if let window {
-                Button("Rename Window…", action: perform(session) { _ in SessionPrompts.renameWindow(window, model: model) }).shortcut(.rename)
-                Button("Close Window…", role: .destructive, action: perform(session) {
-                    SessionPrompts.confirmClose(window, in: $0, model: model)
-                })
-                .shortcut(.delete)
+            if let window, let session {
+                WindowActionItems(model: model, session: session, window: window)
             } else {
                 Button("Rename…", action: perform(session) { SessionPrompts.rename($0, model: model) }).shortcut(.rename)
                 Button("Delete…", role: .destructive, action: perform(session) {
@@ -83,6 +79,23 @@ struct ShellActionItems: View {
         Button(action: perform(session) { model.split($0, .topAndBottom) }) {
             Label("Split Top and Bottom", systemImage: "rectangle.split.1x2")
         }
+    }
+}
+
+/// A window row's own actions, Rename Window and Close Window, on the
+/// shortcuts its session's Rename and Delete take: the TUI's d closes a
+/// window the same way.
+@MainActor
+struct WindowActionItems: View {
+    let model: DeckModel
+    let session: DeckSession
+    let window: SessionWindow
+
+    var body: some View {
+        Button("Rename Window…") { SessionPrompts.renameWindow(window, model: model) }
+            .shortcut(.rename)
+        Button("Close Window…", role: .destructive) { SessionPrompts.confirmClose(window, in: session, model: model) }
+            .shortcut(.delete)
     }
 }
 

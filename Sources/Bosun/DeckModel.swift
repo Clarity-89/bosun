@@ -81,6 +81,11 @@ final class DeckModel {
     /// `hasLoadedSessions` true with nothing in it.
     @ObservationIgnored private var hasListed = false
     @ObservationIgnored private var tmuxPollTask: Task<Void, Never>?
+    @ObservationIgnored private var windowsTask: Task<Void, Never>?
+    /// Every tmux session's current window at the last listing, Bosun's
+    /// views included. The poll's own, so a listing with nothing new
+    /// touches nothing observed.
+    @ObservationIgnored private var currentWindows: [String: String] = [:]
     @ObservationIgnored private var pendingReveal: (sessionID: String, windowID: String?)?
     /// The session a reveal put in the pane before it had a terminal; the
     /// keyboard goes into the terminal once its attach lands.
@@ -206,10 +211,24 @@ final class DeckModel {
         await list
     }
 
+    /// One `list-windows` at a time, as `refresh()` runs one `list`:
+    /// listings then land in the order tmux answered them, so an older
+    /// one never reads as a switch back.
+    private func loadAllWindows() async {
+        if let windowsTask {
+            return await windowsTask.value
+        }
+        let task = Task { await listWindows() }
+        windowsTask = task
+        await task.value
+        windowsTask = nil
+    }
+
     /// Window rows for every session, keyed back from tmux session name
     /// to agent-deck id. A listing with nothing new leaves the rows alone;
-    /// the shown pane's selection follows its view either way.
-    private func loadAllWindows() async {
+    /// the shown pane's selection follows its view either way. A failure
+    /// is logged: in the footer it would return every 2 s.
+    private func listWindows() async {
         do {
             let listing = try await cli.listAllWindows()
             let windows: [String: [SessionWindow]] = sessions.reduce(into: [:]) { result, session in
@@ -221,22 +240,23 @@ final class DeckModel {
                 windowsBySession = windows
                 shownChanged()
             }
-            followShownWindow(currentWindows: listing.currentWindows)
+            followShownWindow(listed: listing.currentWindows)
         } catch {
-            lastError = error.localizedDescription
+            logger.error("list-windows failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    /// The selection follows the window the shown pane is on, as tmux's
-    /// own keys move it, where a click on the row would have put it. Only
-    /// a window that changed since the pane's last listing counts: a
+    /// The selection follows the window the shown pane's view is on, as
+    /// tmux's own keys move it, where a click on the row would have put
+    /// it. Only a window that differs from the last listing's counts: a
     /// click's `select-window` may still be in flight when a listing
-    /// arrives, and must not be undone.
-    private func followShownWindow(currentWindows: [String: String]) {
-        guard let live = attachedPane, let view = live.view, let current = currentWindows[view] else { return }
-        let previous = live.viewWindowID
-        recent.update(live.id) { $0.viewWindowID = current }
-        guard let previous, previous != current,
+    /// arrives, and one that still shows the window before moves nothing.
+    /// A second click within the same 2 s can still show as the first for
+    /// one tick.
+    private func followShownWindow(listed: [String: String]) {
+        defer { currentWindows = listed }
+        guard let live = attachedPane, let view = live.view,
+              let current = listed[view], let previous = currentWindows[view], previous != current,
               case .pane(let target)? = selection, target.sessionID == live.sessionID else { return }
         selection = .pane(paneTarget(live.sessionID, windowID: current))
         shownChanged()
@@ -419,7 +439,6 @@ final class DeckModel {
                 showWindow(now.windowID, in: live)
             }
             logger.info("attached \(sessionID, privacy: .public) in window, view \(live.view ?? "none", privacy: .public)")
-            await loadAllWindows()
         }
     }
 
@@ -566,10 +585,8 @@ final class DeckModel {
     /// shown in Bosun's view while other clients stay on their window.
     func newShellWindow(in session: DeckSession) {
         guard let target = shellTarget(session) else { return }
-        run("new window") { [cli] in
+        changeWindows("new window") { [cli] in
             try await cli.newShellWindow(tmuxSession: target, workingDirectory: session.path)
-        } then: { [weak self] in
-            await self?.loadAllWindows()
         }
     }
 
@@ -600,19 +617,21 @@ final class DeckModel {
     }
 
     func closeWindow(_ window: SessionWindow, in session: DeckSession) {
-        run("close window") { [cli] in
+        changeWindows("close window") { [cli] in
             try await cli.closeWindow(sessionID: session.id, windowID: window.windowID)
-        } then: { [weak self] in
-            await self?.loadAllWindows()
         }
     }
 
     func renameWindow(_ window: SessionWindow, to name: String) {
-        run("rename window") { [cli] in
+        changeWindows("rename window") { [cli] in
             try await cli.renameWindow(windowID: window.windowID, to: name)
-        } then: { [weak self] in
-            await self?.loadAllWindows()
         }
+    }
+
+    /// A change to a session's windows made from Bosun: the rows show it
+    /// at once, not at the next poll.
+    private func changeWindows(_ label: String, _ operation: @escaping @Sendable () async throws -> Void) {
+        run(label, operation) { [weak self] in await self?.loadAllWindows() }
     }
 
     func stopSession(_ session: DeckSession) {
