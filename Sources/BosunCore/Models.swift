@@ -34,8 +34,8 @@ public enum SessionStatus: String, Decodable, Sendable {
 
 /// One row of `list --json`. Optionality follows the Go struct's `omitempty`:
 /// `group`, `tool` and `path` are always present (possibly empty); `substate`,
-/// `tmux_session` and `last_activity_at` are absent when there is no
-/// refinement, no server, or no activity yet.
+/// `tmux_session`, `worktree_path` and `last_activity_at` are absent when
+/// there is no refinement, no server, no worktree, or no activity yet.
 public struct DeckSession: Decodable, Identifiable, Equatable, Sendable {
     public let id: String
     public let title: String
@@ -45,6 +45,10 @@ public struct DeckSession: Decodable, Identifiable, Equatable, Sendable {
     public var status: SessionStatus
     public var substate: String?
     public let tmuxSession: String?
+    /// The git worktree agent-deck made for the session, whose repository
+    /// may have a setup hook to run again. agent-deck 1.16.35 and later
+    /// list it; nil before, and for a session in a plain directory.
+    public let worktreePath: String?
     public let archived: Bool
     /// agent-deck's last confirmed activity or hook time; it moves while a
     /// session works, not only at a turn's end. `AgentDeckCLI.jsonDecoder()`
@@ -54,6 +58,7 @@ public struct DeckSession: Decodable, Identifiable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, title, path, group, tool, status, substate, archived
         case tmuxSession = "tmux_session"
+        case worktreePath = "worktree_path"
         case lastActivityAt = "last_activity_at"
     }
 }

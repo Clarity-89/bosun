@@ -482,11 +482,15 @@ final class DeckModel {
 
     /// Adds the session, starts it and attaches it in the pane. A refused add
     /// throws; after a refused start the pane offers Restart and the footer
-    /// says why.
+    /// says why, as it does for a worktree setup hook that did not run.
     func createSession(_ request: NewSessionRequest) async throws {
-        let sessionID = try await cli.addSession(request)
+        let added = try await cli.addSession(request)
+        let sessionID = added.id
         UserDefaults.standard.set(request.command.trimmingCharacters(in: .whitespaces), forKey: Self.lastCommandKey)
         logger.info("created \(sessionID, privacy: .public)")
+        if let notice = added.setupHookNotice {
+            logger.notice("\(sessionID, privacy: .public): \(notice, privacy: .public)")
+        }
         var startError: String?
         do {
             try await cli.startSession(id: sessionID)
@@ -504,6 +508,11 @@ final class DeckModel {
             lastError = startError
         } else {
             attach(PaneTarget(sessionID: sessionID))
+        }
+        // After the reload, which clears the footer; a start that failed
+        // is the bigger news, and a hook you asked to skip is none.
+        if let notice = added.setupHookNotice, request.runsWorktreeSetup, lastError == nil {
+            lastError = notice
         }
     }
 
@@ -590,6 +599,12 @@ final class DeckModel {
         lifecycle(.restart, on: [session.id], { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
             if let self, self.shownSessionID == session.id, self.attachedPane == nil { self.attach(PaneTarget(sessionID: session.id)) }
         }
+    }
+
+    /// Runs the repository's worktree setup script again in the session's
+    /// worktree, as b does in the TUI; the row says so meanwhile.
+    func runWorktreeSetup(_ session: DeckSession) {
+        lifecycle(.setup, on: [session.id]) { [cli] in try await cli.runWorktreeSetup(sessionID: session.id) }
     }
 
     func renameSession(_ session: DeckSession, to title: String) {

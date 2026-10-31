@@ -36,7 +36,7 @@ import Testing
 /// name only starts the same must survive.
 @Suite struct GroupTreeTests {
     private func session(in group: String) -> DeckSession {
-        DeckSession(id: group, title: group, path: "/p", group: group, tool: "shell", status: .idle, substate: nil, tmuxSession: nil, archived: false, lastActivityAt: nil)
+        DeckSession(id: group, title: group, path: "/p", group: group, tool: "shell", status: .idle, substate: nil, tmuxSession: nil, worktreePath: nil, archived: false, lastActivityAt: nil)
     }
 
     @Test func groupAndSubgroupsOnly() {

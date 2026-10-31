@@ -20,6 +20,7 @@ struct NewSessionSheet: View {
     /// Nil while the branch follows the title.
     @State private var editedBranch: String?
     @State private var newBranch = true
+    @State private var runsSetup = true
     @State private var error: String?
     @State private var isCreating = false
 
@@ -52,6 +53,9 @@ struct NewSessionSheet: View {
                     .disabled(!worktree)
                 Toggle("New branch", isOn: $newBranch)
                     .disabled(!worktree)
+                Toggle("Run the worktree setup script", isOn: $runsSetup)
+                    .disabled(!worktree)
+                    .help("The repository's .agent-deck/worktree-setup.sh, once you have approved it with agent-deck worktree trust-hooks")
                 if let error {
                     Text(error)
                         .foregroundStyle(.red)
@@ -163,7 +167,8 @@ struct NewSessionSheet: View {
             groupPath: groupPath,
             command: command,
             worktreeBranch: worktree ? branch.wrappedValue : nil,
-            createBranch: newBranch
+            createBranch: newBranch,
+            runsWorktreeSetup: runsSetup
         )
         isCreating = true
         error = nil
