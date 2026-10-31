@@ -136,6 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Back from the browser, say, where a pull request was merged.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        DeckModel.shared.inbox.refreshIfStale()
+    }
+
     /// SwiftUI names the Window scene's NSWindow after its id, and keeps it
     /// around once closed.
     private var mainWindow: NSWindow? {

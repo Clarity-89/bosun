@@ -194,8 +194,16 @@ final class InboxCenter {
     }
 
     /// GitHub last answered over a minute ago.
-    var isStale: Bool {
+    private var isStale: Bool {
         updatedAt.map { Date.now.timeIntervalSince($0) > 60 } ?? false
+    }
+
+    /// You came back after a minute or more away, in which a pull request
+    /// may have been opened or merged elsewhere.
+    func refreshIfStale() {
+        guard isStale else { return }
+        logger.info("GitHub over a minute old; reloading")
+        Task { await refresh() }
     }
 
     /// Reloads every 5 min from now on; the first list starts it, so the
@@ -224,6 +232,15 @@ final class InboxCenter {
         update { state in state.links = state.links.filter { ids.contains($0.key) } }
         guard loopTask != nil, !Set(sessions.map(\.path)).isSubset(of: state.folders.keys) else { return }
         Task { await loadSessions() }
+    }
+
+    /// Reads the session's folder again and asks GitHub about its branch
+    /// alone, not the whole Inbox: the branch may be new, pushed, or have a
+    /// pull request opened or merged.
+    func recheck(_ session: DeckSession) {
+        guard loopTask != nil else { return }
+        logger.info("rechecking the branch of \(session.id, privacy: .public)")
+        Task { await loadFolder(session.path) }
     }
 
     /// One load at a time; asking during one waits for it.
@@ -269,12 +286,26 @@ final class InboxCenter {
         await describePendingIssues()
     }
 
+    /// One folder, over what the last load read of it.
+    private func loadFolder(_ path: String) async {
+        let read = await Self.read([path])
+        update { $0.folders.merge(read) { $1 } }
+        await askBranches(read.values.compactMap { $0.repo?.branchRef })
+        await describePendingIssues()
+    }
+
     /// Every session folder's branch and omp prompt, shown at once so
-    /// GitHub's part fills in around what is known. Read off the main actor:
-    /// local, but not free on a large repository.
+    /// GitHub's part fills in around what is known.
     private func readFolders() async -> [BranchRef] {
-        let paths = Set(sessions.map(\.path))
-        let folders = await withTaskGroup(of: (String, InboxState.Folder).self) { group in
+        let folders = await Self.read(Set(sessions.map(\.path)))
+        update { $0.folders = folders }
+        return state.branches
+    }
+
+    /// Each folder's branch and omp prompt. Read off the main actor: local,
+    /// but not free on a large repository.
+    private static func read(_ paths: Set<String>) async -> [String: InboxState.Folder] {
+        await withTaskGroup(of: (String, InboxState.Folder).self) { group in
             for path in paths {
                 group.addTask {
                     (path, InboxState.Folder(repo: await GitRepo.info(path: path), prompt: OmpLog.firstIssue(forWorkingDirectory: path)))
@@ -284,8 +315,6 @@ final class InboxCenter {
             for await (path, folder) in group { folders[path] = folder }
             return folders
         }
-        update { $0.folders = folders }
-        return state.branches
     }
 
     /// Each branch's pull request, in one request.
