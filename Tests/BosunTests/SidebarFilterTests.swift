@@ -13,8 +13,28 @@ private func session(
     )
 }
 
-private func kept(_ filter: SidebarFilter, _ sessions: [DeckSession]) -> [String] {
-    filter.apply(to: [SessionGroup(name: "g", sessions: sessions)]).flatMap { $0.sessions.map(\.id) }
+/// `sessions` in agent-deck's groups, consecutive rows forming a group as
+/// `DeckModel.groups` has them.
+private func groups(_ sessions: [DeckSession]) -> [SessionGroup] {
+    var groups: [SessionGroup] = []
+    for session in sessions {
+        if groups.last?.name == session.group {
+            groups[groups.count - 1].sessions.append(session)
+        } else {
+            groups.append(SessionGroup(name: session.group, sessions: [session]))
+        }
+    }
+    return groups
+}
+
+/// The row ids the filter lists: a group's as `group:name`, a session's as
+/// its id, a window's as `session/window`.
+private func ids(
+    _ filter: SidebarFilter, _ sessions: [DeckSession], collapsed: Set<String> = [], selected: String? = nil,
+    windows: [String: [SessionWindow]] = [:]
+) -> [String] {
+    filter.rows(groups: groups(sessions), collapsed: collapsed, selected: selected) { windows[$0, default: []].dropFirst() }
+        .map(\.id)
 }
 
 /// The session list's search, Open filter and sort by last activity.
@@ -26,29 +46,36 @@ private func kept(_ filter: SidebarFilter, _ sessions: [DeckSession]) -> [String
     ]
 
     /// The TUI's search fields, case and diacritics aside; a blank query
-    /// searches for nothing, so it hides nothing.
+    /// searches for nothing, so it hides nothing. A group with no match
+    /// left drops out, header and all.
     @Test(arguments: [
-        ("resume", ["title"]),
-        ("AGENT-DECK", ["path"]),
-        ("Claude", ["tool"]),
-        ("  claude \n", ["tool"]),
-        ("   ", ["title", "path", "tool"]),
+        ("resume", ["group:g", "title"]),
+        ("AGENT-DECK", ["group:g", "path"]),
+        ("Claude", ["group:g", "tool"]),
+        ("  claude \n", ["group:g", "tool"]),
+        ("   ", ["group:g", "title", "path", "tool"]),
         ("nowhere", []),
     ] as [(String, [String])])
-    func searchMatchesTitlePathAndTool(query: String, matches: [String]) {
-        #expect(kept(SidebarFilter(query: query), Self.searched) == matches)
+    func searchMatchesTitlePathAndTool(query: String, rows: [String]) {
+        #expect(ids(SidebarFilter(query: query), Self.searched) == rows)
     }
 
     /// A group with nothing left drops out; the rest keep agent-deck's order.
     @Test func groupsWithoutAMatchDropOut() {
-        let groups = [
-            SessionGroup(name: "a", sessions: [session("a1", title: "api")]),
-            SessionGroup(name: "b", sessions: [session("b1", title: "web")]),
-            SessionGroup(name: "c", sessions: [session("c1", title: "api docs"), session("c2", title: "ci")]),
+        let sessions = [
+            session("a1", group: "a", title: "api"),
+            session("b1", group: "b", title: "web"),
+            session("c1", group: "c", title: "api docs"), session("c2", group: "c", title: "ci"),
         ]
-        let filtered = SidebarFilter(query: "api").apply(to: groups)
-        #expect(filtered.map(\.name) == ["a", "c"])
-        #expect(filtered.map { $0.sessions.map(\.id) } == [["a1"], ["c1"]])
+        #expect(ids(SidebarFilter(query: "api"), sessions) == ["group:a", "a1", "group:c", "c1"])
+    }
+
+    /// A search lists every match, so it holds a folded group open; the fold
+    /// is back once the search ends.
+    @Test func searchHoldsFoldedGroupsOpen() {
+        let sessions = [session("a1", group: "a", title: "api"), session("b1", group: "b", title: "api")]
+        #expect(ids(SidebarFilter(query: "api"), sessions, collapsed: ["a"]) == ["group:a", "a1", "group:b", "b1"])
+        #expect(ids(SidebarFilter(), sessions, collapsed: ["a"]) == ["group:a", "group:b", "b1"])
     }
 
     /// The TUI's Open filter with its default excludes: error and stopped
@@ -56,24 +83,36 @@ private func kept(_ filter: SidebarFilter, _ sessions: [DeckSession]) -> [String
     @Test func openFilterHidesErrorAndStopped() {
         let statuses: [SessionStatus] = [.running, .waiting, .idle, .error, .stopped, .starting, .queued, .unknown]
         let sessions = statuses.map { session($0.rawValue, status: $0) }
-        #expect(kept(SidebarFilter(openOnly: true), sessions) == ["running", "waiting", "idle", "starting", "queued", "unknown"])
+        #expect(ids(SidebarFilter(openOnly: true), sessions) == ["group:g", "running", "waiting", "idle", "starting", "queued", "unknown"])
     }
 
     /// Both filters hold at once: a match that has stopped stays hidden.
     @Test func searchAndOpenFilterCombine() {
         let sessions = [session("live", title: "api"), session("dead", title: "api v1", status: .stopped), session("web")]
-        #expect(kept(SidebarFilter(query: "api", openOnly: true), sessions) == ["live"])
+        #expect(ids(SidebarFilter(query: "api", openOnly: true), sessions) == ["group:g", "live"])
     }
 
-    /// One list across the groups, latest activity first. Ties, and sessions
-    /// with no activity yet, keep agent-deck's order; the filters still hold.
-    @Test func recentListsEverySessionAcrossGroups() {
+    /// What the pane shows keeps its row: the selected session stays, its
+    /// group with it, where the Open filter would hide it. A search still
+    /// hides it, as the search is what the list shows then.
+    @Test func selectedSessionStaysUnderTheOpenFilter() {
+        let sessions = [session("a1", group: "a", status: .stopped), session("b1", group: "b")]
+        #expect(ids(SidebarFilter(openOnly: true), sessions, selected: "a1") == ["group:a", "a1", "group:b", "b1"])
+        #expect(ids(SidebarFilter(openOnly: true), sessions, selected: "b1") == ["group:b", "b1"])
+        #expect(ids(SidebarFilter(query: "b", openOnly: true), sessions, selected: "a1") == ["group:b", "b1"])
+    }
+
+    /// One list across the groups, no headers, latest activity first. Ties,
+    /// and sessions with no activity yet, keep agent-deck's order; the
+    /// filters still hold, and a session's extra windows follow it.
+    @Test func activitySortListsEverySessionAcrossGroups() {
         let sessions = [
             session("a1", group: "a", activeAt: 5), session("a2", group: "a"),
             session("b1", group: "b", activeAt: 30), session("b2", group: "b", activeAt: 10),
             session("c1", group: "c", activeAt: 30), session("c2", group: "c", status: .stopped, activeAt: 20),
         ]
-        #expect(SidebarFilter(byRecent: true).recent(sessions).map(\.id) == ["b1", "c1", "c2", "b2", "a1", "a2"])
-        #expect(SidebarFilter(openOnly: true, byRecent: true).recent(sessions).map(\.id) == ["b1", "c1", "b2", "a1", "a2"])
+        let windows = ["b2": [SessionWindow(index: 0, windowID: "@1", name: "omp", command: "omp"), SessionWindow(index: 1, windowID: "@3", name: "zsh", command: "zsh")]]
+        #expect(ids(SidebarFilter(sort: .activity), sessions, windows: windows) == ["b1", "c1", "c2", "b2", "b2/@3", "a1", "a2"])
+        #expect(ids(SidebarFilter(openOnly: true, sort: .activity), sessions) == ["b1", "c1", "b2", "a1", "a2"])
     }
 }
