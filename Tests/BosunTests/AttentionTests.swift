@@ -8,7 +8,7 @@ private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 private func session(_ id: String, status: SessionStatus = .idle, substate: String? = nil, active: Date? = nil) -> DeckSession {
     DeckSession(
         id: id, title: id, path: "/p", group: "g", tool: "codex", status: status,
-        substate: substate, tmuxSession: "agentdeck_\(id)", archived: false, lastActivityAt: active
+        substate: substate, tmuxSession: "agentdeck_\(id)", worktreePath: nil, archived: false, lastActivityAt: active
     )
 }
 

@@ -16,6 +16,10 @@ public struct NewSessionRequest: Sendable, Equatable {
     public var worktreeBranch: String?
     /// Creates `worktreeBranch` rather than checking it out.
     public var createBranch: Bool
+    /// Lets the repository's worktree setup hook run, as agent-deck does by
+    /// itself: when it is approved. False asks agent-deck for the worktree
+    /// alone. Nothing without a worktree.
+    public var runsWorktreeSetup: Bool
     /// A quick session: agent-deck generates the title.
     public var quick: Bool
 
@@ -26,6 +30,7 @@ public struct NewSessionRequest: Sendable, Equatable {
         command: String,
         worktreeBranch: String? = nil,
         createBranch: Bool = false,
+        runsWorktreeSetup: Bool = true,
         quick: Bool = false
     ) {
         self.title = title
@@ -34,6 +39,7 @@ public struct NewSessionRequest: Sendable, Equatable {
         self.command = command
         self.worktreeBranch = worktreeBranch
         self.createBranch = createBranch
+        self.runsWorktreeSetup = runsWorktreeSetup
         self.quick = quick
     }
 }
@@ -123,6 +129,10 @@ extension AgentDeckCLI {
             arguments += ["-w", branch]
             if request.createBranch {
                 arguments.append("-b")
+            }
+            // agent-deck's global flag, taken from anywhere before "--".
+            if !request.runsWorktreeSetup {
+                arguments.append("--skip-hooks")
             }
         }
         let directory = request.directory.trimmingCharacters(in: .whitespaces)

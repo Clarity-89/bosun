@@ -323,6 +323,8 @@ struct MainWindowView: View {
             if let session { model.split(session, .sideBySide) }
         case (.openInGhostty, _):
             if let session { model.openInGhostty(session) }
+        case (.worktreeSetup, _):
+            if let session, session.worktreePath != nil { model.runWorktreeSetup(session) }
         case (.toggleGroup, nil), (.foldGroup, nil), (.unfoldGroup, _), (.toggleSessionList, _), (.toggleSideTerminals, _), (.focusTerminal, _), (.focusSidebar, _), (.settings, _):
             // Nothing to do on this row; the last five have no list key.
             break

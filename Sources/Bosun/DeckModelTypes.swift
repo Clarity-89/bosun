@@ -7,7 +7,7 @@ import Foundation
 
 /// A lifecycle action in flight on a session.
 enum LifecycleAction: String {
-    case stop, restart, rename, delete
+    case stop, restart, rename, delete, setup
 
     /// What the session's row says meanwhile. agent-deck reports no progress,
     /// only the end.
@@ -17,6 +17,7 @@ enum LifecycleAction: String {
         case .restart: "Restarting…"
         case .rename: "Renaming…"
         case .delete: "Deleting…"
+        case .setup: "Running setup…"
         }
     }
 }

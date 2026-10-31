@@ -19,7 +19,7 @@ enum Shortcut: CaseIterable {
     case reorderUp, reorderDown
     case newSession, quickSession
     case rename, restart, stop, delete
-    case splitSideBySide, openInGhostty
+    case splitSideBySide, openInGhostty, worktreeSetup
     case toggleSessionList, toggleSideTerminals, focusTerminal, focusSidebar, cheatSheet, settings
 
     enum Section: String, CaseIterable {
@@ -31,7 +31,7 @@ enum Shortcut: CaseIterable {
     var section: Section {
         switch self {
         case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: .sessionList
-        case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty: .sessions
+        case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty, .worktreeSetup: .sessions
         case .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .cheatSheet, .settings: .window
         }
     }
@@ -55,6 +55,7 @@ enum Shortcut: CaseIterable {
         case .delete: "Delete the session or group, or close the selected window…"
         case .splitSideBySide: "Open a shell beside the session's agent"
         case .openInGhostty: "Open the session in a Ghostty window"
+        case .worktreeSetup: "Run the worktree setup script again"
         case .toggleSessionList: "Hide or show the session list"
         case .toggleSideTerminals: "Show or hide the side shells; the keyboard goes with them"
         case .focusTerminal: "Focus the terminal"
@@ -82,6 +83,7 @@ enum Shortcut: CaseIterable {
         case .stop: "D"
         case .delete: "d"
         case .splitSideBySide: "H"
+        case .worktreeSetup: "b"
         case .cheatSheet: "?"
         case .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .settings: nil
         }
@@ -121,6 +123,7 @@ enum Shortcut: CaseIterable {
         case .delete: KeyboardShortcut(.delete, modifiers: [.command, .option])
         case .splitSideBySide: KeyboardShortcut("h", modifiers: [.command, .shift])
         case .openInGhostty: KeyboardShortcut("o", modifiers: [.command, .shift])
+        case .worktreeSetup: KeyboardShortcut("b")
         // The TUI's key for its list. No ⌘: agent-deck's tmux binding
         // already swallows ⌃Q outside its own sessions, so in Bosun's views
         // the terminal never had it.

@@ -8,7 +8,7 @@ private func pane(_ sessionID: String, view: String? = "view") -> AttachedPane {
 }
 
 private func session(_ id: String, status: SessionStatus = .idle) -> DeckSession {
-    DeckSession(id: id, title: id, path: "/p", group: "g", tool: "shell", status: status, substate: nil, tmuxSession: "agentdeck_\(id)", archived: false, lastActivityAt: nil)
+    DeckSession(id: id, title: id, path: "/p", group: "g", tool: "shell", status: status, substate: nil, tmuxSession: "agentdeck_\(id)", worktreePath: nil, archived: false, lastActivityAt: nil)
 }
 
 /// The terminals kept attached for a quick switch back.

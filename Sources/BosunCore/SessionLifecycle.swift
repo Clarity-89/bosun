@@ -1,7 +1,8 @@
 import Foundation
 
-/// `session start|stop|restart|remove`, `rename` and `group delete`. A refusal
-/// `AgentDeckCLIError.reported` with agent-deck's own message.
+/// `session start|stop|restart|remove`, `rename`, `group delete` and
+/// `worktree setup`. A refusal `AgentDeckCLIError.reported` with
+/// agent-deck's own message.
 extension AgentDeckCLI {
     /// For a session that has never run, which has no tmux session for
     /// `session start` to refuse. No wait for the tool's own session id:
@@ -28,6 +29,15 @@ extension AgentDeckCLI {
         if reply.skipped == true {
             throw AgentDeckCLIError.reported("Restart skipped: \(reply.reason ?? "agent-deck gave no reason")")
         }
+    }
+
+    /// Runs the repository's worktree setup hook again in the session's
+    /// worktree, through agent-deck's consent gate: an unapproved hook is
+    /// refused with the command that approves it. agent-deck 1.16.35 and
+    /// later; before, an unknown command. The hook keeps agent-deck's own
+    /// timeout, a minute by default, so the wait here outlasts it.
+    public func runWorktreeSetup(sessionID: String) async throws {
+        _ = try await run(["worktree", "setup", sessionID, "--json"], timeout: .seconds(300))
     }
 
     public func renameSession(id: String, to title: String) async throws {
