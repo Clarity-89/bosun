@@ -18,7 +18,8 @@ struct StatusNotices: View {
             EmptyView()
         }
         if let error = model.lastError {
-            Text(error).foregroundStyle(.red).lineLimit(2)
+            // Two lines fit the footer; the hover shows one that does not.
+            Text(error).foregroundStyle(.red).lineLimit(2).help(error)
         }
     }
 }

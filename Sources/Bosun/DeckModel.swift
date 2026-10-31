@@ -482,11 +482,15 @@ final class DeckModel {
 
     /// Adds the session, starts it and attaches it in the pane. A refused add
     /// throws; after a refused start the pane offers Restart and the footer
-    /// says why.
+    /// says why, as it does for a worktree setup hook that did not run.
     func createSession(_ request: NewSessionRequest) async throws {
-        let sessionID = try await cli.addSession(request)
+        let added = try await cli.addSession(request)
+        let sessionID = added.id
         UserDefaults.standard.set(request.command.trimmingCharacters(in: .whitespaces), forKey: Self.lastCommandKey)
         logger.info("created \(sessionID, privacy: .public)")
+        if let notice = added.setupHookNotice {
+            logger.notice("\(sessionID, privacy: .public): \(notice, privacy: .public)")
+        }
         var startError: String?
         do {
             try await cli.startSession(id: sessionID)
@@ -504,6 +508,11 @@ final class DeckModel {
             lastError = startError
         } else {
             attach(PaneTarget(sessionID: sessionID))
+        }
+        // After the reload, which clears the footer; a start that failed
+        // is the bigger news.
+        if let notice = added.setupHookNotice, lastError == nil {
+            lastError = notice
         }
     }
 

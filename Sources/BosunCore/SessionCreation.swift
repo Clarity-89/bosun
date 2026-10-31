@@ -38,6 +38,15 @@ public struct NewSessionRequest: Sendable, Equatable {
     }
 }
 
+/// What `add` made: the session, and agent-deck's word on the repository's
+/// worktree setup hook when it did not do its job.
+public struct AddedSession: Equatable, Sendable {
+    public let id: String
+    /// agent-deck's line on a hook it skipped as not approved, or that
+    /// failed or timed out. Nil without a hook, or when it ran clean.
+    public let setupHookNotice: String?
+}
+
 /// A group from `group list --json`, empty ones included. A subgroup's
 /// `label` names its parents too.
 public struct DeckGroup: Identifiable, Equatable, Sendable {
@@ -62,12 +71,37 @@ extension AgentDeckCLI {
         try Self.decodeGroups(Data(try await run(["group", "list", "--json"]).stdout.utf8))
     }
 
-    /// Adds the session without starting it and returns its id. A refusal
-    /// arrives as `AgentDeckCLIError.reported` with agent-deck's message.
-    public func addSession(_ request: NewSessionRequest) async throws -> String {
+    /// Adds the session without starting it. A refusal arrives as
+    /// `AgentDeckCLIError.reported` with agent-deck's message.
+    public func addSession(_ request: NewSessionRequest) async throws -> AddedSession {
         // A worktree is a `git worktree add`, which in a large repository
         // runs well past the 30 s every other command gets.
-        try await decode(AddReply.self, Self.addArguments(request), timeout: .seconds(300)).id
+        let result = try await run(Self.addArguments(request), timeout: .seconds(300))
+        return try Self.addedSession(stdout: result.stdout, stderr: result.stderr)
+    }
+
+    /// The reply is the JSON object stdout ends with: a worktree setup hook
+    /// writes to the same stdout before it, under `--json` too, so the
+    /// first line that opens an object and parses to the end is the reply.
+    /// Its outcome lines go to stderr, as agent-deck's TUI shows them.
+    static func addedSession(stdout: String, stderr: String) throws -> AddedSession {
+        let decoder = jsonDecoder()
+        var reply: AddReply?
+        var lineStart = stdout.startIndex
+        while reply == nil, lineStart < stdout.endIndex {
+            if stdout[lineStart] == "{" {
+                reply = try? decoder.decode(AddReply.self, from: Data(stdout[lineStart...].utf8))
+            }
+            guard let newline = stdout[lineStart...].firstIndex(where: \.isNewline) else { break }
+            lineStart = stdout.index(after: newline)
+        }
+        let id = try reply?.id ?? decoder.decode(AddReply.self, from: Data(stdout.utf8)).id
+        let notice = stderr.split(whereSeparator: \.isNewline).lazy.compactMap { line -> String? in
+            if line.hasPrefix("worktree setup hook not run:") { return String(line) }
+            if line.hasPrefix("Warning: worktree setup script failed:") { return String(line.dropFirst("Warning: ".count)) }
+            return nil
+        }.first
+        return AddedSession(id: id, setupHookNotice: notice)
     }
 
     static func addArguments(_ request: NewSessionRequest) -> [String] {
