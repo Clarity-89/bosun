@@ -91,8 +91,19 @@ struct MainWindowView: View {
         .toolbar {
             if model.tab == .sessions, let selected = model.selectedSession {
                 let github = model.inbox[selected]
-                // Before the links: what to ask the agent for, then what it
-                // has made. A stopped session has no agent to ask.
+                // The editor, then what to ask the agent for, then what it
+                // has made: the order the work goes in.
+                if let editor = CodeEditor.installed {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            model.open(selected, in: editor)
+                        } label: {
+                            Label { Text("Open in \(editor.name)") } icon: { Image(nsImage: editor.icon) }
+                        }
+                        .help("Open the session's directory in \(editor.name)")
+                    }
+                }
+                // A stopped session has no agent to ask.
                 if selected.status != .stopped {
                     ToolbarItemGroup(placement: .primaryAction) {
                         ForEach(AgentRequest.requests(for: github.branch.pullRequest), id: \.self) { request in
