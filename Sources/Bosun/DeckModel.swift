@@ -68,6 +68,18 @@ final class DeckModel {
     private(set) var collapsedGroups = Set(UserDefaults.standard.stringArray(forKey: "collapsedGroups") ?? []) {
         didSet { UserDefaults.standard.set(collapsedGroups.sorted(), forKey: "collapsedGroups") }
     }
+    /// The session list's search, Open filter and sort. The search starts
+    /// empty each launch, as the TUI's does; the other two are kept.
+    var sidebarFilter = SidebarFilter(
+        openOnly: UserDefaults.standard.bool(forKey: "sidebarOpenOnly"),
+        sort: SidebarSort(rawValue: UserDefaults.standard.string(forKey: "sidebarSort") ?? "") ?? .deck
+    ) {
+        didSet {
+            guard sidebarFilter.openOnly != oldValue.openOnly || sidebarFilter.sort != oldValue.sort else { return }
+            UserDefaults.standard.set(sidebarFilter.openOnly, forKey: "sidebarOpenOnly")
+            UserDefaults.standard.set(sidebarFilter.sort.rawValue, forKey: "sidebarSort")
+        }
+    }
     private var refreshTask: Task<Void, Never>?
     private var installTask: Task<Void, Never>?
 
@@ -162,16 +174,42 @@ final class DeckModel {
         return groups
     }
 
+    /// The session list's rows: `groups` as the filter leaves and orders
+    /// them, folded as `collapsedGroups` says, with each session's extra
+    /// windows under it.
+    var sidebarRows: [SidebarRow] {
+        let selected: String? = if case .pane(let target)? = selection { target.sessionID } else { nil }
+        return sidebarFilter.rows(groups: groups, collapsed: collapsedGroups, selected: selected, extraWindows: extraWindows(for:))
+    }
+
     func toggleGroup(_ name: String) {
-        collapsedGroups.formSymmetricDifference([name])
+        fold { $0.formSymmetricDifference([name]) }
     }
 
     func foldGroup(_ name: String) {
-        collapsedGroups.insert(name)
+        fold { $0.insert(name) }
     }
 
     func unfoldGroup(_ name: String) {
-        collapsedGroups.remove(name)
+        fold { $0.remove(name) }
+    }
+
+    /// A fold asked for in the list; refused while the filter would not
+    /// show it, so none lands out of sight.
+    private func fold(_ change: (inout Set<String>) -> Void) {
+        guard sidebarFilter.allowsFolding else { return }
+        change(&collapsedGroups)
+    }
+
+    /// Gives `session` a row before it is selected from outside the list,
+    /// by a notification or as a new session: its group unfolds, past the
+    /// list's own fold gate, and a search that leaves it out ends. The
+    /// Open filter spares the selected session itself.
+    private func uncover(_ session: DeckSession) {
+        if sidebarFilter.hasQuery, !session.matches(sidebarFilter.trimmedQuery) {
+            sidebarFilter.query = ""
+        }
+        collapsedGroups.remove(session.groupName)
     }
 
     func start() {
@@ -499,8 +537,8 @@ final class DeckModel {
             logger.error("start \(sessionID, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
         await refresh()
-        if let group = sessions.first(where: { $0.id == sessionID })?.groupName {
-            collapsedGroups.remove(group)
+        if let session = sessions.first(where: { $0.id == sessionID }) {
+            uncover(session)
         }
         selection = .pane(PaneTarget(sessionID: sessionID))
         show(sessionID)
@@ -646,6 +684,7 @@ final class DeckModel {
     /// then stores the order, and the list that follows confirms it or,
     /// after a refusal, puts it back. A group moves with its sessions.
     func move(_ move: SidebarMove) {
+        guard sidebarFilter.allowsReordering else { return }
         switch move {
         case .session(let move):
             reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
@@ -927,7 +966,7 @@ final class DeckModel {
         }
         guard let session = sessions.first(where: { $0.id == sessionID }) else { return }
         tab = .sessions
-        unfoldGroup(session.groupName)
+        uncover(session)
         let first = windowsBySession[sessionID]?.first?.windowID
         select(.pane(PaneTarget(sessionID: sessionID, windowID: windowID == first ? nil : windowID)))
         if attachedPane != nil {

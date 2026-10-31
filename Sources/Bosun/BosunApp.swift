@@ -50,10 +50,10 @@ struct BosunApp: App {
 }
 
 /// Keyboard focus moves between the list and the terminal only on request,
-/// so each direction gets a View menu item, beside hiding the list and
-/// showing the side shells.
+/// so each direction gets a View menu item, beside hiding the list, showing
+/// the side shells and the session search.
 struct FocusCommands: Commands {
-    @FocusedBinding(\.sidebarFocused) private var sidebarFocused
+    @FocusedValue(\.sidebarFocus) private var sidebarFocus
     @FocusedBinding(\.terminalFocusRequest) private var terminalFocusRequest
     @FocusedBinding(\.sessionListVisibility) private var sessionListVisibility
     @FocusedBinding(\.sideTerminalsShown) private var sideTerminalsShown
@@ -68,19 +68,15 @@ struct FocusCommands: Commands {
             Button(sideTerminalsShown == true ? "Hide Side Shells" : "Show Side Shells") { sideTerminalsShown?.toggle() }
                 .shortcut(.toggleSideTerminals)
                 .disabled(sideTerminalsShown == nil)
-            // A hidden list comes back to take the focus.
-            Button("Focus Sidebar") {
-                if sessionListVisibility == .detailOnly {
-                    sessionListVisibility = .all
-                } else {
-                    sidebarFocused = true
-                }
-            }
-            .shortcut(.focusSidebar)
-            .disabled(sidebarFocused == nil)
+            Button("Focus Sidebar") { sidebarFocus?.wrappedValue = .list }
+                .shortcut(.focusSidebar)
+                .disabled(sidebarFocus == nil)
             Button("Focus Terminal") { terminalFocusRequest? += 1 }
                 .shortcut(.focusTerminal)
                 .disabled(terminalFocusRequest == nil)
+            Button("Filter Sessions") { sidebarFocus?.wrappedValue = .search }
+                .shortcut(.search)
+                .disabled(sidebarFocus == nil)
         }
     }
 }
@@ -99,8 +95,9 @@ struct HelpCommands: Commands {
 }
 
 extension FocusedValues {
-    /// Whether the key window's session list has keyboard focus.
-    @Entry var sidebarFocused: Binding<Bool>?
+    /// Where the key window's sidebar holds the keyboard; nil while it is
+    /// elsewhere. Setting it brings a hidden list back first.
+    @Entry var sidebarFocus: Binding<SidebarFocus?>?
     /// The key window's terminal focus request counter; each increment
     /// moves keyboard focus into its pane. Nil while it has no pane.
     @Entry var terminalFocusRequest: Binding<Int>?
