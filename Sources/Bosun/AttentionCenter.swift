@@ -31,6 +31,9 @@ final class AttentionCenter {
     /// The session the pane shows, and its window when Bosun knows it.
     @ObservationIgnored private var shownSessionID: String?
     @ObservationIgnored private var shownWindowID: String?
+    /// A session whose agent just finished a turn, as it happened, not
+    /// worked out later at launch.
+    @ObservationIgnored var onTurnEnd: ((DeckSession) -> Void)?
 
     /// Each session's own unread and each of its omp panes'.
     var count: Int { state.unreadCount }
@@ -135,6 +138,10 @@ final class AttentionCenter {
         }
         if events.contains(where: { $0.key.sessionID == shownSessionID }) {
             scheduleSeen()
+        }
+        let ended = Set(events.filter { $0.notify && $0.unread.kind == .finished }.map(\.key.sessionID))
+        for session in sessions where ended.contains(session.id) {
+            onTurnEnd?(session)
         }
     }
 

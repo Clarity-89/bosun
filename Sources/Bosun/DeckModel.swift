@@ -31,9 +31,7 @@ final class DeckModel {
             guard tab != oldValue else { return }
             UserDefaults.standard.set(tab.rawValue, forKey: "sidebarTab")
             attention.paneCovered(tab == .inbox)
-            if tab == .inbox, inbox.isStale {
-                Task { await inbox.refresh() }
-            }
+            if tab == .inbox { inbox.refreshIfStale() }
         }
     }
     /// The session the pane shows: its terminal while `recent` has one,
@@ -91,7 +89,11 @@ final class DeckModel {
     /// keyboard goes into the terminal once its attach lands.
     @ObservationIgnored private var focusOnAttach: String?
 
-    private init() {}
+    private init() {
+        // A turn is when an agent pushes, or opens or merges a pull request;
+        // the 5 min round would show it late.
+        attention.onTurnEnd = { [inbox] session in inbox.recheck(session) }
+    }
 
     var isRefreshing: Bool { refreshTask != nil }
 
