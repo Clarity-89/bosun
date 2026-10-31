@@ -6,7 +6,9 @@ import SwiftUI
 /// row.
 @MainActor
 struct SessionListView: View {
-    @Bindable var model: DeckModel
+    let model: DeckModel
+    /// The list's folds and filter, bound to from the filter bar.
+    @Bindable var list: SessionList
     /// The sidebar's keyboard, which the window hands out from the menu bar
     /// as well.
     var focus: FocusState<SidebarFocus?>.Binding
@@ -24,7 +26,7 @@ struct SessionListView: View {
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("Filter Sessions", text: $model.sidebarFilter.query, prompt: Text("Title, path or tool"))
+                TextField("Filter Sessions", text: $list.filter.query, prompt: Text("Title, path or tool"))
                     .textFieldStyle(.plain)
                     .focused(focus, equals: .search)
                     // The first match, as Return in the TUI's search opens it,
@@ -36,12 +38,12 @@ struct SessionListView: View {
                         focus.wrappedValue = .list
                     }
                     .onExitCommand {
-                        model.sidebarFilter.query = ""
+                        list.filter.query = ""
                         focus.wrappedValue = .list
                     }
-                if !model.sidebarFilter.query.isEmpty {
+                if !list.filter.query.isEmpty {
                     Button {
-                        model.sidebarFilter.query = ""
+                        list.filter.query = ""
                     } label: {
                         Label("Clear", systemImage: "xmark.circle.fill")
                     }
@@ -55,15 +57,15 @@ struct SessionListView: View {
             .padding(.vertical, 4)
             .background(.quaternary, in: .rect(cornerRadius: 6))
             Menu {
-                Toggle("Hide Error and Stopped Sessions", isOn: $model.sidebarFilter.openOnly)
-                Picker("Sort By", selection: $model.sidebarFilter.sort) {
+                Toggle("Hide Error and Stopped Sessions", isOn: $list.filter.openOnly)
+                Picker("Sort By", selection: $list.filter.sort) {
                     Text("Default Order").tag(SidebarSort.deck)
                     Text("Last Activity").tag(SidebarSort.activity)
                 }
                 .pickerStyle(.inline)
             } label: {
                 // Filled while the list leaves sessions out or reorders them.
-                let changed = model.sidebarFilter.openOnly || model.sidebarFilter.sort != .deck
+                let changed = list.filter.openOnly || list.filter.sort != .deck
                 Label("Filter and Sort", systemImage: changed ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
             }
             .menuStyle(.button)
@@ -93,8 +95,8 @@ struct SessionListView: View {
                         // they reach a group in the TUI.
                         let deleteGroup: (() -> Void)? = model.canDeleteGroup(group)
                             ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
-                        GroupRow(name: group.name, isExpanded: expanded, foldable: model.sidebarFilter.allowsFolding, onDelete: deleteGroup) {
-                            animated { model.toggleGroup(group.name) }
+                        GroupRow(name: group.name, isExpanded: expanded, foldable: list.filter.allowsFolding, onDelete: deleteGroup) {
+                            animated { list.toggleGroup(group.name) }
                         }
                         .tag(row.item)
                         .contextMenu {
@@ -106,10 +108,10 @@ struct SessionListView: View {
                             }
                         }
                     case .session(let session):
-                        SidebarSessionRow(model: model, session: session, draggable: model.sidebarFilter.allowsReordering)
+                        SidebarSessionRow(model: model, session: session, draggable: list.filter.allowsReordering)
                             .tag(row.item)
                             .contextMenu { SessionActionItems(model: model, session: session) }
-                            .moveDisabled(!model.sidebarFilter.allowsReordering)
+                            .moveDisabled(!list.filter.allowsReordering)
                     case .window(let window, let session):
                         WindowRow(window: window)
                             .tag(row.item)
@@ -151,8 +153,8 @@ struct SessionListView: View {
             .overlay {
                 if model.hasLoadedSessions, rows.isEmpty, !model.sessions.isEmpty {
                     Group {
-                        if model.sidebarFilter.hasQuery {
-                            ContentUnavailableView.search(text: model.sidebarFilter.trimmedQuery)
+                        if list.filter.hasQuery {
+                            ContentUnavailableView.search(text: list.filter.trimmedQuery)
                         } else {
                             ContentUnavailableView("No Open Sessions", systemImage: "line.3.horizontal.decrease.circle", description: Text("Every session is stopped or reports an error."))
                         }
@@ -191,15 +193,15 @@ struct SessionListView: View {
                   let move = SidebarMove(rows: rows, moving: index, up: action == .reorderUp) else { break }
             model.move(move)
         case (.toggleGroup, .group(let name)?), (.activate, .group(let name)?):
-            animated { model.toggleGroup(name) }
+            animated { list.toggleGroup(name) }
         case (.foldGroup, .group(let name)?):
-            animated { model.foldGroup(name) }
+            animated { list.foldGroup(name) }
         case (.unfoldGroup, .group(let name)?):
-            animated { model.unfoldGroup(name) }
+            animated { list.unfoldGroup(name) }
         case (.toggleGroup, .pane?), (.foldGroup, .pane?):
             // The selection only moves up to a header the fold leaves in the list.
-            guard model.sidebarFilter.allowsFolding, let group = model.selectedSession?.groupName else { break }
-            animated { if action == .toggleGroup { model.toggleGroup(group) } else { model.foldGroup(group) } }
+            guard list.filter.allowsFolding, let group = model.selectedSession?.groupName else { break }
+            animated { if action == .toggleGroup { list.toggleGroup(group) } else { list.foldGroup(group) } }
             model.select(.group(group))
         case (.activate, _):
             guard model.attachedPane != nil else { return .ignored }

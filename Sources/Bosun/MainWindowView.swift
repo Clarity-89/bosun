@@ -35,7 +35,7 @@ struct MainWindowView: View {
                 tabPicker
                 switch model.tab {
                 case .sessions:
-                    SessionListView(model: model, focus: $sidebarFocus, terminalFocusRequest: $terminalFocusRequest)
+                    SessionListView(model: model, list: model.sessionList, focus: $sidebarFocus, terminalFocusRequest: $terminalFocusRequest)
                 case .inbox:
                     InboxSidebar(inbox: model.inbox, selection: $inboxSelection)
                         .focused($sidebarFocus, equals: .list)
