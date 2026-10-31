@@ -23,7 +23,16 @@ final class DeckModel {
     /// or from an agent-deck too old to say.
     private var statusOwner: StatusOwner?
     private(set) var lastError: String?
-    private(set) var selection: SidebarItem?
+    private(set) var selection: SidebarItem? {
+        // A session selected while the search hides it, from a notification
+        // or as a new session, ends the search, so its row shows.
+        didSet {
+            guard case .pane(let target)? = selection, sidebarFilter.hasQuery,
+                  let session = sessions.first(where: { $0.id == target.sessionID }),
+                  !session.matches(sidebarFilter.trimmedQuery) else { return }
+            sidebarFilter.query = ""
+        }
+    }
     /// The sidebar's list. The Inbox covers the terminals: what they show
     /// is neither seen nor spared its notifications meanwhile.
     var tab = SidebarTab(rawValue: UserDefaults.standard.string(forKey: "sidebarTab") ?? "") ?? .sessions {
@@ -67,6 +76,18 @@ final class DeckModel {
     /// database, with no CLI to read or set them.
     private(set) var collapsedGroups = Set(UserDefaults.standard.stringArray(forKey: "collapsedGroups") ?? []) {
         didSet { UserDefaults.standard.set(collapsedGroups.sorted(), forKey: "collapsedGroups") }
+    }
+    /// The session list's search, Open filter and sort. The search starts
+    /// empty each launch, as the TUI's does; the other two are kept.
+    var sidebarFilter = SidebarFilter(
+        openOnly: UserDefaults.standard.bool(forKey: "sidebarOpenOnly"),
+        byRecent: UserDefaults.standard.bool(forKey: "sidebarByRecent")
+    ) {
+        didSet {
+            guard sidebarFilter.openOnly != oldValue.openOnly || sidebarFilter.byRecent != oldValue.byRecent else { return }
+            UserDefaults.standard.set(sidebarFilter.openOnly, forKey: "sidebarOpenOnly")
+            UserDefaults.standard.set(sidebarFilter.byRecent, forKey: "sidebarByRecent")
+        }
     }
     private var refreshTask: Task<Void, Never>?
     private var installTask: Task<Void, Never>?
@@ -648,6 +669,9 @@ final class DeckModel {
     func move(_ move: SidebarMove) {
         switch move {
         case .session(let move):
+            // Sorted by activity, a row's neighbours are not agent-deck's, so
+            // a place beside them means nothing there.
+            guard !sidebarFilter.byRecent else { return }
             reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
                 try await cli.moveSession(id: move.sessionID, move.placement)
             }

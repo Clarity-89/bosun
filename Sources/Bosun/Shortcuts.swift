@@ -16,7 +16,7 @@ import SwiftUI
 enum Shortcut: CaseIterable {
     case moveDown, moveUp
     case activate, toggleGroup, foldGroup, unfoldGroup
-    case reorderUp, reorderDown
+    case reorderUp, reorderDown, search
     case newSession, quickSession
     case rename, restart, stop, delete
     case splitSideBySide, openInGhostty, worktreeSetup
@@ -30,7 +30,7 @@ enum Shortcut: CaseIterable {
 
     var section: Section {
         switch self {
-        case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: .sessionList
+        case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown, .search: .sessionList
         case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty, .worktreeSetup: .sessions
         case .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .cheatSheet, .settings: .window
         }
@@ -47,6 +47,7 @@ enum Shortcut: CaseIterable {
         case .unfoldGroup: "Unfold the group"
         case .reorderUp: "Move the session or group up"
         case .reorderDown: "Move the session or group down"
+        case .search: "Filter the list by title, path or tool"
         case .newSession: "New session in the selected group…"
         case .quickSession: "Quick session, with the dialog's defaults"
         case .rename: "Rename the session…"
@@ -76,6 +77,7 @@ enum Shortcut: CaseIterable {
         case .unfoldGroup: "l"
         case .reorderUp: "K"
         case .reorderDown: "J"
+        case .search: "/"
         case .newSession: "n"
         case .quickSession: "N"
         case .rename: "r"
@@ -115,6 +117,9 @@ enum Shortcut: CaseIterable {
     var menu: KeyboardShortcut? {
         switch self {
         case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown: nil
+        // macOS's own key for a window's search field; ⌘F is Ghostty's
+        // search in the terminal.
+        case .search: KeyboardShortcut("f", modifiers: [.command, .option])
         case .newSession: KeyboardShortcut("n")
         case .quickSession: KeyboardShortcut("n", modifiers: [.command, .shift])
         case .rename: KeyboardShortcut("r")

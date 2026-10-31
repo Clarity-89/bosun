@@ -9,6 +9,12 @@ struct MainWindowView: View {
     @FocusState private var sidebarFocused: Bool
     /// Monotonic; TerminalHost moves first responder into the pane on each new value.
     @State private var terminalFocusRequest = 0
+    /// Monotonic; each new value puts the keyboard in the session list's search.
+    @State private var searchRequest = 0
+    @FocusState private var searchFocused: Bool
+    /// Set while a search request waits for the hidden session list to come
+    /// back, as the field is not in the window until then.
+    @State private var searchOnShow = false
     /// The session list's toolbar button and ⌃Q both hide and show it.
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// The Inbox row whose detail covers the terminals.
@@ -27,6 +33,7 @@ struct MainWindowView: View {
                 tabPicker
                 switch model.tab {
                 case .sessions:
+                    sessionFilterBar
                     sessionList
                 case .inbox:
                     InboxSidebar(inbox: model.inbox, selection: $inboxSelection)
@@ -76,17 +83,37 @@ struct MainWindowView: View {
             if visibility == .detailOnly {
                 if model.attachedPane != nil { terminalFocusRequest += 1 }
             } else {
-                // The list takes focus once it is back in the window.
-                Task { sidebarFocused = true }
+                // The list takes focus once it is back in the window, or its
+                // search when that is what brought it back.
+                Task {
+                    if searchOnShow {
+                        searchOnShow = false
+                        searchFocused = true
+                    } else {
+                        sidebarFocused = true
+                    }
+                }
             }
         }
         .onChange(of: model.revealRequests) {
             terminalFocusRequest += 1
         }
+        // The search lives in the session list, which may be hidden or under
+        // the Inbox; the field takes the keyboard once it is back.
+        .onChange(of: searchRequest) {
+            model.tab = .sessions
+            if columnVisibility == .detailOnly {
+                searchOnShow = true
+                columnVisibility = .all
+            } else {
+                Task { searchFocused = true }
+            }
+        }
         .focusedSceneValue(\.sidebarFocused, Binding(get: { sidebarFocused }, set: { sidebarFocused = $0 }))
         .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab == .inbox ? nil : $terminalFocusRequest)
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
         .focusedSceneValue(\.sideTerminalsShown, model.paneSession == nil ? nil : $sideTerminalsShown)
+        .focusedSceneValue(\.sessionSearchRequest, $searchRequest)
         .navigationTitle(titleText)
         .toolbar {
             if model.tab == .sessions, let selected = model.selectedSession {
@@ -187,6 +214,65 @@ struct MainWindowView: View {
         .padding(.vertical, 6)
     }
 
+    /// The TUI's search and Open filter, and the sort, over the session list.
+    private var sessionFilterBar: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Filter Sessions", text: $model.sidebarFilter.query, prompt: Text("Title, path or tool"))
+                    .textFieldStyle(.plain)
+                    .focused($searchFocused)
+                    // The first match, as Return in the TUI's search opens it,
+                    // with the keyboard left in the list for j, k and Return.
+                    .onSubmit {
+                        if let first = sidebarRows.first(where: { if case .session = $0 { true } else { false } }) {
+                            model.select(first.item)
+                        }
+                        sidebarFocused = true
+                    }
+                    .onExitCommand {
+                        model.sidebarFilter.query = ""
+                        sidebarFocused = true
+                    }
+                if !model.sidebarFilter.query.isEmpty {
+                    Button {
+                        model.sidebarFilter.query = ""
+                    } label: {
+                        Label("Clear", systemImage: "xmark.circle.fill")
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Clear the search (esc)")
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(.quaternary, in: .rect(cornerRadius: 6))
+            Menu {
+                Toggle("Hide Error and Stopped Sessions", isOn: $model.sidebarFilter.openOnly)
+                Picker("Sort By", selection: $model.sidebarFilter.byRecent) {
+                    Text("Default Order").tag(false)
+                    Text("Last Activity").tag(true)
+                }
+                .pickerStyle(.inline)
+            } label: {
+                // Filled while the list leaves sessions out or reorders them.
+                let changed = model.sidebarFilter.openOnly || model.sidebarFilter.byRecent
+                Label("Filter and Sort", systemImage: changed ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
+            .menuIndicator(.hidden)
+            .labelStyle(.iconOnly)
+            .fixedSize()
+            .help("Hide error and stopped sessions, or list every session by last activity")
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+
     private var sessionList: some View {
         let rows = sidebarRows
         return ScrollViewReader { proxy in
@@ -204,7 +290,9 @@ struct MainWindowView: View {
                         // they reach a group in the TUI.
                         let deleteGroup: (() -> Void)? = model.canDeleteGroup(group)
                             ? { SessionPrompts.confirmDeleteGroup(group, model: model) } : nil
-                        GroupRow(name: group.name, isExpanded: expanded, onDelete: deleteGroup) { animated { model.toggleGroup(group.name) } }
+                        // A search holds every group open, so a fold would show only once it ends.
+                        let toggle: (() -> Void)? = model.sidebarFilter.hasQuery ? nil : { animated { model.toggleGroup(group.name) } }
+                        GroupRow(name: group.name, isExpanded: expanded, onDelete: deleteGroup, toggle: toggle)
                             .tag(row.item)
                             .contextMenu {
                                 Button("New Session…") { model.promptNewSession(inGroup: group.name) }
@@ -218,6 +306,8 @@ struct MainWindowView: View {
                         SidebarSessionRow(model: model, session: session)
                             .tag(row.item)
                             .contextMenu { SessionActionItems(model: model, session: session) }
+                            // Sorted by activity, the rows are not in agent-deck's order to move within.
+                            .moveDisabled(model.sidebarFilter.byRecent)
                     case .window(let window, let session):
                         WindowRow(window: window)
                             .tag(row.item)
@@ -253,6 +343,19 @@ struct MainWindowView: View {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: model.hasLoadedSessions)
+            // Only a filter can empty a list that has sessions.
+            .overlay {
+                if model.hasLoadedSessions, rows.isEmpty, !model.sessions.isEmpty {
+                    Group {
+                        if model.sidebarFilter.hasQuery {
+                            ContentUnavailableView.search(text: model.sidebarFilter.trimmedQuery)
+                        } else {
+                            ContentUnavailableView("No Open Sessions", systemImage: "line.3.horizontal.decrease.circle", description: Text("Every session is stopped or reports an error."))
+                        }
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
             .focused($sidebarFocused)
             // Only the focused list sees these keys, so every letter still
             // reaches the terminal.
@@ -274,6 +377,9 @@ struct MainWindowView: View {
     private func perform(_ action: Shortcut, rows: [SidebarRow], scroll proxy: ScrollViewProxy) -> KeyPress.Result {
         // The session actions wait out an action in flight, as the menu items do.
         let session = model.selectedSession.flatMap { model.busySessions[$0.id] != nil ? nil : $0 }
+        // A search holds every group open and the recent list has no groups,
+        // so the fold keys wait for either to end.
+        let folds = !model.sidebarFilter.hasQuery && !model.sidebarFilter.byRecent
         switch (action, model.selection) {
         case (.moveDown, let selection), (.moveUp, let selection):
             guard let row = SidebarRow.step(by: action == .moveDown ? 1 : -1, from: selection, in: rows) else { break }
@@ -284,13 +390,13 @@ struct MainWindowView: View {
                   let move = SidebarMove(rows: rows, moving: index, up: action == .reorderUp) else { break }
             model.move(move)
         case (.toggleGroup, .group(let name)?), (.activate, .group(let name)?):
-            animated { model.toggleGroup(name) }
+            if folds { animated { model.toggleGroup(name) } }
         case (.foldGroup, .group(let name)?):
-            animated { model.foldGroup(name) }
+            if folds { animated { model.foldGroup(name) } }
         case (.unfoldGroup, .group(let name)?):
-            animated { model.unfoldGroup(name) }
+            if folds { animated { model.unfoldGroup(name) } }
         case (.toggleGroup, .pane?), (.foldGroup, .pane?):
-            guard let group = model.selectedSession?.groupName else { break }
+            guard folds, let group = model.selectedSession?.groupName else { break }
             animated { if action == .toggleGroup { model.toggleGroup(group) } else { model.foldGroup(group) } }
             model.select(.group(group))
         case (.activate, _):
@@ -300,6 +406,8 @@ struct MainWindowView: View {
             model.promptNewSession()
         case (.quickSession, _):
             model.quickCreateSession()
+        case (.search, _):
+            searchFocused = true
         case (.cheatSheet, _):
             openWindow(id: ShortcutsView.windowID)
         case (.rename, _):
@@ -337,14 +445,21 @@ struct MainWindowView: View {
         withAnimation(.easeOut(duration: 0.15), change)
     }
 
-    /// Each group header, then, while it is open, its sessions, each with its
-    /// extra windows under it.
+    /// Each group the filter keeps, then, while it is open, its sessions the
+    /// filter keeps, each with its extra windows under it. A search holds
+    /// every group open, as the TUI's search lists every match. Sorted by
+    /// activity, the sessions leave their groups for one list.
     private var sidebarRows: [SidebarRow] {
-        model.groups.flatMap { group in
-            let expanded = !model.collapsedGroups.contains(group.name)
-            return [SidebarRow.group(group, expanded: expanded)] + (expanded ? group.sessions : []).flatMap { session in
-                [SidebarRow.session(session)] + model.extraWindows(for: session.id).map { SidebarRow.window($0, of: session) }
-            }
+        let filter = model.sidebarFilter
+        func withWindows(_ session: DeckSession) -> [SidebarRow] {
+            [SidebarRow.session(session)] + model.extraWindows(for: session.id).map { SidebarRow.window($0, of: session) }
+        }
+        if filter.byRecent {
+            return filter.recent(model.sessions).flatMap(withWindows)
+        }
+        return filter.apply(to: model.groups).flatMap { group in
+            let expanded = filter.hasQuery || !model.collapsedGroups.contains(group.name)
+            return [SidebarRow.group(group, expanded: expanded)] + (expanded ? group.sessions : []).flatMap(withWindows)
         }
     }
 
@@ -475,7 +590,7 @@ private struct SidebarSessionRow: View {
     var body: some View {
         let github = model.inbox[session]
         return HStack(spacing: 6) {
-            DragHandle(isVisible: isHovered)
+            DragHandle(isVisible: isHovered && !model.sidebarFilter.byRecent)
             SessionRow(session: session, attention: model.attention[session], github: github, action: model.busySessions[session.id])
                 .overlay(alignment: .trailing) {
                     if isHovered {
@@ -513,14 +628,15 @@ private struct GroupRow: View {
     let isExpanded: Bool
     /// Nil for a group agent-deck will not delete.
     let onDelete: (() -> Void)?
-    let toggle: () -> Void
+    /// Nil while a search holds every group open.
+    let toggle: (() -> Void)?
     @State private var isHovered = false
 
     var body: some View {
         // With the 14 pt chevron, its centre under the session rows' dots.
         HStack(spacing: 3) {
             DragHandle(isVisible: isHovered)
-            Button(action: toggle) {
+            Button { toggle?() } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
@@ -528,6 +644,7 @@ private struct GroupRow: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .disabled(toggle == nil)
             .help("\(isExpanded ? "Collapse" : "Expand") (\(Shortcut.toggleGroup.listKeyLabel))")
             Text(name)
                 .font(.subheadline.weight(.semibold))
