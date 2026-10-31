@@ -420,9 +420,9 @@ final class DeckModel {
         }
         let sessionID = target.sessionID
         guard attachingSessionIDs.insert(sessionID).inserted else { return }
-        let tmuxSession = sessions.first { $0.id == sessionID }?.tmuxSession
+        let session = sessions.first { $0.id == sessionID }
         Task {
-            let live = await openPane(sessionID: sessionID, tmuxSession: tmuxSession, window: target.windowID, binary: binary, restartsIfDead: restartsIfDead)
+            let live = await openPane(sessionID: sessionID, tmuxSession: session?.tmuxSession, directory: session?.path, window: target.windowID, binary: binary, restartsIfDead: restartsIfDead)
             attachingSessionIDs.remove(sessionID)
             guard shownSessionID == sessionID else {
                 end(live)
@@ -448,12 +448,12 @@ final class DeckModel {
     /// else is on that window. A session tmux's default server does not have
     /// attaches through agent-deck instead, which knows its socket; so does
     /// every session on a tmux older than 3.2.
-    private func openPane(sessionID: String, tmuxSession: String?, window: String?, binary: AgentDeckBinary, restartsIfDead: Bool) async -> AttachedPane {
+    private func openPane(sessionID: String, tmuxSession: String?, directory: String?, window: String?, binary: AgentDeckBinary, restartsIfDead: Bool) async -> AttachedPane {
         let id = UUID()
         if let tmuxSession {
             let view = ViewSession.name(paneID: id)
             do {
-                try await cli.createView(view, grouping: tmuxSession)
+                try await cli.createView(view, grouping: tmuxSession, directory: directory)
                 try? await cli.selectWindow(window, inView: view)
                 let yields = await cli.someoneElseOnWindow(ofView: view)
                 let launch = try cli.viewAttachLaunch(view, yieldsSize: yields)

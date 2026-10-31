@@ -29,7 +29,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// One per thing that wants you: a new one for the same thing replaces
     /// it. The first asks for permission; the answer is read each time, as
     /// it can change in System Settings while Bosun runs.
-    func post(id: String, title: String, subtitle: String?, body: String, sessionID: String, windowID: String?, sound: Bool) {
+    func post(id: String, title: String, subtitle: String?, body: String, sessionID: String, windowID: String?, sound: NotificationSound) {
         guard let center else { return }
         Task {
             switch await center.notificationSettings().authorizationStatus {
@@ -52,7 +52,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             content.body = body
             content.threadIdentifier = sessionID
             content.userInfo = ["session": sessionID, "window": windowID ?? ""]
-            if sound { content.sound = .default }
+            switch sound {
+            case .none: break
+            case .system: content.sound = .default
+            case .named(let name): NotificationSound.play(name)
+            }
             do {
                 try await center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
             } catch {
