@@ -205,7 +205,7 @@ final class DeckModel {
         refreshTask = nil
     }
 
-    /// The toolbar's Refresh: the session list and GitHub, together.
+    /// The session list and GitHub, together.
     func refreshAll() async {
         async let list: Void = refresh()
         await inbox.refresh()

@@ -131,19 +131,7 @@ struct MainWindowView: View {
                         Label("Open Shell Here", systemImage: "plus.rectangle.on.rectangle")
                     }
                     .help("New shell window or split in this session")
-                    Button {
-                        model.openInGhostty(selected)
-                    } label: {
-                        Label("Open in Ghostty", systemImage: "macwindow.on.rectangle")
-                    }
-                    .help("Open this session in a separate Ghostty window")
                 }
-                Button {
-                    Task { await model.refreshAll() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(model.isRefreshing)
             }
         }
         .sheet(item: Binding(get: { model.newSessionPrompt }, set: { if $0 == nil { model.dismissNewSession() } })) { prompt in
@@ -165,14 +153,25 @@ struct MainWindowView: View {
         sideTerminalsShown ? model.paneSession?.path : nil
     }
 
-    /// The sidebar's two lists.
+    /// The sidebar's two lists, and Refresh, which reloads both.
     private var tabPicker: some View {
-        Picker("List", selection: $model.tab) {
-            Text("Sessions").tag(SidebarTab.sessions)
-            Text("Inbox").tag(SidebarTab.inbox)
+        HStack(spacing: 6) {
+            Picker("List", selection: $model.tab) {
+                Text("Sessions").tag(SidebarTab.sessions)
+                Text("Inbox").tag(SidebarTab.inbox)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            Button {
+                Task { await model.refreshAll() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help("Refresh sessions and GitHub")
+            .disabled(model.isRefreshing)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
     }
