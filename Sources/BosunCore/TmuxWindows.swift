@@ -10,22 +10,31 @@ public struct SessionWindow: Identifiable, Equatable, Sendable {
     public let command: String
 
     public var id: String { windowID }
+}
 
-    /// `tmux list-windows -F` format that `parse(listOutput:)` reads back.
-    static let listFormat = "#{session_name}\t#{window_index}\t#{window_id}\t#{window_name}\t#{pane_current_command}"
+/// `list-windows -a` read back: every session's windows in tmux's order,
+/// and the window each session is on, both keyed by tmux session name. A
+/// view grouped with an agent-deck session lists the same windows under its
+/// own name, with its own current one.
+public struct WindowListing: Equatable, Sendable {
+    public var windows: [String: [SessionWindow]] = [:]
+    public var currentWindows: [String: String] = [:]
 
-    /// Windows from `listFormat` lines, in tmux's order and keyed by session
-    /// name. Lines with fewer than five fields or a non-numeric index are skipped.
-    static func parse(listOutput: String) -> [String: [SessionWindow]] {
-        var bySession: [String: [SessionWindow]] = [:]
+    /// `tmux list-windows -F` format that `init(listOutput:)` reads back.
+    static let format = "#{session_name}\t#{window_index}\t#{window_id}\t#{window_name}\t#{pane_current_command}\t#{window_active}"
+}
+
+extension WindowListing {
+    /// Lines with fewer than six fields or a non-numeric index are skipped.
+    public init(listOutput: String) {
         for line in listOutput.split(whereSeparator: \.isNewline) {
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count >= 5, let index = Int(fields[1]) else { continue }
-            bySession[fields[0], default: []].append(
+            guard fields.count >= 6, let index = Int(fields[1]) else { continue }
+            windows[fields[0], default: []].append(
                 SessionWindow(index: index, windowID: fields[2], name: fields[3], command: fields[4])
             )
+            if fields[5] == "1" { currentWindows[fields[0]] = fields[2] }
         }
-        return bySession
     }
 }
 
@@ -76,12 +85,12 @@ public struct TmuxVersion: Comparable, CustomStringConvertible, Sendable {
 /// window options agent-deck's TUI applies. Both wait on agent-deck growing
 /// `session window list|new|split`.
 extension AgentDeckCLI {
-    /// Every window of every session, in tmux's index order and keyed by
-    /// tmux session name; one call per refresh instead of one per session.
-    public func listAllWindows() async throws -> [String: [SessionWindow]] {
-        let result = try await tmux(["list-windows", "-a", "-F", SessionWindow.listFormat])
-        guard result.succeeded else { return [:] }
-        return SessionWindow.parse(listOutput: result.stdout)
+    /// Every window of every session, agent-deck's and Bosun's views alike;
+    /// one call per refresh instead of one per session.
+    public func listAllWindows() async throws -> WindowListing {
+        let result = try await tmux(["list-windows", "-a", "-F", WindowListing.format])
+        guard result.succeeded else { return WindowListing() }
+        return WindowListing(listOutput: result.stdout)
     }
 
     /// Mirrors the TUI's "open shell here" as a new window. `tmuxSession` is
@@ -107,6 +116,13 @@ extension AgentDeckCLI {
     /// agent-deck refuses to close a session's last window.
     public func closeWindow(sessionID: String, windowID: String) async throws {
         _ = try await run(["session", "window", "close", sessionID, windowID, "--yes"])
+    }
+
+    /// By window id, so the name lands whichever session the window is seen
+    /// through. tmux keeps the name from then on: the window's
+    /// `automatic-rename` goes off.
+    public func renameWindow(windowID: String, to name: String) async throws {
+        try await tmux(["rename-window", "-t", windowID, name]).checkSucceeded()
     }
 
     /// Types `line` into the agent and presses Return, as you would: the

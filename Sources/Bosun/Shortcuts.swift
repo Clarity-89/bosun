@@ -50,7 +50,7 @@ enum Shortcut: CaseIterable {
         case .search: "Filter the list by title, path or tool"
         case .newSession: "New session in the selected group…"
         case .quickSession: "Quick session, with the dialog's defaults"
-        case .rename: "Rename the session…"
+        case .rename: "Rename the session, or the selected window…"
         case .restart: "Restart the session, or start a stopped one"
         case .stop: "Stop the session…"
         case .delete: "Delete the session or group, or close the selected window…"
