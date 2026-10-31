@@ -14,8 +14,11 @@ macOS app over [agent-deck](https://github.com/asheshgoplani/agent-deck): lists 
 ```sh
 make vendor   # libghostty (141 MB) into gitignored Vendor/, once
 swift build && swift test
-make run      # release bundle in build/Bosun.app, then open
+make run      # build, bundle and open; on main build/Bosun.app, on any other branch build/Bosun-test.app
+make stop     # quit the copy of this checkout and branch; `make stop-all` quits every Bosun
 ```
+
+Two Bosuns. The main Bosun is `build/Bosun.app` of the main checkout, built from `main`; it runs all day and is restarted only when asked. On any other branch, in the main checkout or in a worktree, `make run` builds and launches `build/Bosun-test.app`, a second instance beside the main one for trying the change. Start and restart that one freely, without asking, and `make stop` it when the test is done: two Bosuns on one agent-deck both notify and both attach. Never put the main Bosun on a branch's build.
 
 CI (`.github/workflows/ci.yml`) runs build and test on `macos-26` for PRs and main.
 
