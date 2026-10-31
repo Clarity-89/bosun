@@ -1,8 +1,11 @@
-APP     := Bosun
-BUNDLE  := build/$(APP).app
-BINDIR   = $(shell swift build -c release --show-bin-path)
-# The running copy of this checkout's bundle, as its command line reads;
-# a worktree's build runs beside the main checkout's, under the same name.
+APP      := Bosun
+# main's bundle is the Bosun in daily use; any other branch, in this
+# checkout or a worktree, builds a second bundle beside it, so a change
+# under test runs as its own instance and never replaces the main one.
+BRANCH   := $(shell git rev-parse --abbrev-ref HEAD)
+BUNDLE   := build/$(if $(filter main,$(BRANCH)),$(APP),$(APP)-test).app
+BINDIR    = $(shell swift build -c release --show-bin-path)
+# The running copy of this bundle, as its command line reads.
 INSTANCE := ^$(abspath $(BUNDLE))/Contents/MacOS/$(APP)$$
 
 .PHONY: vendor build test bundle run stop stop-all clean
