@@ -94,7 +94,9 @@ struct MainWindowView: View {
         .onChange(of: model.revealRequests) {
             terminalFocusRequest += 1
         }
-        .focusedSceneValue(\.sidebarFocus, Binding(get: { sidebarFocus }, set: focusSidebar))
+        // A closure, not `focusSidebar` itself: Swift 6.3's IRGen aborts on
+        // the thunk for a main-actor method passed as a binding's setter.
+        .focusedSceneValue(\.sidebarFocus, Binding(get: { sidebarFocus }, set: { focusSidebar($0) }))
         .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab == .inbox ? nil : $terminalFocusRequest)
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
         .focusedSceneValue(\.sideTerminalsShown, model.paneSession == nil ? nil : $sideTerminalsShown)
