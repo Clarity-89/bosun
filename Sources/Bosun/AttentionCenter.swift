@@ -165,7 +165,7 @@ final class AttentionCenter {
         Notifier.shared.post(
             id: Self.notificationID(key), title: session.title, subtitle: unread.label ?? session.groupName,
             body: unread.kind.notificationBody, sessionID: key.sessionID, windowID: unread.windowID,
-            sound: AttentionSettings.isOn(AttentionSettings.sound)
+            sound: AttentionSettings.notificationSound
         )
         logger.info("notified \(Self.notificationID(key), privacy: .public): \(unread.kind.rawValue, privacy: .public)")
     }
