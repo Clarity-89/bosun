@@ -5,10 +5,14 @@ import SwiftUI
 @main
 struct BosunApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    private let model = DeckModel.shared
+    private let model: DeckModel
 
     init() {
+        // First: the model's agent-deck reads the process environment, and
+        // libghostty copies it into every shell.
+        LaunchEnvironment.sanitize()
         AttentionSettings.register()
+        model = DeckModel.shared
     }
 
     var body: some Scene {

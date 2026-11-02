@@ -49,5 +49,6 @@ Both copies run as process `Bosun`, and System Events resolves a process by name
 
 - tmux's first window of a session runs the agent; Bosun attaches through its own grouped "view" sessions (`ViewSession`) so switching windows does not move other clients.
 - Session status comes from agent-deck's event bus (`events follow`) with a periodic `list` reconcile; omp's pane titles are polled for turn ends and questions.
+- `open` hands Bosun the launching shell's environment, and libghostty copies the process environment into every shell Bosun opens. `LaunchEnvironment.sanitize()` runs first thing at launch and keeps only a terminal's variables, so a Bosun started from tmux or an agent's pane does not pass `TMUX`, `CI`, `NO_COLOR` or `AGENTDECK_KILL_SCOPE` to the user's shells.
 - Comments say why a line exists, in full sentences; no "what" comments, no caller lists.
 - Never amend or force-push.
