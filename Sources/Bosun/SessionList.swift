@@ -10,18 +10,25 @@ import Observation
 @MainActor
 @Observable
 final class SessionList {
-    private(set) var collapsedGroups = Set(UserDefaults.standard.stringArray(forKey: "collapsedGroups") ?? []) {
-        didSet { UserDefaults.standard.set(collapsedGroups.sorted(), forKey: "collapsedGroups") }
+    private(set) var collapsedGroups: Set<String> {
+        didSet { defaults.set(collapsedGroups.sorted(), forKey: "collapsedGroups") }
     }
-    var filter = SidebarFilter(
-        openOnly: UserDefaults.standard.bool(forKey: "sidebarOpenOnly"),
-        sort: SidebarSort(rawValue: UserDefaults.standard.string(forKey: "sidebarSort") ?? "") ?? .deck
-    ) {
+    var filter: SidebarFilter {
         didSet {
             guard filter.openOnly != oldValue.openOnly || filter.sort != oldValue.sort else { return }
-            UserDefaults.standard.set(filter.openOnly, forKey: "sidebarOpenOnly")
-            UserDefaults.standard.set(filter.sort.rawValue, forKey: "sidebarSort")
+            defaults.set(filter.openOnly, forKey: "sidebarOpenOnly")
+            defaults.set(filter.sort.rawValue, forKey: "sidebarSort")
         }
+    }
+    @ObservationIgnored private let defaults: any Defaults
+
+    init(defaults: any Defaults) {
+        self.defaults = defaults
+        collapsedGroups = Set(defaults.stringArray(forKey: "collapsedGroups") ?? [])
+        filter = SidebarFilter(
+            openOnly: defaults.bool(forKey: "sidebarOpenOnly"),
+            sort: SidebarSort(rawValue: defaults.string(forKey: "sidebarSort") ?? "") ?? .deck
+        )
     }
 
     /// The rows from agent-deck's `groups`: what the filter leaves, in its

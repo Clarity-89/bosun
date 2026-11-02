@@ -7,7 +7,11 @@ import os
 @MainActor
 @Observable
 final class DeckModel {
-    static let shared = DeckModel()
+    static let shared = DeckModel(
+        deck: AgentDeckCLI(agentDeckPath: UserDefaults.standard.string(forKey: "agentDeckPath")),
+        gitHub: GitHubCLI(),
+        defaults: UserDefaults.standard
+    )
 
     private(set) var sessions: [DeckSession] = []
     /// What `list` reports and the sidebar hides; deleting a group takes
@@ -22,14 +26,16 @@ final class DeckModel {
     /// Who publishes status transitions; nil until known, with the bus off,
     /// or from an agent-deck too old to say.
     private var statusOwner: StatusOwner?
-    private(set) var lastError: String?
+    /// The footer's red line; see `FooterError` for who clears it.
+    private var footerError: FooterError?
+    var lastError: String? { footerError?.message }
     private(set) var selection: SidebarItem?
     /// The sidebar's list. The Inbox covers the terminals: what they show
     /// is neither seen nor spared its notifications meanwhile.
-    var tab = SidebarTab(rawValue: UserDefaults.standard.string(forKey: "sidebarTab") ?? "") ?? .sessions {
+    var tab: SidebarTab {
         didSet {
             guard tab != oldValue else { return }
-            UserDefaults.standard.set(tab.rawValue, forKey: "sidebarTab")
+            defaults.set(tab.rawValue, forKey: "sidebarTab")
             attention.paneCovered(tab == .inbox)
             if tab == .inbox { inbox.refreshIfStale() }
         }
@@ -41,13 +47,13 @@ final class DeckModel {
     /// shows it at once; each costs a tmux client and a hidden surface.
     private var recent = RecentPanes(limit: 5)
     /// What wants you, by Bosun's own count.
-    let attention = AttentionCenter()
+    let attention: AttentionCenter
     /// GitHub: the Inbox tab, and each session's branch, pull request and issue.
-    let inbox = InboxCenter()
+    let inbox: InboxCenter
     /// Two shells in each session's directory, beside its terminal.
     let sideTerminals = SideTerminals()
     /// The session list's folds, search, Open filter and sort.
-    let sessionList = SessionList()
+    let sessionList: SessionList
     /// Counts notification clicks, so the window puts the keyboard in the
     /// terminal of the session shown.
     private(set) var revealRequests = 0
@@ -68,9 +74,9 @@ final class DeckModel {
     private var refreshTask: Task<Void, Never>?
     private var installTask: Task<Void, Never>?
 
-    @ObservationIgnored private let cli = AgentDeckCLI(
-        agentDeckPath: UserDefaults.standard.string(forKey: "agentDeckPath")
-    )
+    @ObservationIgnored private let deck: any AgentDeck
+    /// Where the sidebar's tab and the last New Session command are kept.
+    @ObservationIgnored private let defaults: any Defaults
     @ObservationIgnored private var started = false
     @ObservationIgnored private var binary: AgentDeckBinary?
     @ObservationIgnored private var followerTask: Task<Void, Never>?
@@ -91,7 +97,15 @@ final class DeckModel {
     /// keyboard goes into the terminal once its attach lands.
     @ObservationIgnored private var focusOnAttach: String?
 
-    private init() {
+    /// `shared` runs on the real agent-deck, GitHub and defaults; a test
+    /// gives fakes.
+    init(deck: any AgentDeck, gitHub: any GitHubClient, defaults: any Defaults) {
+        self.deck = deck
+        self.defaults = defaults
+        tab = SidebarTab(rawValue: defaults.string(forKey: "sidebarTab") ?? "") ?? .sessions
+        attention = AttentionCenter(defaults: defaults)
+        inbox = InboxCenter(gitHub: gitHub, defaults: defaults)
+        sessionList = SessionList(defaults: defaults)
         // A turn is when an agent pushes, or opens or merges a pull request;
         // the 5 min round would show it late.
         attention.onTurnEnd = { [inbox] session in inbox.recheck(session) }
@@ -171,6 +185,7 @@ final class DeckModel {
         return sessionList.rows(groups: groups, selected: selected, extraWindows: extraWindows(for:))
     }
 
+    /// The terminal engine, then `connect()`.
     func start() {
         guard !started else { return }
         started = true
@@ -181,7 +196,7 @@ final class DeckModel {
             engineError = error.localizedDescription
             logger.error("libghostty failed to start: \(error.localizedDescription, privacy: .public)")
         }
-        Task { await bootstrap() }
+        Task { await connect() }
     }
 
     func stop() {
@@ -230,7 +245,7 @@ final class DeckModel {
     /// is logged: in the footer it would return every 2 s.
     private func listWindows() async {
         do {
-            let listing = try await cli.listAllWindows()
+            let listing = try await deck.listAllWindows()
             let windows: [String: [SessionWindow]] = sessions.reduce(into: [:]) { result, session in
                 if let name = session.tmuxSession, let windows = listing.windows[name] {
                     result[session.id] = windows
@@ -270,8 +285,8 @@ final class DeckModel {
 
     /// Pops the session out into a separate Ghostty window.
     func openInGhostty(_ session: DeckSession) {
-        run("Ghostty attach") { [cli] in
-            try await cli.openGhosttyAttach(sessionID: session.id)
+        run("Ghostty attach") { [deck] in
+            try await deck.openGhosttyAttach(sessionID: session.id)
         }
     }
 
@@ -290,8 +305,8 @@ final class DeckModel {
         do {
             // Without the group order (a failed `group list`) the last one
             // still keeps each group's rows together.
-            async let listed = cli.list()
-            async let groupOrder = cli.groups()
+            async let listed = deck.list()
+            async let groupOrder = deck.groups()
             let all = try await listed
             if let groups = try? await groupOrder {
                 deckGroups = groups
@@ -301,13 +316,13 @@ final class DeckModel {
             sessions = DeckSession.inDeckOrder(all.filter { !$0.archived }, groupPaths: deckGroups.map(\.path))
             hasLoadedSessions = true
             hasListed = true
-            lastError = nil
+            recover(.list)
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
             attention.listed(sessions, previous: previous)
             inbox.listed(sessions)
             sideTerminals.listed(sessions)
             inbox.start()
-            dropStalePanes(loneViews: await cli.loneViews())
+            dropStalePanes(loneViews: await deck.loneViews())
             await loadAllWindows()
             if let (sessionID, windowID) = pendingReveal {
                 pendingReveal = nil
@@ -316,7 +331,7 @@ final class DeckModel {
         } catch is CancellationError {
         } catch {
             hasLoadedSessions = true
-            lastError = error.localizedDescription
+            fail(.list, error.localizedDescription)
             logger.error("list failed: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -378,11 +393,11 @@ final class DeckModel {
     /// TUI's window rows do.
     private func showWindow(_ windowID: String?, in live: AttachedPane) {
         if let view = live.view {
-            run("select window") { [cli] in try await cli.selectWindow(windowID, inView: view) } then: { [weak self] in
+            run("select window") { [deck] in try await deck.selectWindow(windowID, inView: view) } then: { [weak self] in
                 await self?.settleSize(of: live)
             }
         } else if let windowID {
-            run("select window") { [cli] in try await cli.selectWindow(windowID: windowID) }
+            run("select window") { [deck] in try await deck.selectWindow(windowID: windowID) }
         }
     }
 
@@ -390,16 +405,16 @@ final class DeckModel {
     /// it leaves the size alone until you type or click in it.
     private func settleSize(of live: AttachedPane) async {
         guard let view = live.view else { return }
-        let yields = await cli.someoneElseOnWindow(ofView: view)
+        let yields = await deck.someoneElseOnWindow(ofView: view)
         guard attachedPane?.id == live.id else { return }
         recent.update(live.id) { $0.yieldsSize = yields }
-        await cli.setSizesWindow(!yields, view: view)
+        await deck.setSizesWindow(!yields, view: view)
     }
 
     private func yieldSize(of hidden: AttachedPane) {
         guard let view = hidden.view else { return }
         recent.update(hidden.id) { $0.yieldsSize = true }
-        Task { [cli] in await cli.setSizesWindow(false, view: view) }
+        Task { [deck] in await deck.setSizesWindow(false, view: view) }
     }
 
     /// Typing or clicking in a pane makes it the client used last, so it
@@ -407,7 +422,7 @@ final class DeckModel {
     func paneReceivedInput(paneID: UUID) {
         guard let pane = recent.pane(id: paneID), pane.yieldsSize, let view = pane.view else { return }
         recent.update(paneID) { $0.yieldsSize = false }
-        Task { [cli] in await cli.setSizesWindow(true, view: view) }
+        Task { [deck] in await deck.setSizesWindow(true, view: view) }
     }
 
     /// Opens a terminal for the target's session, which the pane shows
@@ -415,7 +430,7 @@ final class DeckModel {
     /// on while tmux answered. `restartsIfDead` goes on the pane.
     private func attach(_ target: PaneTarget, restartsIfDead: Bool = false) {
         guard let binary else {
-            lastError = "agent-deck is still starting"
+            fail(.action, "agent-deck is still starting")
             return
         }
         let sessionID = target.sessionID
@@ -452,21 +467,21 @@ final class DeckModel {
         if let tmuxSession {
             let view = ViewSession.name(paneID: id)
             do {
-                try await cli.createView(view, grouping: tmuxSession, directory: directory)
-                try? await cli.selectWindow(window, inView: view)
-                let yields = await cli.someoneElseOnWindow(ofView: view)
-                let launch = try cli.viewAttachLaunch(view, yieldsSize: yields)
+                try await deck.createView(view, grouping: tmuxSession, directory: directory)
+                try? await deck.selectWindow(window, inView: view)
+                let yields = await deck.someoneElseOnWindow(ofView: view)
+                let launch = try deck.viewAttachLaunch(view, yieldsSize: yields)
                 return AttachedPane(id: id, sessionID: sessionID, view: view, launch: launch, yieldsSize: yields, restartsIfDead: restartsIfDead)
             } catch {
-                await cli.killView(view)
+                await deck.killView(view)
                 logger.info("no view of \(tmuxSession, privacy: .public), attaching through agent-deck: \(error.localizedDescription, privacy: .public)")
             }
         }
         if let window {
-            try? await cli.selectWindow(windowID: window)
+            try? await deck.selectWindow(windowID: window)
         }
         return AttachedPane(
-            id: id, sessionID: sessionID, view: nil, launch: binary.attachLaunch(sessionID: sessionID), yieldsSize: false,
+            id: id, sessionID: sessionID, view: nil, launch: deck.attachLaunch(binary, sessionID: sessionID), yieldsSize: false,
             restartsIfDead: restartsIfDead
         )
     }
@@ -475,7 +490,7 @@ final class DeckModel {
     /// otherwise hold on to windows agent-deck has let go.
     private func end(_ pane: AttachedPane) {
         guard let view = pane.view else { return }
-        Task { [cli] in await cli.killView(view) }
+        Task { [deck] in await deck.killView(view) }
     }
 
     /// Ends the panes whose session went away or stopped, and the views tmux
@@ -521,18 +536,19 @@ final class DeckModel {
     /// throws; after a refused start the pane offers Restart and the footer
     /// says why, as it does for a worktree setup hook that did not run.
     func createSession(_ request: NewSessionRequest) async throws {
-        let added = try await cli.addSession(request)
+        let added = try await deck.addSession(request)
         let sessionID = added.id
-        UserDefaults.standard.set(request.command.trimmingCharacters(in: .whitespaces), forKey: Self.lastCommandKey)
+        defaults.set(request.command.trimmingCharacters(in: .whitespaces), forKey: Self.lastCommandKey)
         logger.info("created \(sessionID, privacy: .public)")
         if let notice = added.setupHookNotice {
             logger.notice("\(sessionID, privacy: .public): \(notice, privacy: .public)")
         }
-        var startError: String?
+        var started = true
         do {
-            try await cli.startSession(id: sessionID)
+            try await deck.startSession(id: sessionID)
         } catch {
-            startError = error.localizedDescription
+            started = false
+            fail(.action, error.localizedDescription)
             logger.error("start \(sessionID, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
         await refresh()
@@ -541,15 +557,13 @@ final class DeckModel {
         }
         selection = .pane(PaneTarget(sessionID: sessionID))
         show(sessionID)
-        if let startError {
-            lastError = startError
-        } else {
+        if started {
             attach(PaneTarget(sessionID: sessionID))
         }
-        // After the reload, which clears the footer; a start that failed
-        // is the bigger news, and a hook you asked to skip is none.
+        // A start that failed is the bigger news, and a hook you asked to
+        // skip is none.
         if let notice = added.setupHookNotice, request.runsWorktreeSetup, lastError == nil {
-            lastError = notice
+            fail(.action, notice)
         }
     }
 
@@ -570,7 +584,7 @@ final class DeckModel {
         return NewSessionPrompt(
             groupPath: DeckGroup.listedPath(member?.group ?? "", in: deckGroups),
             directory: (directory as NSString).abbreviatingWithTildeInPath,
-            command: UserDefaults.standard.string(forKey: Self.lastCommandKey) ?? "omp"
+            command: defaults.string(forKey: Self.lastCommandKey) ?? "omp"
         )
     }
 
@@ -585,16 +599,16 @@ final class DeckModel {
     /// shown in Bosun's view while other clients stay on their window.
     func newShellWindow(in session: DeckSession) {
         guard let target = shellTarget(session) else { return }
-        changeWindows("new window") { [cli] in
-            try await cli.newShellWindow(tmuxSession: target, workingDirectory: session.path)
+        changeWindows("new window") { [deck] in
+            try await deck.newShellWindow(tmuxSession: target, workingDirectory: session.path)
         }
     }
 
     /// "Open shell here" as a split of the window Bosun shows.
     func split(_ session: DeckSession, _ direction: SplitDirection) {
         guard let target = shellTarget(session) else { return }
-        run("split") { [cli] in
-            try await cli.splitShellPane(tmuxSession: target, direction: direction, workingDirectory: session.path)
+        run("split") { [deck] in
+            try await deck.splitShellPane(tmuxSession: target, direction: direction, workingDirectory: session.path)
         }
     }
 
@@ -602,11 +616,11 @@ final class DeckModel {
     /// it would one you typed. A session that never had a tmux server has
     /// no agent to ask; one whose server is gone fails in tmux.
     func ask(_ request: AgentRequest, of session: DeckSession) {
-        run(request.command) { [cli] in
+        run(request.command) { [deck] in
             guard let tmuxSession = session.tmuxSession else {
                 throw AgentDeckCLIError.reported("“\(session.title)” has no agent to ask")
             }
-            try await cli.typeIntoAgent(request.command, tmuxSession: tmuxSession)
+            try await deck.typeIntoAgent(request.command, tmuxSession: tmuxSession)
         }
     }
 
@@ -617,14 +631,14 @@ final class DeckModel {
     }
 
     func closeWindow(_ window: SessionWindow, in session: DeckSession) {
-        changeWindows("close window") { [cli] in
-            try await cli.closeWindow(sessionID: session.id, windowID: window.windowID)
+        changeWindows("close window") { [deck] in
+            try await deck.closeWindow(sessionID: session.id, windowID: window.windowID)
         }
     }
 
     func renameWindow(_ window: SessionWindow, to name: String) {
-        changeWindows("rename window") { [cli] in
-            try await cli.renameWindow(windowID: window.windowID, to: name)
+        changeWindows("rename window") { [deck] in
+            try await deck.renameWindow(windowID: window.windowID, to: name)
         }
     }
 
@@ -635,13 +649,13 @@ final class DeckModel {
     }
 
     func stopSession(_ session: DeckSession) {
-        lifecycle(.stop, on: [session.id]) { [cli] in try await cli.stopSession(id: session.id) }
+        lifecycle(.stop, on: [session.id]) { [deck] in try await deck.stopSession(id: session.id) }
     }
 
     /// Restart also starts a stopped session; a pane offering it attaches
     /// what it started.
     func restartSession(_ session: DeckSession) {
-        lifecycle(.restart, on: [session.id], { [cli] in try await cli.restartSession(id: session.id) }) { [weak self] in
+        lifecycle(.restart, on: [session.id], { [deck] in try await deck.restartSession(id: session.id) }) { [weak self] in
             if let self, self.shownSessionID == session.id, self.attachedPane == nil { self.attach(PaneTarget(sessionID: session.id)) }
         }
     }
@@ -649,15 +663,15 @@ final class DeckModel {
     /// Runs the repository's worktree setup script again in the session's
     /// worktree, as b does in the TUI; the row says so meanwhile.
     func runWorktreeSetup(_ session: DeckSession) {
-        lifecycle(.setup, on: [session.id]) { [cli] in try await cli.runWorktreeSetup(sessionID: session.id) }
+        lifecycle(.setup, on: [session.id]) { [deck] in try await deck.runWorktreeSetup(sessionID: session.id) }
     }
 
     func renameSession(_ session: DeckSession, to title: String) {
-        lifecycle(.rename, on: [session.id]) { [cli] in try await cli.renameSession(id: session.id, to: title) }
+        lifecycle(.rename, on: [session.id]) { [deck] in try await deck.renameSession(id: session.id, to: title) }
     }
 
     func deleteSession(_ session: DeckSession) {
-        lifecycle(.delete, on: [session.id]) { [cli] in try await cli.deleteSession(id: session.id) }
+        lifecycle(.delete, on: [session.id]) { [deck] in try await deck.deleteSession(id: session.id) }
     }
 
     /// Delete for every session in the group and its subgroups, archived
@@ -667,9 +681,9 @@ final class DeckModel {
     func deleteGroup(_ group: SessionGroup) {
         guard group.isDeletable else { return }
         let doomed = sessions(inGroupTree: group.path)
-        lifecycle(.delete, on: Set(doomed.map(\.id)), { [cli] in
-            for session in doomed { try await cli.deleteSession(id: session.id) }
-            try await cli.deleteGroup(path: group.path)
+        lifecycle(.delete, on: Set(doomed.map(\.id)), { [deck] in
+            for session in doomed { try await deck.deleteSession(id: session.id) }
+            try await deck.deleteGroup(path: group.path)
         }) { [weak self] in
             self?.sessionList.forget(group: group.name)
         }
@@ -694,12 +708,12 @@ final class DeckModel {
         guard sessionList.filter.allowsReordering else { return }
         switch move {
         case .session(let move):
-            reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [cli] in
-                try await cli.moveSession(id: move.sessionID, move.placement)
+            reorder("move \(move.sessionID)", DeckSession.reordering(sessions, within: move.order)) { [deck] in
+                try await deck.moveSession(id: move.sessionID, move.placement)
             }
         case .group(let move):
-            reorder("move group \(move.path)", DeckSession.inDeckOrder(sessions, groupPaths: move.order)) { [cli] in
-                try await cli.moveGroup(path: move.path, move.placement)
+            reorder("move group \(move.path)", DeckSession.inDeckOrder(sessions, groupPaths: move.order)) { [deck] in
+                try await deck.moveGroup(path: move.path, move.placement)
             }
         }
     }
@@ -710,12 +724,10 @@ final class DeckModel {
         guard !isReordering else { return }
         isReordering = true
         sessions = ordered
-        run(label, operation) {
-            logger.info("\(label, privacy: .public) done")
-        } finally: { [weak self] in
+        run(label, operation, finally: { [weak self] _ in
             await self?.refresh()
             self?.isReordering = false
-        }
+        })
     }
 
     /// One action at a time on each of `ids`; they stay busy until the list
@@ -734,15 +746,11 @@ final class DeckModel {
         guard ids.allSatisfy({ busySessions[$0] == nil }) else { return }
         for id in ids { busySessions[id] = action }
         let label = "\(action.rawValue) \(ids.sorted().joined(separator: " "))"
-        var succeeded = false
-        run(label, operation) {
-            logger.info("\(label, privacy: .public) done")
-            succeeded = true
-        } finally: { [weak self] in
+        run(label, operation, finally: { [weak self] succeeded in
             await self?.refresh()
             for id in ids { self?.busySessions[id] = nil }
             if succeeded { done?() }
-        }
+        })
     }
 
     func paneTitleChanged(paneID: UUID, title: String) {
@@ -780,35 +788,52 @@ final class DeckModel {
         if case .pane = selection { selection = nil }
     }
 
+    /// An action of yours: it clears the footer, and its failure fills it.
+    /// `follow` runs after success; `cleanup` after success and failure
+    /// alike, and hears which.
     private func run(
         _ label: String,
         _ operation: @escaping @Sendable () async throws -> Void,
         then follow: (@MainActor () async -> Void)? = nil,
-        finally cleanup: (@MainActor () async -> Void)? = nil
+        finally cleanup: (@MainActor (_ succeeded: Bool) async -> Void)? = nil
     ) {
-        lastError = nil
+        footerError = nil
         Task {
+            var succeeded = false
             do {
                 try await operation()
+                succeeded = true
+                logger.info("\(label, privacy: .public) done")
                 await follow?()
             } catch {
-                lastError = error.localizedDescription
+                fail(.action, error.localizedDescription)
                 logger.error("\(label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             }
-            await cleanup?()
+            await cleanup?(succeeded)
         }
     }
 
-    private func bootstrap() async {
+    private func fail(_ source: FooterError.Source, _ message: String) {
+        footerError = FooterError(source: source, message: message)
+    }
+
+    /// Clears the footer if `source` filled it.
+    private func recover(_ source: FooterError.Source) {
+        if footerError?.source == source { footerError = nil }
+    }
+
+    /// agent-deck's binary and settings, the first list, then the feeds:
+    /// the status follower, the 60 s reconcile and the 2 s tmux poll.
+    func connect() async {
         do {
-            let binary = try await cli.binary()
+            let binary = try await deck.binary()
             self.binary = binary
             logger.info("using \(binary.path, privacy: .public) v\(binary.version, privacy: .public)")
-            await cli.killOrphanViews()
-            statusEventsEnabled = try await cli.statusEventsEnabled()
+            await deck.killOrphanViews()
+            statusEventsEnabled = try await deck.statusEventsEnabled()
             // Cursor before the list: anything published in between is
             // replayed onto the fresh list instead of being missed.
-            let stats = try await cli.eventsStats()
+            let stats = try await deck.eventsStats()
             await refresh()
             startReconcileLoop()
             startTmuxPoll()
@@ -817,12 +842,12 @@ final class DeckModel {
                 startFollower(after: stats.cursor)
             } else {
                 connection = .unavailable
-                lastError = "The event bus is disabled; statuses refresh every 60 s"
+                fail(.startup, "The event bus is disabled; statuses refresh every 60 s")
             }
         } catch {
             hasLoadedSessions = true
             connection = .unavailable
-            lastError = error.localizedDescription
+            fail(.startup, error.localizedDescription)
             logger.error("startup failed: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -839,8 +864,9 @@ final class DeckModel {
         while true {
             do {
                 connection = .reconnecting
-                let frames = try await cli.follow(after: cursor)
+                let frames = try await deck.follow(after: cursor)
                 connection = .live
+                recover(.follower)
                 retryDelay = .seconds(1)
                 logger.info("follower live after \(cursor, privacy: .public)")
                 for try await frame in frames {
@@ -852,13 +878,13 @@ final class DeckModel {
             } catch {
                 if Task.isCancelled { return }
                 connection = .reconnecting
-                if AgentDeckCLI.isCursorTooOld(error), let stats = try? await cli.eventsStats() {
+                if AgentDeckCLI.isCursorTooOld(error), let stats = try? await deck.eventsStats() {
                     cursor = stats.cursor
                     record(stats)
                     await refresh()
                     logger.info("follower resynced at \(cursor, privacy: .public)")
                 } else {
-                    lastError = error.localizedDescription
+                    fail(.follower, error.localizedDescription)
                     logger.error("follower failed: \(error.localizedDescription, privacy: .public)")
                 }
                 try? await Task.sleep(for: retryDelay)
@@ -885,7 +911,7 @@ final class DeckModel {
     /// and goes. A failed check keeps the last answer rather than flashing a
     /// warning.
     private func refreshStatusOwner() async {
-        if let stats = try? await cli.eventsStats() {
+        if let stats = try? await deck.eventsStats() {
             record(stats)
         }
     }
@@ -901,16 +927,16 @@ final class DeckModel {
     /// at `.nobody`: an agent-deck without `status_owner` cannot install it.
     func installNotifyDaemon() {
         guard statusOwner == .nobody, installTask == nil else { return }
-        lastError = nil
+        footerError = nil
         installTask = Task {
             defer { installTask = nil }
             do {
-                let plist = try await cli.installNotifyDaemon()
+                let plist = try await deck.installNotifyDaemon()
                 logger.info("notify daemon installed: \(plist, privacy: .public)")
                 try await awaitNotifyDaemonOwnership()
             } catch is CancellationError {
             } catch {
-                lastError = error.localizedDescription
+                fail(.daemon, error.localizedDescription)
                 logger.error("notify daemon install failed: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -924,7 +950,7 @@ final class DeckModel {
             await refreshStatusOwner()
             if statusOwner != .nobody { return }
         }
-        lastError = "The notify daemon is installed but has not started publishing statuses"
+        fail(.daemon, "The notify daemon is installed but has not started publishing statuses")
     }
 
     private func apply(_ frame: BusFrame) {
@@ -956,7 +982,7 @@ final class DeckModel {
         tmuxPollTask?.cancel()
         tmuxPollTask = Task {
             while !Task.isCancelled {
-                async let panes = cli.listAgentPanes()
+                async let panes = deck.listAgentPanes()
                 await loadAllWindows()
                 if let panes = await panes {
                     attention.panesPolled(panes, sessions: sessions)

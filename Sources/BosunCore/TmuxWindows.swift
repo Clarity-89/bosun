@@ -138,7 +138,7 @@ extension AgentDeckCLI {
 
     /// The user's shell, which "open shell here" runs.
     public static var userShell: String {
-        childEnvironment(binaryDirectory: nil)["SHELL"] ?? "/bin/sh"
+        childEnvironment(binaryDirectory: nil, inherited: ProcessInfo.processInfo.environment)["SHELL"] ?? "/bin/sh"
     }
 
     /// Runs `$SHELL` in `workingDirectory` through the given tmux command.
@@ -154,7 +154,7 @@ extension AgentDeckCLI {
     func tmux(_ arguments: [String]) async throws -> ProcessResult {
         try await Subprocess.run(
             executable: try Self.tmuxPath(), arguments: arguments,
-            environment: Self.childEnvironment(binaryDirectory: nil), timeout: .seconds(10)
+            environment: childEnvironment(binaryDirectory: nil), timeout: .seconds(10)
         )
     }
 

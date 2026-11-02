@@ -17,9 +17,19 @@ public enum GitHubCLIError: Error, LocalizedError, Equatable, Sendable {
     }
 }
 
+/// GitHub as the Inbox reads it. `GitHubCLI` asks through `gh`; a test
+/// answers from memory, so nothing in it waits on the network.
+public protocol GitHubClient: Sendable {
+    func inbox() async throws -> GitHubInbox
+    /// Each branch's pull requests.
+    func pullRequests(forBranches branches: [BranchRef]) async throws -> [BranchRef: [GitHubPullRequest]]
+    /// One answer per ref, in order; nil where not found or GitHub would not say.
+    func issues(_ refs: [IssueRef]) async throws -> [GitHubIssue?]
+}
+
 /// GitHub through `gh api graphql`, which owns the sign-in: Bosun keeps no
 /// token of its own.
-public struct GitHubCLI: Sendable {
+public struct GitHubCLI: GitHubClient {
     public init() {}
 
     /// Two requests at once: as one, GitHub's gateway times out.
@@ -123,7 +133,7 @@ public enum GitRepo {
     /// Trimmed stdout, nil on any failure.
     private static func git(_ path: String, _ arguments: [String]) async -> String? {
         guard let executable = try? AgentDeckCLI.executablePath(named: "git") else { return nil }
-        var environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil)
+        var environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil, inherited: ProcessInfo.processInfo.environment)
         environment["GIT_OPTIONAL_LOCKS"] = "0"
         environment["GIT_TERMINAL_PROMPT"] = "0"
         guard let result = try? await Subprocess.run(

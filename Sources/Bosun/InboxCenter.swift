@@ -165,19 +165,27 @@ final class InboxCenter {
         case failed(String)
     }
 
-    private(set) var state = InboxState(links: InboxCenter.savedLinks()) {
+    private(set) var state: InboxState {
         didSet {
             guard oldValue.links != state.links else { return }
-            UserDefaults.standard.set(try? JSONEncoder().encode(state.links), forKey: Self.linksKey)
+            defaults.set(try? JSONEncoder().encode(state.links), forKey: Self.linksKey)
         }
     }
     private(set) var status = Status.idle
     private(set) var updatedAt: Date?
     private(set) var sessions: [DeckSession] = []
 
-    @ObservationIgnored private let gitHub = GitHubCLI()
+    @ObservationIgnored private let gitHub: any GitHubClient
+    /// Where your issue links survive a quit.
+    @ObservationIgnored private let defaults: any Defaults
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var loopTask: Task<Void, Never>?
+
+    init(gitHub: any GitHubClient, defaults: any Defaults) {
+        self.gitHub = gitHub
+        self.defaults = defaults
+        state = InboxState(links: Self.savedLinks(in: defaults))
+    }
 
     var inbox: GitHubInbox? { state.inbox }
 
@@ -371,8 +379,8 @@ final class InboxCenter {
 
     private static let linksKey = "inbox.issueLinks"
 
-    private static func savedLinks() -> [String: IssueRef] {
-        UserDefaults.standard.data(forKey: linksKey)
+    private static func savedLinks(in defaults: any Defaults) -> [String: IssueRef] {
+        defaults.data(forKey: linksKey)
             .flatMap { try? JSONDecoder().decode([String: IssueRef].self, from: $0) } ?? [:]
     }
 }
