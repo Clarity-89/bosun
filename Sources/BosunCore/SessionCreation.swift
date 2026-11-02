@@ -49,7 +49,8 @@ public struct NewSessionRequest: Sendable, Equatable {
 public struct AddedSession: Equatable, Sendable {
     public let id: String
     /// agent-deck's line on a hook it skipped as not approved, or that
-    /// failed or timed out. Nil without a hook, or when it ran clean.
+    /// failed or timed out; a failure goes on with the last lines the hook
+    /// printed. Nil without a hook, or when it ran clean.
     public let setupHookNotice: String?
 }
 
@@ -95,8 +96,9 @@ extension AgentDeckCLI {
         var reply: AddReply?
         var lineStart = stdout.startIndex
         while reply == nil, lineStart < stdout.endIndex {
-            if stdout[lineStart] == "{" {
-                reply = try? decoder.decode(AddReply.self, from: Data(stdout[lineStart...].utf8))
+            if stdout[lineStart] == "{", let decoded = try? decoder.decode(AddReply.self, from: Data(stdout[lineStart...].utf8)) {
+                reply = decoded
+                break
             }
             guard let newline = stdout[lineStart...].firstIndex(where: \.isNewline) else { break }
             lineStart = stdout.index(after: newline)
@@ -104,10 +106,45 @@ extension AgentDeckCLI {
         let id = try reply?.id ?? decoder.decode(AddReply.self, from: Data(stdout.utf8)).id
         let notice = stderr.split(whereSeparator: \.isNewline).lazy.compactMap { line -> String? in
             if line.hasPrefix("worktree setup hook not run:") { return String(line) }
-            if line.hasPrefix("Warning: worktree setup script failed:") { return String(line.dropFirst("Warning: ".count)) }
+            if line.hasPrefix(Self.hookFailedWarning) { return String(line.dropFirst("Warning: ".count)) }
             return nil
         }.first
-        return AddedSession(id: id, setupHookNotice: notice)
+        guard let notice, notice.hasPrefix("worktree setup script failed:") else {
+            return AddedSession(id: id, setupHookNotice: notice)
+        }
+        // agent-deck through 1.16.34 kept the hook's stdout on `add`'s own,
+        // before the reply; since, it goes to stderr with the rest.
+        let hookStdout = reply == nil ? "" : String(stdout[..<lineStart])
+        return AddedSession(id: id, setupHookNotice: Self.withHookOutput(notice, stderr: stderr, stdout: hookStdout))
+    }
+
+    static let hookFailedWarning = "Warning: worktree setup script failed:"
+
+    /// The failure notice followed by the hook's last lines when it printed
+    /// any, so the footer says why rather than ending at an exit status:
+    /// those on stderr, where a failing command speaks, else its stdout.
+    static func withHookOutput(_ notice: String, stderr: String, stdout: String = "") -> String {
+        guard let tail = hookOutputTail(stderr) ?? hookOutputTail(stdout) else { return notice }
+        return "\(notice) — \(tail)"
+    }
+
+    /// The last `maxLines` lines of a hook's output joined by " | ", the
+    /// way agent-deck's TUI shows them: blank lines and agent-deck's own
+    /// framing lines dropped, whitespace collapsed, carriage returns taken
+    /// as line ends so a redrawn progress bar does not glue together. Cut
+    /// from the front past `maxLength`, so the final line survives. Nil
+    /// when nothing is left.
+    static func hookOutputTail(_ output: String, maxLines: Int = 5, maxLength: Int = 400) -> String? {
+        let lines = output.split(whereSeparator: \.isNewline).lazy
+            .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            .filter { line in
+                !line.isEmpty && !line.hasPrefix(Self.hookFailedWarning) && !line.hasPrefix("worktree setup hook not run:")
+                    && line != "Running worktree setup script..."
+                    && !line.hasPrefix("Worktree setup script completed in ") && !line.hasPrefix("Worktree setup script failed after ")
+            }
+        let tail = lines.suffix(maxLines).joined(separator: " | ")
+        guard !tail.isEmpty else { return nil }
+        return tail.count > maxLength ? "…" + tail.suffix(maxLength - 1) : tail
     }
 
     static func addArguments(_ request: NewSessionRequest) -> [String] {

@@ -316,15 +316,21 @@ public actor AgentDeckCLI {
     /// `--json` command is `AgentDeckCLIError.reported`; any other non-zero
     /// exit is `SubprocessError.exited`.
     func run(_ arguments: [String], timeout: Duration = .seconds(30)) async throws -> ProcessResult {
+        let result = try await execute(arguments, timeout: timeout)
+        try Self.checkReported(result)
+        return result
+    }
+
+    /// `run` before its check, for a caller that has more to say about a
+    /// failure than agent-deck's reported error.
+    func execute(_ arguments: [String], timeout: Duration) async throws -> ProcessResult {
         let binary = try await binary()
-        let result = try await Subprocess.run(
+        return try await Subprocess.run(
             executable: binary.path,
             arguments: arguments,
             environment: Self.childEnvironment(binaryDirectory: binary.directory),
             timeout: timeout
         )
-        try Self.checkReported(result)
-        return result
     }
 
     /// A failing `--json` command exits non-zero with its reason as
