@@ -46,9 +46,10 @@ bundle: build
 	cp Resources/AppIcon.icns $(BUNDLE)/Contents/Resources/
 	codesign --force --sign - $(BUNDLE)
 
-# `open` launches through LaunchServices, so the app never inherits a
-# tmux or agent-deck environment from the calling shell. It only brings a
-# running copy at this path forward, so that one quits first.
+# `open` hands the app the calling shell's environment, tmux's and an
+# agent's included; the app drops what is not a terminal's at launch
+# (`LaunchEnvironment`). `open` only brings a running copy at this path
+# forward, so that one quits first.
 run: bundle quit
 	open $(BUNDLE)
 

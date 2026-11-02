@@ -77,6 +77,24 @@ import Testing
     }
 }
 
+/// The process environment is what every terminal Bosun opens starts from,
+/// and `open` fills it from the shell that launched Bosun.
+@Suite struct LaunchEnvironmentTests {
+    @Test func aShellsEnvironmentStaysAndAnAgentsGoes() {
+        let kept = LaunchEnvironment.kept([
+            "HOME": "/Users/me", "USER": "me", "SHELL": "/bin/zsh", "PATH": "/usr/bin:/bin", "TMPDIR": "/var/folders/x/T/",
+            "LANG": "en_US.UTF-8", "LC_ALL": "C", "SSH_AUTH_SOCK": "/private/tmp/com.apple.launchd.x/Listeners",
+            "TMUX_TMPDIR": "/tmp/bosun-integration-1/tmux", "AGENTDECK_PROFILE": "work",
+            "TMUX": "/private/tmp/tmux-501/default,3597,217", "TMUX_PANE": "%240",
+            "CI": "true", "NO_COLOR": "1", "TERM": "dumb", "TERM_PROGRAM": "tmux", "COLORTERM": "truecolor",
+            "AGENTDECK_KILL_SCOPE": "03a9e3d7.fa47", "AGENTDECK_IDENTITY_FILE": "/Users/me/.local/share/agent-deck/identity.md",
+        ])
+        #expect(Set(kept.keys) == [
+            "HOME", "USER", "SHELL", "PATH", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK", "TMUX_TMPDIR", "AGENTDECK_PROFILE",
+        ])
+    }
+}
+
 /// Children of Bosun must never inherit the tmux or agent-deck identity of
 /// whatever shell launched Bosun, or `session attach` nests. The launcher's
 /// environment is an input, so nothing here touches the test process's own.

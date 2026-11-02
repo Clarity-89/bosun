@@ -230,10 +230,7 @@ public actor AgentDeckCLI: AgentDeck {
             "LANG": inherited["LANG"] ?? "en_US.UTF-8",
         ]
         environment["LOGNAME"] = inherited["LOGNAME"] ?? environment["USER"]
-        // `TMUX_TMPDIR` names the tmux server: agent-deck's sessions and
-        // Bosun's own tmux calls have to land on the same one, a private
-        // one as much as the default.
-        for key in ["AGENTDECK_PROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "TMUX_TMPDIR"] {
+        for key in LaunchEnvironment.stateLocations {
             if let value = inherited[key], !value.isEmpty {
                 environment[key] = value
             }
