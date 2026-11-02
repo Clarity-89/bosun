@@ -22,9 +22,10 @@ struct MainWindowView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// The Inbox row whose detail covers the terminals.
     @State private var inboxSelection: String?
-    /// Whether the side terminals show beside the pane, while it has a
-    /// session.
-    @State private var sideTerminalsShown = false
+    /// The sessions, by id, whose side terminals show beside the pane when
+    /// it shows them. Each shows or hides its own, though sessions in one
+    /// directory share the shells.
+    @State private var sideTerminalSessions: Set<String> = []
     /// Kept across hiding and showing them.
     @State private var sideTerminalsWidth: CGFloat = 480
     @Environment(\.controlActiveState) private var controlActiveState
@@ -61,17 +62,6 @@ struct MainWindowView: View {
                 }
             }
         }
-        // The keyboard follows the shells as it follows the list: into the
-        // top one as they show, back into the session's terminal as they
-        // hide. A switch to another session's shells leaves it be.
-        .onChange(of: sideTerminalsDirectory) { previous, directory in
-            guard let directory else {
-                if model.attachedPane != nil { terminalFocusRequest += 1 }
-                return
-            }
-            model.sideTerminals.start(in: directory)
-            if previous == nil { model.sideTerminals.panes[directory]?[0]?.focusTerminal() }
-        }
         // Into the Inbox list, never left in a terminal out of sight. Back
         // in Sessions, Show Session puts it in the terminal.
         .onChange(of: model.tab) {
@@ -104,7 +94,9 @@ struct MainWindowView: View {
         }))
         .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab == .inbox ? nil : $terminalFocusRequest)
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
-        .focusedSceneValue(\.sideTerminalsShown, model.paneSession == nil ? nil : $sideTerminalsShown)
+        .focusedSceneValue(\.sideTerminalsShown, model.paneSession == nil ? nil : Binding(get: { sideTerminalsShown }, set: { shown in
+            if shown != sideTerminalsShown { toggleSideTerminals() }
+        }))
         .navigationTitle(titleText)
         .toolbar {
             if model.tab == .sessions, let selected = model.selectedSession {
@@ -141,7 +133,7 @@ struct MainWindowView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if model.paneSession != nil {
                     Button {
-                        sideTerminalsShown.toggle()
+                        toggleSideTerminals()
                     } label: {
                         Label("Shells", systemImage: "terminal")
                     }
@@ -168,6 +160,20 @@ struct MainWindowView: View {
         }
     }
 
+    /// Shows or hides the shown session's shells. The keyboard follows them
+    /// as it follows the list: into the top one as they show, back into the
+    /// session's terminal as they hide.
+    private func toggleSideTerminals() {
+        guard let session = model.paneSession else { return }
+        if sideTerminalSessions.remove(session.id) != nil {
+            if model.attachedPane != nil { terminalFocusRequest += 1 }
+            return
+        }
+        sideTerminalSessions.insert(session.id)
+        model.sideTerminals.start(in: session.path)
+        model.sideTerminals.panes[session.path]?[0]?.focusTerminal()
+    }
+
     /// The menu bar's side of `sidebarFocus`, for Focus Sidebar and Filter
     /// Sessions: a hidden list comes back first, and the search lies under
     /// the Sessions tab.
@@ -190,8 +196,13 @@ struct MainWindowView: View {
         return "\(shown.title) · \(title)"
     }
 
+    /// Whether the session the pane shows has its shells shown.
+    private var sideTerminalsShown: Bool {
+        model.paneSession.map { sideTerminalSessions.contains($0.id) } ?? false
+    }
+
     /// The directory whose shells show beside the pane: its session's,
-    /// while they are wanted.
+    /// while that session has them shown.
     private var sideTerminalsDirectory: String? {
         sideTerminalsShown ? model.paneSession?.path : nil
     }
