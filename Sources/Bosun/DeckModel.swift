@@ -514,8 +514,8 @@ final class DeckModel {
     /// else the selected row's. A list runs alongside, so a group made
     /// elsewhere since the last one reaches the dialog's picker.
     func promptNewSession(inGroup groupName: String? = nil) {
-        newSessionPrompt = newSessionDefaults(inGroup: groupName)
         Task { await refresh() }
+        Task { newSessionPrompt = await newSessionDefaults(inGroup: groupName) }
     }
 
     func dismissNewSession() {
@@ -525,11 +525,13 @@ final class DeckModel {
     /// The dialog's defaults without the dialog, and a title agent-deck
     /// generates.
     func quickCreateSession(inGroup groupName: String? = nil) {
-        let defaults = newSessionDefaults(inGroup: groupName)
-        let request = NewSessionRequest(
-            directory: defaults.directory, groupPath: defaults.groupPath, command: defaults.command, quick: true
-        )
-        run("quick session") { [weak self] in try await self?.createSession(request) }
+        run("quick session") { [weak self] in
+            guard let self else { return }
+            let defaults = await newSessionDefaults(inGroup: groupName)
+            try await createSession(NewSessionRequest(
+                directory: defaults.directory, groupPath: defaults.groupPath, command: defaults.command, quick: true
+            ))
+        }
     }
 
     /// Adds the session, starts it and attaches it in the pane. A refused add
@@ -554,6 +556,8 @@ final class DeckModel {
         await refresh()
         if let session = sessions.first(where: { $0.id == sessionID }) {
             sessionList.uncover(session)
+            // The listed group, as agent-deck names one the dialog created.
+            newSessionDirectories[session.group] = request.directory.trimmingCharacters(in: .whitespaces)
         }
         selection = .pane(PaneTarget(sessionID: sessionID))
         show(sessionID)
@@ -568,11 +572,10 @@ final class DeckModel {
     }
 
     /// The group is `groupName`, else the selected row's; one agent-deck no
-    /// longer lists gives way to the first it does. The directory is the
-    /// selected session's when it is in that group, else one of the group's
-    /// sessions', else home. The command is the last one a session was
-    /// created with, `omp` at first.
-    private func newSessionDefaults(inGroup groupName: String?) -> NewSessionPrompt {
+    /// longer lists gives way to the first it does. The directory is
+    /// `newSessionDirectory(inGroup:)`'s. The command is the last one a
+    /// session was created with, `omp` at first.
+    private func newSessionDefaults(inGroup groupName: String?) async -> NewSessionPrompt {
         let selected = selectedSession
         var groupName = groupName ?? selected?.groupName
         if groupName == nil, case .group(let name)? = selection {
@@ -580,15 +583,49 @@ final class DeckModel {
         }
         let member = selected.flatMap { $0.groupName == groupName ? $0 : nil }
             ?? sessions.first { $0.groupName == groupName }
-        let directory = member?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let groupPath = DeckGroup.listedPath(member?.group ?? "", in: deckGroups)
         return NewSessionPrompt(
-            groupPath: DeckGroup.listedPath(member?.group ?? "", in: deckGroups),
-            directory: (directory as NSString).abbreviatingWithTildeInPath,
+            groupPath: groupPath,
+            directory: await newSessionDirectory(inGroup: groupPath),
             command: defaults.string(forKey: Self.lastCommandKey) ?? "omp"
         )
     }
 
+    /// The directory the group's last session was created from, worktree
+    /// or not. Without one, the selected session's when it is in the group,
+    /// else the group's first: for a worktree, the repository agent-deck
+    /// made it from, as its own dialog has it, since a worktree is no place
+    /// to make another. Home without any.
+    func newSessionDirectory(inGroup groupPath: String) async -> String {
+        if let directory = newSessionDirectories[groupPath] {
+            return directory
+        }
+        let member = selectedSession.flatMap { $0.group == groupPath ? $0 : nil }
+            ?? sessions.first { $0.group == groupPath }
+        var directory = member?.path
+        if let member, member.worktreePath != nil {
+            do {
+                directory = try await deck.worktreeRepository(sessionID: member.id)
+            } catch {
+                directory = nil
+                logger.notice("no repository for \(member.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return ((directory ?? FileManager.default.homeDirectoryForCurrentUser.path) as NSString).abbreviatingWithTildeInPath
+    }
+
+    /// The directory each group's last session was created from, by group
+    /// path, as typed.
+    private var newSessionDirectories: [String: String] {
+        get {
+            defaults.data(forKey: Self.directoriesKey)
+                .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Self.directoriesKey) }
+    }
+
     private static let lastCommandKey = "newSessionCommand"
+    private static let directoriesKey = "newSessionDirectories"
 
     /// A session's windows after the first, which runs the agent.
     func extraWindows(for sessionID: String) -> ArraySlice<SessionWindow> {

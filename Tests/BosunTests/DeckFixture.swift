@@ -25,11 +25,13 @@ struct FakeGitHub: GitHubClient {
 /// unless it never ran and so has none.
 func deckSession(
     _ id: String, group: String = "g", status: SessionStatus = .running, substate: String? = nil,
-    hasTmux: Bool = true, archived: Bool = false
+    hasTmux: Bool = true, archived: Bool = false, inWorktree: Bool = false
 ) -> DeckSession {
-    DeckSession(
-        id: id, title: id, path: "/p/\(id)", group: group, tool: "codex", status: status, substate: substate,
-        tmuxSession: hasTmux ? "agentdeck_\(id)" : nil, worktreePath: nil, archived: archived, lastActivityAt: nil
+    let path = inWorktree ? "/worktrees/\(id)" : "/p/\(id)"
+    return DeckSession(
+        id: id, title: id, path: path, group: group, tool: "codex", status: status, substate: substate,
+        tmuxSession: hasTmux ? "agentdeck_\(id)" : nil, worktreePath: inWorktree ? path : nil, archived: archived,
+        lastActivityAt: nil
     )
 }
 

@@ -487,6 +487,34 @@ import BosunTerminal
         #expect(fixture.deck.calls("session start").isEmpty)
     }
 
+    /// The dialog starts where the group's last session was made from, not
+    /// in the worktree agent-deck made for it, and each group keeps its own.
+    @Test func theDialogStartsWhereTheGroupsLastSessionWasCreatedFrom() async throws {
+        let fixture = DeckFixture(sessions: [deckSession("a"), deckSession("x", group: "other")])
+        await fixture.model.connect()
+        try await fixture.model.createSession(NewSessionRequest(
+            title: "fresh", directory: "/p/repo ", groupPath: "g", command: "omp", worktreeBranch: "fresh", createBranch: true
+        ))
+        #expect(fixture.session("new-1").path == "/worktrees/fresh")
+        fixture.model.promptNewSession()
+        #expect(await eventually { fixture.model.newSessionPrompt?.directory == "/p/repo" })
+        #expect(await fixture.model.newSessionDirectory(inGroup: "other") == "/p/x")
+        #expect(fixture.deck.calls("worktree info").isEmpty)
+    }
+
+    /// For a group no session was created in here, as agent-deck's dialog
+    /// has it; home when agent-deck no longer knows the repository.
+    @Test func otherwiseAWorktreeSessionGivesItsRepository() async {
+        let fixture = DeckFixture(sessions: [deckSession("w", inWorktree: true)])
+        fixture.deck.worktreeRepositories["w"] = "/p/repo"
+        await fixture.model.connect()
+        fixture.model.promptNewSession()
+        #expect(await eventually { fixture.model.newSessionPrompt?.directory == "/p/repo" })
+        #expect(fixture.deck.calls("worktree info") == ["worktree info w"])
+        fixture.deck.worktreeRepositories = [:]
+        #expect(await fixture.model.newSessionDirectory(inGroup: "g") == "~")
+    }
+
     @Test func aMoveShowsAtOnceAndTheListConfirmsIt() async {
         let fixture = DeckFixture(sessions: [deckSession("a"), deckSession("b")])
         await fixture.model.connect()

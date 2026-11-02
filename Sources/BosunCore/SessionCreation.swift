@@ -87,6 +87,12 @@ extension AgentDeckCLI {
         return try Self.addedSession(stdout: result.stdout, stderr: result.stderr)
     }
 
+    /// agent-deck's record of where the worktree came from, which outlives
+    /// the worktree; a session in a plain directory is a refusal.
+    public func worktreeRepository(sessionID: String) async throws -> String {
+        try await decode(WorktreeInfo.self, ["worktree", "info", sessionID, "--json"]).mainRepo
+    }
+
     /// The reply is the JSON object stdout ends with: a worktree setup hook
     /// writes to the same stdout before it, under `--json` too, so the
     /// first line that opens an object and parses to the end is the reply.
@@ -192,6 +198,14 @@ extension AgentDeckCLI {
 
 private struct AddReply: Decodable {
     let id: String
+}
+
+private struct WorktreeInfo: Decodable {
+    let mainRepo: String
+
+    private enum CodingKeys: String, CodingKey {
+        case mainRepo = "main_repo"
+    }
 }
 
 private struct GroupList: Decodable {
