@@ -15,7 +15,8 @@ macOS app over [agent-deck](https://github.com/asheshgoplani/agent-deck): lists 
 make vendor   # libghostty (141 MB) into gitignored Vendor/, once
 swift build && swift test
 make integration   # the real agent-deck and tmux in a sandbox; needs both installed
-make run      # build, bundle and open: build/Bosun.app on main in the main checkout, build/Bosun-test.app anywhere else
+make bundle   # build and bundle, no launch: build/Bosun.app on main in the main checkout, build/Bosun-test.app anywhere else
+make run      # bundle, quit the running copy of this bundle and open the new one; for test copies
 make stop     # quit the copy of this checkout and branch, and delete a test copy's bundle; `make stop-all` quits every Bosun
 ```
 
@@ -23,7 +24,7 @@ CI (`.github/workflows/ci.yml`) runs build and test on `macos-26` for PRs and ma
 
 ## Smoke tests
 
-Two Bosuns. The main Bosun is `build/Bosun.app` of the main checkout on `main`; it runs all day and is restarted only when asked. Anywhere else, another branch or a worktree, a worktree on `main` included, `make run` builds and launches `build/Bosun-test.app`, a second instance beside the main one for trying the change. To macOS it is another app, `com.bosun.Bosun-test` named "Bosun Test", with its own notifications (it asks permission once) and its own `UserDefaults`; a notification click or an `open -b` for one copy can never launch the other. Start and restart that one freely, without asking. Never put the main Bosun on a branch's build.
+Two Bosuns. The main Bosun is `build/Bosun.app` of the main checkout on `main`; it runs all day, and the user starts it from the Dock or Finder. An agent asked to update it runs `make bundle` there and asks the user to quit Bosun and relaunch it: quitting closes the side terminals and whatever runs in them, so the user picks the moment, and the launcher is never a process inside an agent session. Anywhere else, another branch or a worktree, a worktree on `main` included, `make run` builds and launches `build/Bosun-test.app`, a second instance beside the main one for trying the change. To macOS it is another app, `com.bosun.Bosun-test` named "Bosun Test", with its own notifications (it asks permission once) and its own `UserDefaults`; a notification click or an `open -b` for one copy can never launch the other. Start and restart that one freely, without asking. Never put the main Bosun on a branch's build.
 
 The test copy must not outlive the check it was started for. Two Bosuns on one agent-deck both notify and both attach, so a test copy left behind doubles every notification the user gets, for hours, until they notice.
 
