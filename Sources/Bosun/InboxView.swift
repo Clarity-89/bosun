@@ -74,11 +74,13 @@ private struct InboxRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            Image(systemName: "terminal")
-                .font(.caption)
+            AnchorMark()
+                .frame(width: 10, height: 10)
                 .foregroundStyle(.secondary)
-                .padding(.top, 2)
+                .padding(.top, 3)
                 .opacity(linked ? 1 : 0)
+                .accessibilityElement()
+                .accessibilityLabel("A session works on this")
                 .accessibilityHidden(!linked)
                 .help("A session works on this")
         }
@@ -310,7 +312,7 @@ private struct DetailLayout<Content: View>: View {
                 DetailSection(title: sessions.count == 1 ? "Session" : "Sessions") {
                     ForEach(sessions) { session in
                         HStack(spacing: 8) {
-                            Image(systemName: "terminal").foregroundStyle(.secondary).frame(width: 14)
+                            AnchorMark().frame(width: 12, height: 12).foregroundStyle(.secondary).frame(width: 14)
                             Text(session.title)
                             Text("· \(session.status.label)").foregroundStyle(.secondary)
                             Spacer()
@@ -364,5 +366,39 @@ private struct DetailSection<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
         }
+    }
+}
+
+/// The anchor of Bosun's Dock icon, at text size, for a session on what a
+/// row or detail is about. SF Symbols has no anchor, so it is drawn: ring,
+/// stock, shank, and an arc with a fluke at each end, in a unit square.
+private struct AnchorMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        let size = min(rect.width, rect.height)
+        let origin = CGPoint(x: rect.midX - size / 2, y: rect.midY - size / 2)
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: origin.x + x * size, y: origin.y + y * size) }
+        let arcCenter = point(0.5, 0.52)
+        let arcRadius = 0.36 * size
+        let ends = [Angle.degrees(160), Angle.degrees(20)].map { angle in
+            CGPoint(x: arcCenter.x + arcRadius * cos(angle.radians), y: arcCenter.y + arcRadius * sin(angle.radians))
+        }
+        var line = Path()
+        line.addEllipse(in: CGRect(x: origin.x + 0.39 * size, y: origin.y + 0.03 * size, width: 0.22 * size, height: 0.22 * size))
+        line.move(to: point(0.5, 0.25))
+        line.addLine(to: point(0.5, 0.88))
+        line.move(to: point(0.27, 0.37))
+        line.addLine(to: point(0.73, 0.37))
+        line.move(to: ends[0])
+        line.addArc(center: arcCenter, radius: arcRadius, startAngle: .degrees(160), endAngle: .degrees(20), clockwise: true)
+        var flukes = Path()
+        for (end, outward) in zip(ends, [CGFloat(-1), 1]) {
+            flukes.move(to: CGPoint(x: end.x + outward * 0.02 * size, y: end.y - 0.17 * size))
+            flukes.addLine(to: CGPoint(x: end.x - outward * 0.1 * size, y: end.y + 0.03 * size))
+            flukes.addLine(to: CGPoint(x: end.x + outward * 0.12 * size, y: end.y + 0.03 * size))
+            flukes.closeSubpath()
+        }
+        // A union, not appended subpaths: where a fluke overlaps the arc's
+        // stroke, their windings would cancel and leave a hole.
+        return line.strokedPath(StrokeStyle(lineWidth: 0.09 * size, lineCap: .round)).union(flukes)
     }
 }
