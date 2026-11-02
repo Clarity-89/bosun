@@ -15,17 +15,23 @@ macOS app over [agent-deck](https://github.com/asheshgoplani/agent-deck): lists 
 make vendor   # libghostty (141 MB) into gitignored Vendor/, once
 swift build && swift test
 make integration   # the real agent-deck and tmux in a sandbox; needs both installed
-make run      # build, bundle and open; on main build/Bosun.app, on any other branch build/Bosun-test.app
-make stop     # quit the copy of this checkout and branch, and on a branch delete its bundle; `make stop-all` quits every Bosun
+make run      # build, bundle and open: build/Bosun.app on main in the main checkout, build/Bosun-test.app anywhere else
+make stop     # quit the copy of this checkout and branch, and delete a test copy's bundle; `make stop-all` quits every Bosun
 ```
 
-Two Bosuns. The main Bosun is `build/Bosun.app` of the main checkout, built from `main`; it runs all day and is restarted only when asked. On any other branch, in the main checkout or in a worktree, `make run` builds and launches `build/Bosun-test.app`, a second instance beside the main one for trying the change. To macOS it is another app, `com.bosun.Bosun-test` named "Bosun Test", with its own notifications (it asks permission once) and its own `UserDefaults`; a notification click or an `open -b` for one copy can never launch the other. Start and restart that one freely, without asking. Never put the main Bosun on a branch's build.
+CI (`.github/workflows/ci.yml`) runs build and test on `macos-26` for PRs and main.
+
+## Smoke tests
+
+Two Bosuns. The main Bosun is `build/Bosun.app` of the main checkout on `main`; it runs all day and is restarted only when asked. Anywhere else, another branch or a worktree, a worktree on `main` included, `make run` builds and launches `build/Bosun-test.app`, a second instance beside the main one for trying the change. To macOS it is another app, `com.bosun.Bosun-test` named "Bosun Test", with its own notifications (it asks permission once) and its own `UserDefaults`; a notification click or an `open -b` for one copy can never launch the other. Start and restart that one freely, without asking. Never put the main Bosun on a branch's build.
 
 The test copy must not outlive the check it was started for. Two Bosuns on one agent-deck both notify and both attach, so a test copy left behind doubles every notification the user gets, for hours, until they notice.
 
 - `make stop`, in the checkout that ran `make run`, is the last step of every smoke test. Do it before the turn ends in which `make run` was used, whether the test passed, failed, or was cut short. Not later, not when the PR is done.
 - Before ending such a turn, check: `pgrep -fl Bosun-test.app` must print nothing. A hit means a stop is still owed.
 - A `Bosun-test.app` running when work begins was leaked by an earlier session. Stop it first, with `make stop` in its checkout or `pkill -f Bosun-test.app`, and tell the user.
+
+Everything else a smoke test touches is the user's: agent-deck's sessions are their work, and the main Bosun shows every pane of them. For a check that needs a pane, make your own tmux session (`tmux new-session -d -s smoke-<what>`; Bosun's pane poll sees it, agent-deck does not list it, so no row changes) and `kill-session` it after. In a session you did not make, remove only the windows and panes you added, put back a title you set with `select-pane -T`, and kill nothing else. A worktree or checkout you added goes with `git worktree remove` before the turn ends.
 
 Driving the test copy from an agent. Agents run in agent-deck's tmux, which the main Bosun started, so macOS checks the main Bosun's Accessibility and Screen Recording grants when an agent runs `osascript` or `screencapture`; the test copy never needs a grant of its own. `make bundle` signs ad hoc, so a grant matches one build of the main Bosun only. After it is rebuilt, System Settings still shows Bosun on, yet `osascript` fails with `-25211`, captures fail, and tccd logs `Failed to match existing code requirement for subject com.bosun.Bosun`; switching it off and on keeps the old build. Then run `tccutil reset Accessibility com.bosun.Bosun && tccutil reset ScreenCapture com.bosun.Bosun`, trigger both prompts, and ask the user to switch Bosun on in both lists. If captures still fail once Accessibility works, ask the user to check Screen & System Audio Recording before asking to restart the main Bosun.
 
@@ -38,8 +44,6 @@ EOF
 ```
 
 Both copies run as process `Bosun`, and System Events resolves a process by name, so `osascript` cannot address the test copy while both run. Drive it through the Accessibility API by PID instead: `AXUIElementCreateApplication(pid)` to read and press elements, and `CGEvent.postToPid(pid)` for keys, after `NSRunningApplication(processIdentifier:)?.activate()` and a check that `NSWorkspace.shared.frontmostApplication` is the test copy; keys posted to an app in the background are dropped.
-
-CI (`.github/workflows/ci.yml`) runs build and test on `macos-26` for PRs and main.
 
 ## Things not obvious from the code
 

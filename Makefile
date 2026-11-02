@@ -1,9 +1,11 @@
 APP      := Bosun
-# main's bundle is the Bosun in daily use; any other branch, in this
-# checkout or a worktree, builds a second bundle beside it, so a change
-# under test runs as its own instance and never replaces the main one.
+# main's bundle is the Bosun in daily use; anywhere else, another branch
+# or a worktree, builds a second bundle beside it, so a change under test
+# runs as its own instance and never replaces the main one. A worktree on
+# main counts as anywhere else: `--git-dir` is `.git` only in the main
+# checkout.
 BRANCH   := $(shell git rev-parse --abbrev-ref HEAD)
-ON_MAIN  := $(filter main,$(BRANCH))
+ON_MAIN  := $(and $(filter main,$(BRANCH)),$(filter .git,$(shell git rev-parse --git-dir)))
 BUNDLE   := build/$(if $(ON_MAIN),$(APP),$(APP)-test).app
 # The test copy is another app to macOS, so a notification click, an
 # `open -b`, or a default saved by one copy never reaches the other.
