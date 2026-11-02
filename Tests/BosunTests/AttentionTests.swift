@@ -26,24 +26,33 @@ extension AttentionState {
 }
 
 /// What a pane's title says the session is doing now.
-@Suite struct AttentionWorkingTests {
+@Suite struct AttentionStatusShownTests {
     /// A codex in a split spins its title; agent-deck, which knows only the
     /// agent it started, still calls the session at its prompt.
-    @Test func aSpinningPaneMakesTheSessionWorkUntilItStops() {
+    @Test func aSpinningPaneMakesTheSessionRunUntilItStops() {
         var state = AttentionState()
         _ = state.panesPolled(PanePoll(spinning: ["agentdeck_a"]), sessionIDs: sessionIDs, at: t0)
-        #expect(state.attention(for: session("a", status: .waiting)).working)
-        #expect(!state.attention(for: session("b", status: .waiting)).working)
+        #expect(state.attention(for: session("a", status: .waiting)).status == .running)
+        #expect(state.attention(for: session("a", status: .idle)).status == .running)
+        #expect(state.attention(for: session("b", status: .waiting)).status == .waiting)
         _ = state.panesPolled(PanePoll(), sessionIDs: sessionIDs, at: t0)
-        #expect(!state.attention(for: session("a", status: .waiting)).working)
+        #expect(state.attention(for: session("a", status: .waiting)).status == .waiting)
+    }
+
+    /// What agent-deck reports beyond its prompt is not second-guessed by a title.
+    @Test(arguments: [SessionStatus.error, .stopped, .starting])
+    func anErrorOrAStopStands(status: SessionStatus) {
+        var state = AttentionState()
+        _ = state.panesPolled(PanePoll(spinning: ["agentdeck_a"]), sessionIDs: sessionIDs, at: t0)
+        #expect(state.attention(for: session("a", status: status)).status == status)
     }
 
     @Test func anOmpMidTurnIsWorkToo() {
         var state = AttentionState()
         _ = state.panesPolled([pane("%1", in: "a", "π ⠋ x")], sessionIDs: sessionIDs, at: t0)
-        #expect(state.attention(for: session("a")).working)
+        #expect(state.attention(for: session("a")).status == .running)
         _ = state.panesPolled([pane("%1", in: "a", "π > x")], sessionIDs: sessionIDs, at: t0)
-        #expect(!state.attention(for: session("a")).working)
+        #expect(state.attention(for: session("a")).status == .idle)
     }
 
     /// Work starting or stopping in a pane Bosun cannot read is not news:
@@ -214,10 +223,10 @@ extension AttentionState {
     /// leaves the question open.
     @Test func rowSaysTheMostUrgentThing() {
         var state = Self.twoWindows()
-        #expect(state.attention(for: session("a")) == SessionAttention(unread: true, asks: false, summary: "Failed", urgency: Urgency(kind: .failed, since: t0)))
+        #expect(state.attention(for: session("a")) == SessionAttention(unread: true, asks: false, status: .idle, summary: "Failed", urgency: Urgency(kind: .failed, since: t0)))
         _ = state.panesPolled([pane("%1", in: "a", window: "@1", "π ! Pick one"), pane("%2", in: "a", window: "@2", "π > y")], sessionIDs: sessionIDs, at: t0)
         state.seen(sessionID: "a", windowID: nil)
-        #expect(state.attention(for: session("a")) == SessionAttention(unread: false, asks: true, summary: "Asks for input: Pick one", urgency: Urgency(kind: .asks, since: .distantPast)))
+        #expect(state.attention(for: session("a")) == SessionAttention(unread: false, asks: true, status: .idle, summary: "Asks for input: Pick one", urgency: Urgency(kind: .asks, since: .distantPast)))
     }
 
     /// Mark as Unread holds through looking at the session, until another
