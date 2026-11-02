@@ -225,6 +225,7 @@ private let appMenuItems = "super+h super+alt+h super+m super+x super+ctrl+s sup
         ("/", .command, .cheatSheet),
         ("q", .control, .toggleSessionList),
         (",", .command, .settings),
+        ("2", .command, .showInbox),
         ("n", [.command, .capsLock], .newSession),
     ] as [(String, EventModifiers, Shortcut)])
     func menuKeyReachesTheMenuBar(key: String, modifiers: EventModifiers, action: Shortcut) {
