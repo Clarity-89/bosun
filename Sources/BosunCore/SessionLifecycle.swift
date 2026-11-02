@@ -35,9 +35,16 @@ extension AgentDeckCLI {
     /// worktree, through agent-deck's consent gate: an unapproved hook is
     /// refused with the command that approves it. agent-deck 1.16.35 and
     /// later; before, an unknown command. The hook keeps agent-deck's own
-    /// timeout, a minute by default, so the wait here outlasts it.
+    /// timeout, a minute by default, so the wait here outlasts it. A
+    /// failure goes on with the hook's last lines, which under `--json`
+    /// all reach stderr.
     public func runWorktreeSetup(sessionID: String) async throws {
-        _ = try await run(["worktree", "setup", sessionID, "--json"], timeout: .seconds(300))
+        let result = try await execute(["worktree", "setup", sessionID, "--json"], timeout: .seconds(300))
+        do {
+            try Self.checkReported(result)
+        } catch AgentDeckCLIError.reported(let message) {
+            throw AgentDeckCLIError.reported(Self.withHookOutput(message, stderr: result.stderr))
+        }
     }
 
     public func renameSession(id: String, to title: String) async throws {
