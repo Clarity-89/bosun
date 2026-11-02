@@ -3,9 +3,12 @@ import Foundation
 
 /// agent-deck in memory: the sessions and groups `list` answers with, a
 /// tmux of windows and views, and a bus the test publishes frames on. Each
-/// command is recorded as agent-deck's or tmux's own line, so a test can
-/// say what the model asked and in what order. A command named in
-/// `failures` throws its error instead of running.
+/// command is recorded as agent-deck's or tmux's own line, or one named
+/// for what the CLI does where neither has one (`binary`,
+/// `kill-orphan-views`), so a test can say what the model asked and in
+/// what order. A command named in `failures` throws its error instead of
+/// running; one that cannot fail, `killView` say, swallows it as the CLI
+/// does.
 @MainActor
 final class FakeAgentDeck: AgentDeck {
     var binary = AgentDeckBinary(path: "/fake/bin/agent-deck", version: .minimumSupported)
@@ -32,7 +35,10 @@ final class FakeAgentDeck: AgentDeck {
     private(set) var followedAfter: [UInt64] = []
     /// The views grouped with a session, by view name.
     private(set) var views: [String: String] = [:]
-    private var bus = AsyncThrowingStream<BusFrame, any Error>.makeStream()
+    /// Every frame published, which `follow` replays from its cursor, as
+    /// agent-deck's retained log does, before streaming new ones.
+    private var log: [BusFrame] = []
+    private var following: AsyncThrowingStream<BusFrame, any Error>.Continuation?
     private var listWaiters: [CheckedContinuation<Void, Never>] = []
     private var added = 0
 
@@ -44,7 +50,9 @@ final class FakeAgentDeck: AgentDeck {
     /// A `session.status` frame on the bus, as agent-deck's publisher would
     /// write it.
     func publish(_ status: SessionStatus, for sessionID: String, cursor: UInt64) {
-        bus.continuation.yield(BusFrame(cursor: cursor, kind: "session.status", sessionID: sessionID, data: StatusChange(to: status)))
+        let frame = BusFrame(cursor: cursor, kind: "session.status", sessionID: sessionID, data: StatusChange(to: status))
+        log.append(frame)
+        following?.yield(frame)
     }
 
     func releaseList() {
@@ -86,7 +94,12 @@ final class FakeAgentDeck: AgentDeck {
         if !followErrors.isEmpty {
             throw followErrors.removeFirst()
         }
-        return bus.stream
+        let (stream, continuation) = AsyncThrowingStream<BusFrame, any Error>.makeStream()
+        for frame in log where frame.cursor > cursor {
+            continuation.yield(frame)
+        }
+        following = continuation
+        return stream
     }
 
     func installNotifyDaemon() async throws -> String {
@@ -269,6 +282,10 @@ final class FakeAgentDeck: AgentDeck {
 
     nonisolated func viewAttachLaunch(_ view: String, yieldsSize: Bool) throws -> AttachLaunch {
         AttachLaunch(command: "tmux attach-session -t =\(view)", environment: [:])
+    }
+
+    nonisolated func attachLaunch(_ binary: AgentDeckBinary, sessionID: String) -> AttachLaunch {
+        AttachLaunch(command: "\(binary.path) session attach \(sessionID)", environment: [:])
     }
 }
 

@@ -70,8 +70,8 @@ final class DeckFixture {
         model = DeckModel(deck: deck, gitHub: FakeGitHub(), defaults: defaults)
     }
 
-    deinit {
-        Task { @MainActor [model] in model.stop() }
+    isolated deinit {
+        model.stop()
     }
 
     var sessions: [DeckSession] { model.sessions }
@@ -102,4 +102,11 @@ func eventually(timeout: Duration = .seconds(3), _ condition: @MainActor () -> B
         try? await Task.sleep(for: .milliseconds(10))
     }
     return true
+}
+
+/// Lets whatever the model has queued on the main actor run, for a check
+/// that nothing more happens.
+@MainActor
+func settled() async {
+    for _ in 0..<20 { await Task.yield() }
 }

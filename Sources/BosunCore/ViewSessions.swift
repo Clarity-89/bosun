@@ -154,4 +154,13 @@ extension AgentDeckCLI {
             environment: childEnvironment(binaryDirectory: nil)
         )
     }
+
+    /// The pane's command for a session Bosun has no view of: `session
+    /// attach` through agent-deck, which knows the session's socket.
+    public nonisolated func attachLaunch(_ binary: AgentDeckBinary, sessionID: String) -> AttachLaunch {
+        AttachLaunch(
+            command: Terminal.attachCommand(executablePath: binary.path, sessionID: sessionID),
+            environment: childEnvironment(binaryDirectory: binary.directory)
+        )
+    }
 }

@@ -56,4 +56,7 @@ public protocol AgentDeck: Sendable {
     func someoneElseOnWindow(ofView view: String) async -> Bool
     func setSizesWindow(_ sizes: Bool, view: String) async
     func viewAttachLaunch(_ view: String, yieldsSize: Bool) throws -> AttachLaunch
+    /// `session attach` through agent-deck, for a session Bosun has no
+    /// view of.
+    func attachLaunch(_ binary: AgentDeckBinary, sessionID: String) -> AttachLaunch
 }

@@ -49,15 +49,6 @@ public struct AttachLaunch: Sendable {
     public let environment: [String: String]
 }
 
-extension AgentDeckBinary {
-    public func attachLaunch(sessionID: String) -> AttachLaunch {
-        AttachLaunch(
-            command: Terminal.attachCommand(executablePath: path, sessionID: sessionID),
-            environment: AgentDeckCLI.childEnvironment(binaryDirectory: directory)
-        )
-    }
-}
-
 public enum AgentDeckCLIError: Error, LocalizedError, Equatable, Sendable {
     case notFound(rejected: [String])
     /// A `--json` command's own error message.
@@ -193,7 +184,7 @@ public actor AgentDeckCLI: AgentDeck {
         let result = try? await Subprocess.run(
             executable: "/bin/zsh",
             arguments: ["-lic", #"printf '\n\#(loginPathMarker)%s\n' "$PATH""#],
-            environment: childEnvironment(binaryDirectory: nil),
+            environment: childEnvironment(binaryDirectory: nil, inherited: ProcessInfo.processInfo.environment),
             timeout: .seconds(10)
         )
         guard let result, result.succeeded, let path = loginPath(fromShellOutput: result.stdout) else {
@@ -218,10 +209,11 @@ public actor AgentDeckCLI: AgentDeck {
     /// re-exec by name (hooks, tmux-side helpers) lands on the same build.
     /// A tmux server started from this environment gives its PATH to every
     /// pane, so the login shell's PATH comes next. `inherited` is the
-    /// launcher's environment, Bosun's own by default.
+    /// launcher's environment, named at every call: a sandbox `HOME` or
+    /// `TMUX_TMPDIR` reaches a child only through it.
     static func childEnvironment(
         binaryDirectory: String?,
-        inherited: [String: String] = ProcessInfo.processInfo.environment,
+        inherited: [String: String],
         loginPath: String? = AgentDeckCLI.loginPathCache.withLock { $0 }
     ) -> [String: String] {
         let directories = [binaryDirectory].compactMap { $0 }
@@ -258,7 +250,7 @@ public actor AgentDeckCLI: AgentDeck {
     /// order; the PATH includes the login shell's.
     static func executablePaths(
         named name: String,
-        environment: [String: String] = childEnvironment(binaryDirectory: nil)
+        environment: [String: String] = childEnvironment(binaryDirectory: nil, inherited: ProcessInfo.processInfo.environment)
     ) -> some Collection<String> {
         (environment["PATH"] ?? "").split(separator: ":").lazy
             .map { "\($0)/\(name)" }

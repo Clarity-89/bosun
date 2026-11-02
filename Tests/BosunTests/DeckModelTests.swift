@@ -14,6 +14,9 @@ import BosunTerminal
             groups: ["a", "b"]
         )
         fixture.deck.stats = EventsStats(enabled: true, cursor: 7, statusOwner: .tui)
+        // Published between the cursor and the list, as a change can be
+        // while Bosun starts.
+        fixture.deck.publish(.waiting, for: "a1", cursor: 8)
         await fixture.model.connect()
         #expect(fixture.sessions.map(\.id) == ["a1", "b1", "b2"])
         #expect(fixture.model.groups.map(\.name) == ["a", "b"])
@@ -21,9 +24,10 @@ import BosunTerminal
         #expect(await eventually { fixture.model.connection == .live })
         #expect(fixture.model.statusFeedGap == nil)
         #expect(fixture.model.connectionLabel == "Live")
-        // A frame published between the cursor and the list replays onto
-        // the list; one read the other way round would be lost.
+        // The follower starts at the cursor taken before the list, so the
+        // frame replays onto it; one read the other way round would be lost.
         #expect(fixture.deck.followedAfter == [7])
+        #expect(await eventually { fixture.session("a1").status == .waiting })
         let commands = fixture.deck.commands
         #expect(commands.firstIndex(of: "events stats")! < commands.firstIndex(of: "list")!)
     }
@@ -53,7 +57,7 @@ import BosunTerminal
         async let first: Void = fixture.model.refresh()
         async let second: Void = fixture.model.refresh()
         #expect(await eventually { fixture.deck.calls("list").count == listed + 1 })
-        for _ in 0..<20 { await Task.yield() }
+        await settled()
         #expect(fixture.deck.calls("list").count == listed + 1)
         #expect(fixture.model.isRefreshing)
         fixture.deck.releaseList()
@@ -62,7 +66,8 @@ import BosunTerminal
         #expect(!fixture.model.isRefreshing)
     }
 
-    @Test func aFailedListKeepsTheRowsAndSaysWhy() async {
+    /// The list's own failure goes with the next list that works.
+    @Test func aFailedListKeepsTheRowsAndSaysWhyUntilOneWorks() async {
         let fixture = DeckFixture(sessions: [deckSession("a")])
         await fixture.model.connect()
         fixture.deck.failures["list"] = AgentDeckCLIError.reported("state.db is locked")
@@ -70,6 +75,9 @@ import BosunTerminal
         #expect(fixture.model.lastError == "state.db is locked")
         #expect(fixture.sessions.map(\.id) == ["a"])
         #expect(fixture.model.hasLoadedSessions)
+        fixture.deck.failures["list"] = nil
+        await fixture.model.refresh()
+        #expect(fixture.model.lastError == nil)
     }
 
     @Test func noAgentDeckIsUnavailableWithAnEmptyList() async {
@@ -173,7 +181,9 @@ import BosunTerminal
         #expect(fixture.model.lastError == nil)
     }
 
-    @Test func aFollowerFailureIsReportedAndRetried() async {
+    /// The failure is the follower's to take back: a reconnect clears it,
+    /// and no list in between does.
+    @Test func aFollowerFailureIsReportedUntilItReconnects() async {
         let fixture = DeckFixture(sessions: [deckSession("a")])
         fixture.deck.followErrors = [
             SubprocessError.exited(command: "agent-deck events follow", status: 1, stderr: "bus: permission denied"),
@@ -181,7 +191,10 @@ import BosunTerminal
         await fixture.model.connect()
         #expect(await eventually { fixture.model.lastError == "bus: permission denied" })
         #expect(fixture.model.connection == .reconnecting)
+        await fixture.model.refresh()
+        #expect(fixture.model.lastError == "bus: permission denied")
         #expect(await eventually(timeout: .seconds(5)) { fixture.model.connection == .live })
+        #expect(fixture.model.lastError == nil)
         #expect(fixture.deck.followedAfter.count == 2)
     }
 }
@@ -215,9 +228,24 @@ import BosunTerminal
         fixture.select("a")
         #expect(fixture.model.shownSessionID == "a")
         #expect(!fixture.model.isAttaching)
-        for _ in 0..<20 { await Task.yield() }
+        await settled()
         #expect(fixture.model.attachedPane == nil)
         #expect(fixture.deck.calls("new-session").isEmpty)
+    }
+
+    /// A view tmux will not group (a session on its default server, a tmux
+    /// older than 3.2) is let go, and the pane attaches through agent-deck,
+    /// which knows the session's socket.
+    @Test func withoutAViewThePaneAttachesThroughAgentDeck() async throws {
+        let fixture = DeckFixture(sessions: [deckSession("a")])
+        await fixture.model.connect()
+        fixture.deck.failures["new-session"] = SubprocessError.exited(command: "tmux new-session", status: 1, stderr: "sessions should be nested with care")
+        let pane = try await fixture.selectAndAttach("a")
+        #expect(pane.view == nil)
+        #expect(pane.launch.command == "/fake/bin/agent-deck session attach a")
+        #expect(!pane.yieldsSize)
+        #expect(fixture.model.livePanes.count == 1)
+        #expect(await eventually { fixture.deck.calls("kill-session").count == 1 }, "the view that failed is not left behind")
     }
 
     @Test func switchingBackShowsTheKeptTerminalAtOnce() async throws {
@@ -395,7 +423,7 @@ import BosunTerminal
         fixture.model.renameSession(fixture.session("a"), to: "other")
         fixture.model.stopSession(fixture.session("a"))
         #expect(await eventually { fixture.deck.calls("session stop").count == 1 })
-        for _ in 0..<20 { await Task.yield() }
+        await settled()
         #expect(fixture.deck.calls("rename").isEmpty)
         #expect(fixture.deck.calls("session stop").count == 1)
         fixture.deck.releaseList()

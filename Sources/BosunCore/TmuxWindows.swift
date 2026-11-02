@@ -138,7 +138,7 @@ extension AgentDeckCLI {
 
     /// The user's shell, which "open shell here" runs.
     public static var userShell: String {
-        childEnvironment(binaryDirectory: nil)["SHELL"] ?? "/bin/sh"
+        childEnvironment(binaryDirectory: nil, inherited: ProcessInfo.processInfo.environment)["SHELL"] ?? "/bin/sh"
     }
 
     /// Runs `$SHELL` in `workingDirectory` through the given tmux command.

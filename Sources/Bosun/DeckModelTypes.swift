@@ -153,3 +153,14 @@ enum StatusFeedGap {
     /// No TUI and no notify daemon writes transitions.
     case noPublisher
 }
+
+/// The footer's red line and who put it there. A list or the follower,
+/// recovering, takes back only its own message, so an action's refusal
+/// stays through the reload after it; a new action takes whatever is
+/// there.
+struct FooterError {
+    enum Source { case action, list, follower, startup, daemon }
+
+    let source: Source
+    let message: String
+}

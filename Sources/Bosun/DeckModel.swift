@@ -26,7 +26,9 @@ final class DeckModel {
     /// Who publishes status transitions; nil until known, with the bus off,
     /// or from an agent-deck too old to say.
     private var statusOwner: StatusOwner?
-    private(set) var lastError: String?
+    /// The footer's red line; see `FooterError` for who clears it.
+    private var footerError: FooterError?
+    var lastError: String? { footerError?.message }
     private(set) var selection: SidebarItem?
     /// The sidebar's list. The Inbox covers the terminals: what they show
     /// is neither seen nor spared its notifications meanwhile.
@@ -314,7 +316,7 @@ final class DeckModel {
             sessions = DeckSession.inDeckOrder(all.filter { !$0.archived }, groupPaths: deckGroups.map(\.path))
             hasLoadedSessions = true
             hasListed = true
-            lastError = nil
+            recover(.list)
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
             attention.listed(sessions, previous: previous)
             inbox.listed(sessions)
@@ -329,7 +331,7 @@ final class DeckModel {
         } catch is CancellationError {
         } catch {
             hasLoadedSessions = true
-            lastError = error.localizedDescription
+            fail(.list, error.localizedDescription)
             logger.error("list failed: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -428,7 +430,7 @@ final class DeckModel {
     /// on while tmux answered. `restartsIfDead` goes on the pane.
     private func attach(_ target: PaneTarget, restartsIfDead: Bool = false) {
         guard let binary else {
-            lastError = "agent-deck is still starting"
+            fail(.action, "agent-deck is still starting")
             return
         }
         let sessionID = target.sessionID
@@ -479,7 +481,7 @@ final class DeckModel {
             try? await deck.selectWindow(windowID: window)
         }
         return AttachedPane(
-            id: id, sessionID: sessionID, view: nil, launch: binary.attachLaunch(sessionID: sessionID), yieldsSize: false,
+            id: id, sessionID: sessionID, view: nil, launch: deck.attachLaunch(binary, sessionID: sessionID), yieldsSize: false,
             restartsIfDead: restartsIfDead
         )
     }
@@ -541,11 +543,12 @@ final class DeckModel {
         if let notice = added.setupHookNotice {
             logger.notice("\(sessionID, privacy: .public): \(notice, privacy: .public)")
         }
-        var startError: String?
+        var started = true
         do {
             try await deck.startSession(id: sessionID)
         } catch {
-            startError = error.localizedDescription
+            started = false
+            fail(.action, error.localizedDescription)
             logger.error("start \(sessionID, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
         await refresh()
@@ -554,15 +557,13 @@ final class DeckModel {
         }
         selection = .pane(PaneTarget(sessionID: sessionID))
         show(sessionID)
-        if let startError {
-            lastError = startError
-        } else {
+        if started {
             attach(PaneTarget(sessionID: sessionID))
         }
-        // After the reload, which clears the footer; a start that failed
-        // is the bigger news, and a hook you asked to skip is none.
+        // A start that failed is the bigger news, and a hook you asked to
+        // skip is none.
         if let notice = added.setupHookNotice, request.runsWorktreeSetup, lastError == nil {
-            lastError = notice
+            fail(.action, notice)
         }
     }
 
@@ -723,20 +724,10 @@ final class DeckModel {
         guard !isReordering else { return }
         isReordering = true
         sessions = ordered
-        run(label, operation) {
-            logger.info("\(label, privacy: .public) done")
-        } finally: { [weak self] failure in
-            await self?.reload(keeping: failure)
+        run(label, operation, finally: { [weak self] _ in
+            await self?.refresh()
             self?.isReordering = false
-        }
-    }
-
-    /// The list after an action on agent-deck. A list that succeeds clears
-    /// the footer, so a refusal is put back after it: it is the one thing
-    /// you need to read.
-    private func reload(keeping failure: String?) async {
-        await refresh()
-        if let failure { lastError = failure }
+        })
     }
 
     /// One action at a time on each of `ids`; they stay busy until the list
@@ -755,13 +746,11 @@ final class DeckModel {
         guard ids.allSatisfy({ busySessions[$0] == nil }) else { return }
         for id in ids { busySessions[id] = action }
         let label = "\(action.rawValue) \(ids.sorted().joined(separator: " "))"
-        run(label, operation) {
-            logger.info("\(label, privacy: .public) done")
-        } finally: { [weak self] failure in
-            await self?.reload(keeping: failure)
+        run(label, operation, finally: { [weak self] succeeded in
+            await self?.refresh()
             for id in ids { self?.busySessions[id] = nil }
-            if failure == nil { done?() }
-        }
+            if succeeded { done?() }
+        })
     }
 
     func paneTitleChanged(paneID: UUID, title: String) {
@@ -799,27 +788,38 @@ final class DeckModel {
         if case .pane = selection { selection = nil }
     }
 
-    /// `cleanup` runs after success and failure alike, with what the
-    /// operation failed with.
+    /// An action of yours: it clears the footer, and its failure fills it.
+    /// `follow` runs after success; `cleanup` after success and failure
+    /// alike, and hears which.
     private func run(
         _ label: String,
         _ operation: @escaping @Sendable () async throws -> Void,
         then follow: (@MainActor () async -> Void)? = nil,
-        finally cleanup: (@MainActor (_ failure: String?) async -> Void)? = nil
+        finally cleanup: (@MainActor (_ succeeded: Bool) async -> Void)? = nil
     ) {
-        lastError = nil
+        footerError = nil
         Task {
-            var failure: String?
+            var succeeded = false
             do {
                 try await operation()
+                succeeded = true
+                logger.info("\(label, privacy: .public) done")
                 await follow?()
             } catch {
-                failure = error.localizedDescription
-                lastError = failure
+                fail(.action, error.localizedDescription)
                 logger.error("\(label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             }
-            await cleanup?(failure)
+            await cleanup?(succeeded)
         }
+    }
+
+    private func fail(_ source: FooterError.Source, _ message: String) {
+        footerError = FooterError(source: source, message: message)
+    }
+
+    /// Clears the footer if `source` filled it.
+    private func recover(_ source: FooterError.Source) {
+        if footerError?.source == source { footerError = nil }
     }
 
     /// agent-deck's binary and settings, the first list, then the feeds:
@@ -842,12 +842,12 @@ final class DeckModel {
                 startFollower(after: stats.cursor)
             } else {
                 connection = .unavailable
-                lastError = "The event bus is disabled; statuses refresh every 60 s"
+                fail(.startup, "The event bus is disabled; statuses refresh every 60 s")
             }
         } catch {
             hasLoadedSessions = true
             connection = .unavailable
-            lastError = error.localizedDescription
+            fail(.startup, error.localizedDescription)
             logger.error("startup failed: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -866,6 +866,7 @@ final class DeckModel {
                 connection = .reconnecting
                 let frames = try await deck.follow(after: cursor)
                 connection = .live
+                recover(.follower)
                 retryDelay = .seconds(1)
                 logger.info("follower live after \(cursor, privacy: .public)")
                 for try await frame in frames {
@@ -883,7 +884,7 @@ final class DeckModel {
                     await refresh()
                     logger.info("follower resynced at \(cursor, privacy: .public)")
                 } else {
-                    lastError = error.localizedDescription
+                    fail(.follower, error.localizedDescription)
                     logger.error("follower failed: \(error.localizedDescription, privacy: .public)")
                 }
                 try? await Task.sleep(for: retryDelay)
@@ -926,7 +927,7 @@ final class DeckModel {
     /// at `.nobody`: an agent-deck without `status_owner` cannot install it.
     func installNotifyDaemon() {
         guard statusOwner == .nobody, installTask == nil else { return }
-        lastError = nil
+        footerError = nil
         installTask = Task {
             defer { installTask = nil }
             do {
@@ -935,7 +936,7 @@ final class DeckModel {
                 try await awaitNotifyDaemonOwnership()
             } catch is CancellationError {
             } catch {
-                lastError = error.localizedDescription
+                fail(.daemon, error.localizedDescription)
                 logger.error("notify daemon install failed: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -949,7 +950,7 @@ final class DeckModel {
             await refreshStatusOwner()
             if statusOwner != .nobody { return }
         }
-        lastError = "The notify daemon is installed but has not started publishing statuses"
+        fail(.daemon, "The notify daemon is installed but has not started publishing statuses")
     }
 
     private func apply(_ frame: BusFrame) {

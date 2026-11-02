@@ -133,7 +133,7 @@ public enum GitRepo {
     /// Trimmed stdout, nil on any failure.
     private static func git(_ path: String, _ arguments: [String]) async -> String? {
         guard let executable = try? AgentDeckCLI.executablePath(named: "git") else { return nil }
-        var environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil)
+        var environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil, inherited: ProcessInfo.processInfo.environment)
         environment["GIT_OPTIONAL_LOCKS"] = "0"
         environment["GIT_TERMINAL_PROMPT"] = "0"
         guard let result = try? await Subprocess.run(
