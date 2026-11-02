@@ -80,4 +80,16 @@ import Testing
         #expect(panes.map(\.title.state) == [.atPrompt, .working])
         #expect(Set(panes.map(\.windowID)) == ["@12"])
     }
+
+    /// Codex spins its title while it works, whatever tool agent-deck started
+    /// the session with; at its prompt the title has no frame, and omp's own
+    /// frames follow its `π`.
+    @Test func sessionsWithASpinningPane() {
+        let panes = Self.panes + "\n" + [
+            "agentdeck_homepage-starred_c4f6bc43\t@224\t%261\t78657\t⠋ Review PR 136299 | alexk-homepage-starred",
+            "bosun-view-606-2\t@224\t%261\t78657\t⠋ Review PR 136299 | alexk-homepage-starred",
+            "agentdeck_done_9f9f\t@5\t%5\t50000\tReview PR 136299 | alexk-homepage-starred",
+        ].joined(separator: "\n")
+        #expect(PanePoll.spinningSessions(listOutput: panes) == ["agentdeck_homepage-starred_c4f6bc43"])
+    }
 }

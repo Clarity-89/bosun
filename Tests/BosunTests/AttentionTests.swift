@@ -18,6 +18,44 @@ private func pane(_ paneID: String, in sessionID: String, window: String = "@1",
 
 private let sessionIDs = ["agentdeck_a": "a", "agentdeck_b": "b"]
 
+extension AttentionState {
+    /// A poll of omp's panes alone, as most here are.
+    mutating func panesPolled(_ omp: [AgentPane], sessionIDs: [String: String], at now: Date) -> [AttentionEvent] {
+        panesPolled(PanePoll(omp: omp), sessionIDs: sessionIDs, at: now)
+    }
+}
+
+/// What a pane's title says the session is doing now.
+@Suite struct AttentionWorkingTests {
+    /// A codex in a split spins its title; agent-deck, which knows only the
+    /// agent it started, still calls the session at its prompt.
+    @Test func aSpinningPaneMakesTheSessionWorkUntilItStops() {
+        var state = AttentionState()
+        _ = state.panesPolled(PanePoll(spinning: ["agentdeck_a"]), sessionIDs: sessionIDs, at: t0)
+        #expect(state.attention(for: session("a", status: .waiting)).working)
+        #expect(!state.attention(for: session("b", status: .waiting)).working)
+        _ = state.panesPolled(PanePoll(), sessionIDs: sessionIDs, at: t0)
+        #expect(!state.attention(for: session("a", status: .waiting)).working)
+    }
+
+    @Test func anOmpMidTurnIsWorkToo() {
+        var state = AttentionState()
+        _ = state.panesPolled([pane("%1", in: "a", "π ⠋ x")], sessionIDs: sessionIDs, at: t0)
+        #expect(state.attention(for: session("a")).working)
+        _ = state.panesPolled([pane("%1", in: "a", "π > x")], sessionIDs: sessionIDs, at: t0)
+        #expect(!state.attention(for: session("a")).working)
+    }
+
+    /// Work starting or stopping in a pane Bosun cannot read is not news:
+    /// nothing is unread, nothing notifies.
+    @Test func spinningIsNotNews() {
+        var state = AttentionState()
+        #expect(state.panesPolled(PanePoll(spinning: ["agentdeck_a"]), sessionIDs: sessionIDs, at: t0).isEmpty)
+        #expect(state.panesPolled(PanePoll(), sessionIDs: sessionIDs, at: t0).isEmpty)
+        #expect(state.unreadCount == 0)
+    }
+}
+
 /// What agent-deck's status changes mean for unread.
 @Suite struct AttentionStatusTests {
     @Test func turnEndingIsUnreadUntilTheNextTurn() {

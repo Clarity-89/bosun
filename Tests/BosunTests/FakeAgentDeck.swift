@@ -18,7 +18,7 @@ final class FakeAgentDeck: AgentDeck {
     var stats = EventsStats(enabled: true, cursor: 0, statusOwner: .tui)
     var windows = WindowListing()
     var loneViews: Set<String> = []
-    var panes: [AgentPane]? = []
+    var poll: PanePoll? = PanePoll()
     var someoneElse = false
     /// Errors by command name, the recorded line's first words: `"list"`,
     /// `"session stop"`, `"new-session"`.
@@ -207,8 +207,8 @@ final class FakeAgentDeck: AgentDeck {
         return windows
     }
 
-    func listAgentPanes() async -> [AgentPane]? {
-        panes
+    func pollPanes() async -> PanePoll? {
+        poll
     }
 
     func newShellWindow(tmuxSession: String, workingDirectory: String?) async throws {

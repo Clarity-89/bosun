@@ -38,7 +38,7 @@ public protocol AgentDeck: Sendable {
     // MARK: Windows and panes
 
     func listAllWindows() async throws -> WindowListing
-    func listAgentPanes() async -> [AgentPane]?
+    func pollPanes() async -> PanePoll?
     func newShellWindow(tmuxSession: String, workingDirectory: String?) async throws
     func splitShellPane(tmuxSession: String, direction: SplitDirection, workingDirectory: String?) async throws
     func selectWindow(windowID: String) async throws

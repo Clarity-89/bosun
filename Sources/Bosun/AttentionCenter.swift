@@ -76,13 +76,13 @@ final class AttentionCenter {
         apply(in: sessions) { $0.listed(sessions, previous: previous, at: .now) }
     }
 
-    /// One poll of omp's panes, matched to sessions by tmux session name.
-    func panesPolled(_ panes: [AgentPane], sessions: [DeckSession]) {
+    /// One poll of the panes, matched to sessions by tmux session name.
+    func panesPolled(_ poll: PanePoll, sessions: [DeckSession]) {
         let sessionIDs = Dictionary(
             sessions.compactMap { session in session.tmuxSession.map { ($0, session.id) } },
             uniquingKeysWith: { first, _ in first }
         )
-        apply(in: sessions) { $0.panesPolled(panes, sessionIDs: sessionIDs, at: .now) }
+        apply(in: sessions) { $0.panesPolled(poll, sessionIDs: sessionIDs, at: .now) }
     }
 
     // MARK: What you do

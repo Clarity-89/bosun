@@ -87,34 +87,74 @@ public struct AgentPane: Equatable, Sendable {
 
     static let listFormat = "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_title}"
 
-    /// Panes from `listFormat` lines whose title is omp's. Bosun's own views
-    /// list the same panes again and are skipped.
+    /// Panes from `listFormat` lines whose title is omp's.
     static func parse(listOutput: String) -> [AgentPane] {
         var seen: Set<String> = []
         return listOutput.split(whereSeparator: \.isNewline).compactMap { line in
-            let fields = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
-            guard fields.count == 5, !fields[0].hasPrefix(ViewSession.prefix),
+            guard let fields = fields(of: line),
                   let title = OmpTitle(fields[4]), let pid = Int32(fields[3]), seen.insert(fields[2]).inserted
             else { return nil }
             return AgentPane(tmuxSession: fields[0], windowID: fields[1], paneID: fields[2], panePID: pid, title: title)
         }
     }
+
+    /// A `listFormat` line's fields; nil for one of Bosun's own views, which
+    /// list the same panes again.
+    static func fields(of line: Substring) -> [String]? {
+        let fields = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
+        guard fields.count == 5, !fields[0].hasPrefix(ViewSession.prefix) else { return nil }
+        return fields
+    }
+}
+
+/// One pass over tmux's panes.
+public struct PanePoll: Equatable, Sendable {
+    /// The panes omp runs in.
+    public var omp: [AgentPane]
+    /// The tmux sessions where some pane's title begins with a spinner
+    /// frame, as codex's does while it works (`⠋ Review PR 1 | project`): a
+    /// program at work in the session, whatever agent-deck says of the agent
+    /// it started. From the title alone, so one killed mid-turn leaves its
+    /// last frame behind until the next program sets the title.
+    public var spinning: Set<String>
+
+    public init(omp: [AgentPane] = [], spinning: Set<String> = []) {
+        self.omp = omp
+        self.spinning = spinning
+    }
+
+    /// The sessions of `AgentPane.listFormat` lines whose title spins.
+    static func spinningSessions(listOutput: String) -> Set<String> {
+        Set(listOutput.split(whereSeparator: \.isNewline).compactMap { line in
+            guard let fields = AgentPane.fields(of: line), titleSpins(fields[4]) else { return nil }
+            return fields[0]
+        })
+    }
+
+    /// Whether `title` begins with a braille pattern, the block every
+    /// dot spinner's frames come from.
+    static func titleSpins(_ title: String) -> Bool {
+        guard let first = title.unicodeScalars.first else { return false }
+        return (0x2800...0x28FF).contains(first.value)
+    }
 }
 
 extension AgentDeckCLI {
-    /// Every pane omp runs in, on tmux's default server; nil when tmux or ps
-    /// did not answer, so a failed poll does not read as every omp gone. The
-    /// process table, which tells a live omp from a title it left behind, is
-    /// read only when some title is omp's.
-    public func listAgentPanes() async -> [AgentPane]? {
+    /// Every pane omp runs in, and the sessions where a pane spins, on
+    /// tmux's default server; nil when tmux or ps did not answer, so a failed
+    /// poll does not read as every omp gone. The process table, which tells
+    /// a live omp from a title it left behind, is read only when some title
+    /// is omp's.
+    public func pollPanes() async -> PanePoll? {
         guard let panes = try? await tmux(["list-panes", "-a", "-F", AgentPane.listFormat]), panes.succeeded else { return nil }
+        let spinning = PanePoll.spinningSessions(listOutput: panes.stdout)
         let titled = AgentPane.parse(listOutput: panes.stdout)
-        guard !titled.isEmpty else { return [] }
+        guard !titled.isEmpty else { return PanePoll(spinning: spinning) }
         guard let ps = try? await Subprocess.run(
             executable: "/bin/ps", arguments: ["-axo", "pid=,ppid=,args="],
             environment: childEnvironment(binaryDirectory: nil), timeout: .seconds(5)
         ), ps.succeeded else { return nil }
         let tree = ProcessTree(psOutput: ps.stdout)
-        return titled.filter { tree.runsOmp(under: $0.panePID) }
+        return PanePoll(omp: titled.filter { tree.runsOmp(under: $0.panePID) }, spinning: spinning)
     }
 }
