@@ -16,10 +16,10 @@ make vendor   # libghostty (141 MB) into gitignored Vendor/, once
 swift build && swift test
 make integration   # the real agent-deck and tmux in a sandbox; needs both installed
 make run      # build, bundle and open; on main build/Bosun.app, on any other branch build/Bosun-test.app
-make stop     # quit the copy of this checkout and branch; `make stop-all` quits every Bosun
+make stop     # quit the copy of this checkout and branch, and on a branch delete its bundle; `make stop-all` quits every Bosun
 ```
 
-Two Bosuns. The main Bosun is `build/Bosun.app` of the main checkout, built from `main`; it runs all day and is restarted only when asked. On any other branch, in the main checkout or in a worktree, `make run` builds and launches `build/Bosun-test.app`, a second instance beside the main one for trying the change. Start and restart that one freely, without asking. Never put the main Bosun on a branch's build.
+Two Bosuns. The main Bosun is `build/Bosun.app` of the main checkout, built from `main`; it runs all day and is restarted only when asked. On any other branch, in the main checkout or in a worktree, `make run` builds and launches `build/Bosun-test.app`, a second instance beside the main one for trying the change. To macOS it is another app, `com.bosun.Bosun-test` named "Bosun Test", with its own notifications (it asks permission once) and its own `UserDefaults`; a notification click or an `open -b` for one copy can never launch the other. Start and restart that one freely, without asking. Never put the main Bosun on a branch's build.
 
 The test copy must not outlive the check it was started for. Two Bosuns on one agent-deck both notify and both attach, so a test copy left behind doubles every notification the user gets, for hours, until they notice.
 
@@ -37,7 +37,7 @@ print("accessibility:", AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionProm
 EOF
 ```
 
-Both copies run as process `Bosun` with bundle identifier `com.bosun.Bosun`, and System Events resolves a process by name, so `osascript` cannot address the test copy while both run. Drive it through the Accessibility API by PID instead: `AXUIElementCreateApplication(pid)` to read and press elements, and `CGEvent.postToPid(pid)` for keys, after `NSRunningApplication(processIdentifier:)?.activate()` and a check that `NSWorkspace.shared.frontmostApplication` is the test copy; keys posted to an app in the background are dropped. They share `UserDefaults` too: note the keys a test changes (`collapsedGroups`, `sidebarTab`, `sidebar*`) and put them back afterwards.
+Both copies run as process `Bosun`, and System Events resolves a process by name, so `osascript` cannot address the test copy while both run. Drive it through the Accessibility API by PID instead: `AXUIElementCreateApplication(pid)` to read and press elements, and `CGEvent.postToPid(pid)` for keys, after `NSRunningApplication(processIdentifier:)?.activate()` and a check that `NSWorkspace.shared.frontmostApplication` is the test copy; keys posted to an app in the background are dropped.
 
 CI (`.github/workflows/ci.yml`) runs build and test on `macos-26` for PRs and main.
 
