@@ -151,7 +151,7 @@ extension AgentDeckCLI {
     public nonisolated func viewAttachLaunch(_ view: String, yieldsSize: Bool) throws -> AttachLaunch {
         AttachLaunch(
             command: Terminal.viewAttachCommand(tmuxPath: try Self.tmuxPath(), view: view, yieldsSize: yieldsSize),
-            environment: Self.childEnvironment(binaryDirectory: nil)
+            environment: childEnvironment(binaryDirectory: nil)
         )
     }
 }

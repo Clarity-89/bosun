@@ -75,16 +75,23 @@ public enum AgentDeckCLIError: Error, LocalizedError, Equatable, Sendable {
     }
 }
 
-public actor AgentDeckCLI {
+public actor AgentDeckCLI: AgentDeck {
     private let configuredPath: String?
+    /// The launcher's environment, which `childEnvironment` trims and
+    /// completes for every child.
+    private let inherited: [String: String]
     private var resolved: AgentDeckBinary?
     /// The resolution in flight, so concurrent callers wait for it.
     private var resolving: Task<AgentDeckBinary, any Error>?
     /// `tmux -V` once `tmuxVersion()` has run.
     var probedTmuxVersion: TmuxVersion?
 
-    public init(agentDeckPath: String? = nil) {
+    /// `environment` stands in for Bosun's own: a test gives one with a
+    /// sandbox `HOME` and `TMUX_TMPDIR`, so agent-deck and tmux run apart
+    /// from the user's.
+    public init(agentDeckPath: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment) {
         configuredPath = agentDeckPath
+        inherited = environment
     }
 
     /// Picks the newest installed agent-deck. Several copies commonly coexist
@@ -112,7 +119,7 @@ public actor AgentDeckCLI {
     /// places an install lands that a login shell may not list.
     private func resolve() async throws -> AgentDeckBinary {
         await Self.readLoginPath()
-        let environment = Self.childEnvironment(binaryDirectory: nil)
+        let environment = childEnvironment(binaryDirectory: nil)
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var seen = Set<String>()
         let candidates = ([configuredPath].compactMap { $0 }
@@ -231,12 +238,20 @@ public actor AgentDeckCLI {
             "LANG": inherited["LANG"] ?? "en_US.UTF-8",
         ]
         environment["LOGNAME"] = inherited["LOGNAME"] ?? environment["USER"]
-        for key in ["AGENTDECK_PROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"] {
+        // `TMUX_TMPDIR` names the tmux server: agent-deck's sessions and
+        // Bosun's own tmux calls have to land on the same one, a private
+        // one as much as the default.
+        for key in ["AGENTDECK_PROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "TMUX_TMPDIR"] {
             if let value = inherited[key], !value.isEmpty {
                 environment[key] = value
             }
         }
         return environment
+    }
+
+    /// `childEnvironment` over this instance's launcher environment.
+    nonisolated func childEnvironment(binaryDirectory: String?) -> [String: String] {
+        Self.childEnvironment(binaryDirectory: binaryDirectory, inherited: inherited)
     }
 
     /// Every executable `name` on the child environment's PATH, in PATH
@@ -285,12 +300,12 @@ public actor AgentDeckCLI {
 
     /// Status frames after `cursor`. Ends only by cancellation or with an
     /// error; see `isCursorTooOld` for the one the caller resyncs from.
-    public func follow(after cursor: UInt64) async throws -> some AsyncSequence<BusFrame, any Error> & Sendable {
+    public func follow(after cursor: UInt64) async throws -> any AsyncSequence<BusFrame, any Error> & Sendable {
         let binary = try await binary()
         return try Subprocess.lines(
             executable: binary.path,
             arguments: ["events", "follow", "--json", "--after", String(cursor), "--kind", "session.status"],
-            environment: Self.childEnvironment(binaryDirectory: binary.directory)
+            environment: childEnvironment(binaryDirectory: binary.directory)
         ).compactMap { line in
             guard let frame = try? JSONDecoder().decode(BusFrame.self, from: Data(line.utf8)) else {
                 log.warning("skipping undecodable frame: \(line, privacy: .public)")
@@ -328,7 +343,7 @@ public actor AgentDeckCLI {
         return try await Subprocess.run(
             executable: binary.path,
             arguments: arguments,
-            environment: Self.childEnvironment(binaryDirectory: binary.directory),
+            environment: childEnvironment(binaryDirectory: binary.directory),
             timeout: timeout
         )
     }

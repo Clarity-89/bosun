@@ -4,16 +4,17 @@ macOS app over [agent-deck](https://github.com/asheshgoplani/agent-deck): lists 
 
 ## Layout
 
-- `Sources/BosunCore`: no UI. agent-deck CLI (`AgentDeckCLI`, `run([...])` for `--json` commands, `tmux([...])` for the few things agent-deck has no command for), models decoded from `list --json`, GitHub via `gh api graphql`, omp log and pane parsing, `Subprocess`.
+- `Sources/BosunCore`: no UI. `AgentDeck` is what the app asks of agent-deck and tmux; `AgentDeckCLI` answers it (`run([...])` for `--json` commands, `tmux([...])` for the few things agent-deck has no command for). Models decoded from `list --json`, GitHub via `gh api graphql` behind `GitHubClient`, omp log and pane parsing, `Subprocess`.
 - `Sources/BosunTerminal`: libghostty wrapper (`TerminalPane`). `Vendored/` is adapted from Calyx, MIT; keep its header comments.
-- `Sources/Bosun`: the app. `DeckModel` (`@Observable`, `@MainActor`) owns state and runs every action through `run(label) { ... }`, which puts failures in `lastError` for `StatusNotices`. Views are split by feature: `MainWindowView`, `SessionActions`, `InboxView`, `SideTerminalsView`, `AttentionCenter`.
-- `Tests/BosunCoreTests` and `Tests/BosunTests`: Swift Testing (`@Suite`, `@Test`), fixtures trimmed from real agent-deck, tmux and GitHub output. The terminal has no tests; it needs a GUI session.
+- `Sources/Bosun`: the app. `DeckModel` (`@Observable`, `@MainActor`) owns state and runs every action through `run(label) { ... }`, which puts failures in `lastError` for `StatusNotices`. It takes its agent-deck, GitHub and `Defaults` in `init`; `DeckModel.shared` is the app's, on the real ones. Views are split by feature: `MainWindowView`, `SessionActions`, `InboxView`, `SideTerminalsView`, `AttentionCenter`.
+- `Tests/BosunCoreTests` and `Tests/BosunTests`: Swift Testing (`@Suite`, `@Test`), fixtures trimmed from real agent-deck, tmux and GitHub output. `DeckModelTests` run the model on `FakeAgentDeck` through `DeckFixture`, which records every command the model issues. `AgentDeckIntegrationTests` run the real agent-deck and tmux in a sandbox (a `HOME` under `/tmp`, a private tmux server through `TMUX_TMPDIR`), only with `BOSUN_INTEGRATION` set. The terminal has no tests; it needs a GUI session.
 
 ## Build and run
 
 ```sh
 make vendor   # libghostty (141 MB) into gitignored Vendor/, once
 swift build && swift test
+make integration   # the real agent-deck and tmux in a sandbox; needs both installed
 make run      # build, bundle and open; on main build/Bosun.app, on any other branch build/Bosun-test.app
 make stop     # quit the copy of this checkout and branch; `make stop-all` quits every Bosun
 ```

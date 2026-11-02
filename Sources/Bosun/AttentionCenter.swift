@@ -10,14 +10,17 @@ import os
 @Observable
 final class AttentionCenter {
     /// Saved whenever what is unread, or when Bosun last looked, changes.
-    private(set) var state = AttentionCenter.saved() {
+    private(set) var state: AttentionState {
         didSet {
             guard oldValue.unread != state.unread || oldValue.observedUntil != state.observedUntil,
                   let data = try? JSONEncoder().encode(state.snapshot)
             else { return }
-            UserDefaults.standard.set(data, forKey: Self.defaultsKey)
+            defaults.set(data, forKey: Self.defaultsKey)
         }
     }
+
+    /// Where the unread survive a quit.
+    @ObservationIgnored private let defaults: any Defaults
 
     /// Notifications waiting out their 3 s, by what they are about.
     @ObservationIgnored private var pending: [AttentionKey: Task<Void, Never>] = [:]
@@ -34,6 +37,11 @@ final class AttentionCenter {
     /// A session whose agent just finished a turn, as it happened, not
     /// worked out later at launch.
     @ObservationIgnored var onTurnEnd: ((DeckSession) -> Void)?
+
+    init(defaults: any Defaults) {
+        self.defaults = defaults
+        state = Self.saved(in: defaults)
+    }
 
     /// Each session's own unread and each of its omp panes'.
     var count: Int { state.unreadCount }
@@ -189,8 +197,8 @@ final class AttentionCenter {
 
     private static let defaultsKey = "attention"
 
-    private static func saved() -> AttentionState {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+    private static func saved(in defaults: any Defaults) -> AttentionState {
+        guard let data = defaults.data(forKey: defaultsKey),
               let snapshot = try? JSONDecoder().decode(AttentionState.Snapshot.self, from: data)
         else { return AttentionState() }
         return AttentionState(snapshot: snapshot)

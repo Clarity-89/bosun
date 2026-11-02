@@ -17,6 +17,7 @@ macOS 26, Xcode 26 or a Swift 6.2 or later toolchain, [tmux](https://github.com/
 ```sh
 make run    # fetches libghostty (141 MB, once), builds, bundles and opens Bosun.app
 make test
+make integration   # the real agent-deck and tmux, in a sandbox HOME on a private tmux server
 ```
 
 ## License

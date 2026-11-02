@@ -8,7 +8,7 @@ BINDIR    = $(shell swift build -c release --show-bin-path)
 # The running copy of this bundle, as its command line reads.
 INSTANCE := ^$(abspath $(BUNDLE))/Contents/MacOS/$(APP)$$
 
-.PHONY: vendor build test bundle run stop stop-all clean
+.PHONY: vendor build test integration bundle run stop stop-all clean
 
 # libghostty static library + headers; see scripts/fetch-ghosttykit.sh.
 vendor:
@@ -17,9 +17,15 @@ vendor:
 build: vendor
 	swift build -c release --product $(APP)
 
-# BosunCoreTests only; the engine needs a GUI session, so it has no unit tests.
+# Unit tests: BosunCore, and the app's model on a fake agent-deck. The
+# engine needs a GUI session, so the terminal has none.
 test: vendor
 	swift test
+
+# The real agent-deck and tmux, in a sandbox HOME on a private tmux
+# server; needs both installed, so CI does not run it.
+integration: vendor
+	BOSUN_INTEGRATION=1 swift test --filter AgentDeckIntegrationTests
 
 # SwiftPM emits a bare binary; menu bar apps need a bundle for LSUIElement
 # and a stable bundle identifier.

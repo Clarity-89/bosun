@@ -103,6 +103,17 @@ import Testing
         #expect(environment["XDG_CONFIG_HOME"] == nil, "an empty override is dropped, not forwarded")
     }
 
+    /// `TMUX_TMPDIR` names the tmux server; `TMUX` names the client's
+    /// session, which a child must never inherit.
+    @Test func theTmuxServerFollowsTheLauncherButNotItsSession() {
+        let environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil, inherited: [
+            "TMUX_TMPDIR": "/tmp/bosun-integration-1/tmux",
+            "TMUX": "/tmp/bosun-integration-1/tmux/tmux-501/default,5034,18",
+        ])
+        #expect(environment["TMUX_TMPDIR"] == "/tmp/bosun-integration-1/tmux")
+        #expect(environment["TMUX"] == nil)
+    }
+
     @Test func binaryDirectoryLeadsPathAndPackageManagerPrefixesFollow() {
         let environment = AgentDeckCLI.childEnvironment(
             binaryDirectory: "/Users/me/.local/bin",

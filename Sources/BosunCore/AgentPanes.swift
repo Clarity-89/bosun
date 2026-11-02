@@ -112,7 +112,7 @@ extension AgentDeckCLI {
         guard !titled.isEmpty else { return [] }
         guard let ps = try? await Subprocess.run(
             executable: "/bin/ps", arguments: ["-axo", "pid=,ppid=,args="],
-            environment: Self.childEnvironment(binaryDirectory: nil), timeout: .seconds(5)
+            environment: childEnvironment(binaryDirectory: nil), timeout: .seconds(5)
         ), ps.succeeded else { return nil }
         let tree = ProcessTree(psOutput: ps.stdout)
         return titled.filter { tree.runsOmp(under: $0.panePID) }

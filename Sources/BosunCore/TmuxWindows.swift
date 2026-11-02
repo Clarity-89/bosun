@@ -154,7 +154,7 @@ extension AgentDeckCLI {
     func tmux(_ arguments: [String]) async throws -> ProcessResult {
         try await Subprocess.run(
             executable: try Self.tmuxPath(), arguments: arguments,
-            environment: Self.childEnvironment(binaryDirectory: nil), timeout: .seconds(10)
+            environment: childEnvironment(binaryDirectory: nil), timeout: .seconds(10)
         )
     }
 
