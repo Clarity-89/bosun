@@ -71,6 +71,10 @@ struct SessionAttention: Equatable, Sendable {
     var unread = false
     /// A question or approval waits, as of the last poll or list.
     var asks = false
+    /// The status to show: agent-deck's, unless a pane of the session works,
+    /// by its title, while agent-deck calls it idle or at its prompt, as it
+    /// knows only the agent it started; an error or a stop it reports stands.
+    var status: SessionStatus
     /// What to say about it: the most urgent thing and, from omp, its task.
     var summary: String?
     /// The most urgent thing, to order sessions by; nil while nothing wants you.
@@ -90,11 +94,12 @@ struct Urgency: Comparable, Sendable {
     }
 }
 
-/// Bosun's own idea of what needs you. agent-deck's status changes and omp's
-/// pane titles say that something ended, asked or failed; only Bosun knows
-/// that you looked, so unread and seen live here. agent-deck's `waiting`
-/// means only that an agent is at its prompt: it stays `waiting` until its
-/// TUI acknowledges, which Bosun cannot do.
+/// Bosun's own idea of what needs you, and of what the panes are doing now.
+/// agent-deck's status changes and omp's pane titles say that something
+/// ended, asked or failed; only Bosun knows that you looked, so unread and
+/// seen live here. agent-deck's `waiting` means only that an agent is at its
+/// prompt: it stays `waiting` until its TUI acknowledges, which Bosun cannot
+/// do.
 struct AttentionState: Equatable, Sendable {
     private(set) var unread: [AttentionKey: Unread] = [:]
     /// When Bosun last had the session list, so a launch can tell what
@@ -102,6 +107,8 @@ struct AttentionState: Equatable, Sendable {
     private(set) var observedUntil: Date?
     /// omp panes from the last poll, by pane id.
     private var panes: [String: PolledPane] = [:]
+    /// Sessions with a spinning pane title at the last poll.
+    private var spinning: Set<String> = []
 
     /// A polled omp pane and the agent-deck session it is in.
     private struct PolledPane: Equatable, Sendable {
@@ -168,17 +175,18 @@ struct AttentionState: Equatable, Sendable {
         return events
     }
 
-    // MARK: omp
+    // MARK: Panes
 
-    /// One poll of omp's pane titles. A pane whose omp went from working to
-    /// its prompt is unread, one that asks is unread too; a new turn, an
-    /// answer included, clears it. A pane seen for the first time already
-    /// asking is unread without a notification. Panes that are gone take
-    /// their unread with them.
-    mutating func panesPolled(_ polled: [AgentPane], sessionIDs: [String: String], at now: Date) -> [AttentionEvent] {
+    /// One poll of the panes. A pane whose omp went from working to its
+    /// prompt is unread, one that asks is unread too; a new turn, an answer
+    /// included, clears it. A pane seen for the first time already asking is
+    /// unread without a notification. Panes that are gone take their unread
+    /// with them.
+    mutating func panesPolled(_ poll: PanePoll, sessionIDs: [String: String], at now: Date) -> [AttentionEvent] {
+        spinning = Set(poll.spinning.compactMap { sessionIDs[$0] })
         var next: [String: PolledPane] = [:]
         var events: [AttentionEvent] = []
-        for pane in polled {
+        for pane in poll.omp {
             guard let sessionID = sessionIDs[pane.tmuxSession] else { continue }
             next[pane.paneID] = PolledPane(sessionID: sessionID, pane: pane)
             let key = AttentionKey(sessionID: sessionID, paneID: pane.paneID)
@@ -236,7 +244,8 @@ struct AttentionState: Equatable, Sendable {
     }
 
     /// The row's view of a session: any unread, a question open in any of its
-    /// panes or in agent-deck's substate, and the most urgent of them to say.
+    /// panes or in agent-deck's substate, the most urgent of them to say, and
+    /// the status to show.
     func attention(for session: DeckSession) -> SessionAttention {
         let mine = unread.filter { $0.key.sessionID == session.id }.map(\.value)
         let asking = panes.values.filter { $0.sessionID == session.id && $0.pane.title.state == .asks }.map(\.pane)
@@ -251,7 +260,10 @@ struct AttentionState: Equatable, Sendable {
             summary = Self.say(top.kind, top.label)
             urgency = Urgency(kind: top.kind, since: top.since)
         }
-        return SessionAttention(unread: !mine.isEmpty, asks: asks, summary: summary, urgency: urgency)
+        let working = spinning.contains(session.id)
+            || panes.values.contains { $0.sessionID == session.id && $0.pane.title.state == .working }
+        let status: SessionStatus = working && [.waiting, .idle].contains(session.status) ? .running : session.status
+        return SessionAttention(unread: !mine.isEmpty, asks: asks, status: status, summary: summary, urgency: urgency)
     }
 
     /// The sessions that want you, most urgent first.

@@ -86,35 +86,62 @@ public struct AgentPane: Equatable, Sendable {
     public let title: OmpTitle
 
     static let listFormat = "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_title}"
+}
 
-    /// Panes from `listFormat` lines whose title is omp's. Bosun's own views
-    /// list the same panes again and are skipped.
-    static func parse(listOutput: String) -> [AgentPane] {
+/// One pass over tmux's panes.
+public struct PanePoll: Equatable, Sendable {
+    /// The panes omp runs in.
+    public var omp: [AgentPane] = []
+    /// The tmux sessions where some pane's title begins with a spinner
+    /// frame, as codex's does while it works (`⠋ Review PR 1 | project`): a
+    /// program at work in the session, whatever agent-deck says of the agent
+    /// it started. From the title alone, so one killed mid-turn leaves its
+    /// last frame behind until the next program sets the title.
+    public var spinning: Set<String> = []
+
+    public init(omp: [AgentPane] = [], spinning: Set<String> = []) {
+        self.omp = omp
+        self.spinning = spinning
+    }
+
+    /// `AgentPane.listFormat` lines. Bosun's own views list the same panes
+    /// again and are skipped.
+    init(listOutput: String) {
         var seen: Set<String> = []
-        return listOutput.split(whereSeparator: \.isNewline).compactMap { line in
+        for line in listOutput.split(whereSeparator: \.isNewline) {
             let fields = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
-            guard fields.count == 5, !fields[0].hasPrefix(ViewSession.prefix),
-                  let title = OmpTitle(fields[4]), let pid = Int32(fields[3]), seen.insert(fields[2]).inserted
-            else { return nil }
-            return AgentPane(tmuxSession: fields[0], windowID: fields[1], paneID: fields[2], panePID: pid, title: title)
+            guard fields.count == 5, !fields[0].hasPrefix(ViewSession.prefix) else { continue }
+            if Self.titleSpins(fields[4]) { spinning.insert(fields[0]) }
+            if let title = OmpTitle(fields[4]), let pid = Int32(fields[3]), seen.insert(fields[2]).inserted {
+                omp.append(AgentPane(tmuxSession: fields[0], windowID: fields[1], paneID: fields[2], panePID: pid, title: title))
+            }
         }
+    }
+
+    /// Whether `title` begins with a braille pattern, the block every
+    /// dot spinner's frames come from.
+    static func titleSpins(_ title: String) -> Bool {
+        guard let first = title.unicodeScalars.first else { return false }
+        return (0x2800...0x28FF).contains(first.value)
     }
 }
 
 extension AgentDeckCLI {
-    /// Every pane omp runs in, on tmux's default server; nil when tmux or ps
-    /// did not answer, so a failed poll does not read as every omp gone. The
-    /// process table, which tells a live omp from a title it left behind, is
-    /// read only when some title is omp's.
-    public func listAgentPanes() async -> [AgentPane]? {
+    /// Every pane omp runs in, and the sessions where a pane spins, on
+    /// tmux's default server; nil when tmux or ps did not answer, so a failed
+    /// poll does not read as every omp gone. The process table, which tells
+    /// a live omp from a title it left behind, is read only when some title
+    /// is omp's.
+    public func pollPanes() async -> PanePoll? {
         guard let panes = try? await tmux(["list-panes", "-a", "-F", AgentPane.listFormat]), panes.succeeded else { return nil }
-        let titled = AgentPane.parse(listOutput: panes.stdout)
-        guard !titled.isEmpty else { return [] }
+        var poll = PanePoll(listOutput: panes.stdout)
+        guard !poll.omp.isEmpty else { return poll }
         guard let ps = try? await Subprocess.run(
             executable: "/bin/ps", arguments: ["-axo", "pid=,ppid=,args="],
             environment: childEnvironment(binaryDirectory: nil), timeout: .seconds(5)
         ), ps.succeeded else { return nil }
         let tree = ProcessTree(psOutput: ps.stdout)
-        return titled.filter { tree.runsOmp(under: $0.panePID) }
+        poll.omp.removeAll { !tree.runsOmp(under: $0.panePID) }
+        return poll
     }
 }

@@ -982,10 +982,10 @@ final class DeckModel {
         tmuxPollTask?.cancel()
         tmuxPollTask = Task {
             while !Task.isCancelled {
-                async let panes = deck.listAgentPanes()
+                async let poll = deck.pollPanes()
                 await loadAllWindows()
-                if let panes = await panes {
-                    attention.panesPolled(panes, sessions: sessions)
+                if let poll = await poll {
+                    attention.panesPolled(poll, sessions: sessions)
                 }
                 try? await Task.sleep(for: .seconds(2))
             }

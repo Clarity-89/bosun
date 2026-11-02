@@ -380,11 +380,13 @@ private struct RowActionButton: View {
 }
 
 /// Bold with a ring round its status dot while something in the session is
-/// unread; an open question turns the dot orange. The issue it works on
-/// follows its status. While `action` runs, the subtitle names it beside a
-/// bar that only moves, as agent-deck reports no progress; a session being
-/// deleted fades. The text takes the room left in its row, so what a row
-/// puts after it stays put.
+/// unread; an open question turns the dot orange. The dot and the subtitle
+/// show `attention.status`, which is agent-deck's unless a pane works in a
+/// session it calls idle or at its prompt. The issue it works on follows its
+/// status. While `action` runs, the subtitle names it beside a bar that only
+/// moves, as agent-deck reports no progress; a session being deleted fades.
+/// The text takes the room left in its row, so what a row puts after it
+/// stays put.
 struct SessionRow: View {
     let session: DeckSession
     let attention: SessionAttention
@@ -393,7 +395,7 @@ struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            StatusBadge(status: session.status, asks: attention.asks, unread: attention.unread)
+            StatusBadge(status: attention.status, asks: attention.asks, unread: attention.unread)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title)
                     .fontWeight(attention.unread ? .semibold : nil)
@@ -432,7 +434,7 @@ struct SessionRow: View {
     /// The dot alone says Running and Idle, so the row leaves those words to
     /// its tooltip; At prompt shares Idle's dot, and the rest differ by colour only.
     private var subtitle: String {
-        describe(withStatus: session.status != .running && session.status != .idle)
+        describe(withStatus: attention.status != .running && attention.status != .idle)
     }
 
     /// The tool, then what needs you, else the status and its substate.
@@ -441,7 +443,7 @@ struct SessionRow: View {
         if let summary = attention.summary {
             return "\(tool) · \(summary)"
         }
-        return [tool, withStatus ? session.status.label : nil, session.substate].compactMap { $0 }.joined(separator: " · ")
+        return [tool, withStatus ? attention.status.label : nil, session.substate].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var help: String {
