@@ -50,16 +50,23 @@ struct BosunApp: App {
 }
 
 /// Keyboard focus moves between the list and the terminal only on request,
-/// so each direction gets a View menu item, beside hiding the list, showing
-/// the side shells and the session search.
+/// so each direction gets a View menu item, beside the sidebar's two lists,
+/// hiding the list, showing the side shells and the session search.
 struct FocusCommands: Commands {
     @FocusedValue(\.sidebarFocus) private var sidebarFocus
+    @FocusedBinding(\.sidebarTab) private var sidebarTab
     @FocusedBinding(\.terminalFocusRequest) private var terminalFocusRequest
     @FocusedBinding(\.sessionListVisibility) private var sessionListVisibility
     @FocusedBinding(\.sideTerminalsShown) private var sideTerminalsShown
 
     var body: some Commands {
         CommandGroup(after: .sidebar) {
+            Button("Go to Sessions") { sidebarTab = .sessions }
+                .shortcut(.showSessions)
+                .disabled(sidebarTab == nil)
+            Button("Go to Inbox") { sidebarTab = .inbox }
+                .shortcut(.showInbox)
+                .disabled(sidebarTab == nil)
             Button(sessionListVisibility == .detailOnly ? "Show Session List" : "Hide Session List") {
                 sessionListVisibility = sessionListVisibility == .detailOnly ? .all : .detailOnly
             }
@@ -98,6 +105,9 @@ extension FocusedValues {
     /// Where the key window's sidebar holds the keyboard; nil while it is
     /// elsewhere. Setting it brings a hidden list back first.
     @Entry var sidebarFocus: Binding<SidebarFocus?>?
+    /// The key window's sidebar list. Setting it puts the keyboard in that
+    /// list, bringing a hidden sidebar back first.
+    @Entry var sidebarTab: Binding<SidebarTab>?
     /// The key window's terminal focus request counter; each increment
     /// moves keyboard focus into its pane. Nil while it has no pane.
     @Entry var terminalFocusRequest: Binding<Int>?
