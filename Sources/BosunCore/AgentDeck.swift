@@ -29,6 +29,8 @@ public protocol AgentDeck: Sendable {
     func stopSession(id: String) async throws
     func restartSession(id: String) async throws
     func runWorktreeSetup(sessionID: String) async throws
+    /// The repository agent-deck made the session's worktree from.
+    func worktreeRepository(sessionID: String) async throws -> String
     func renameSession(id: String, to title: String) async throws
     func deleteSession(id: String) async throws
     func deleteGroup(path: String) async throws

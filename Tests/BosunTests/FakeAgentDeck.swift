@@ -29,6 +29,9 @@ final class FakeAgentDeck: AgentDeck {
     /// Holds every `list` until `releaseList()`, to catch calls that
     /// arrive during one.
     var holdsList = false
+    /// The repository each worktree session came from, by session ID, as
+    /// `worktree info` answers.
+    var worktreeRepositories: [String: String] = [:]
 
     private(set) var commands: [String] = []
     /// The cursor each `follow` started after.
@@ -127,15 +130,18 @@ final class FakeAgentDeck: AgentDeck {
     }
 
     /// The session is listed idle with a tmux session, as agent-deck lists
-    /// one it has not started.
+    /// one it has not started; one with a branch works in a worktree of
+    /// the directory.
     func addSession(_ request: NewSessionRequest) async throws -> AddedSession {
         try record("add", request.title, request.directory)
         added += 1
         let id = "new-\(added)"
+        let worktree = request.worktreeBranch.map { "/worktrees/\($0)" }
+        if worktree != nil { worktreeRepositories[id] = request.directory }
         sessions.append(DeckSession(
-            id: id, title: request.title.isEmpty ? id : request.title, path: request.directory, group: request.groupPath,
-            tool: "shell", status: .idle, substate: nil, tmuxSession: "agentdeck_\(id)", worktreePath: nil, archived: false,
-            lastActivityAt: nil
+            id: id, title: request.title.isEmpty ? id : request.title, path: worktree ?? request.directory,
+            group: request.groupPath, tool: "shell", status: .idle, substate: nil, tmuxSession: "agentdeck_\(id)",
+            worktreePath: worktree, archived: false, lastActivityAt: nil
         ))
         return AddedSession(id: id, setupHookNotice: nil)
     }
@@ -159,6 +165,14 @@ final class FakeAgentDeck: AgentDeck {
 
     func runWorktreeSetup(sessionID: String) async throws {
         try record("worktree setup", sessionID)
+    }
+
+    func worktreeRepository(sessionID: String) async throws -> String {
+        try record("worktree info", sessionID)
+        guard let repository = worktreeRepositories[sessionID] else {
+            throw AgentDeckCLIError.reported("session '\(sessionID)' is not in a worktree")
+        }
+        return repository
     }
 
     func renameSession(id: String, to title: String) async throws {

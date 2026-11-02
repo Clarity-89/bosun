@@ -14,7 +14,9 @@ struct NewSessionSheet: View {
     @State private var newGroupName = ""
     @FocusState private var isNamingGroup: Bool
     @State private var title = ""
-    @State private var directory: String
+    /// The group's, shown until a directory is typed or chosen.
+    @State private var groupDirectory: String
+    @State private var editedDirectory: String?
     @State private var command: String
     @State private var worktree = false
     /// Nil while the branch follows the title.
@@ -27,7 +29,7 @@ struct NewSessionSheet: View {
     init(model: DeckModel, prompt: NewSessionPrompt) {
         self.model = model
         _group = State(initialValue: .existing(prompt.groupPath))
-        _directory = State(initialValue: prompt.directory)
+        _groupDirectory = State(initialValue: prompt.directory)
         _command = State(initialValue: prompt.command)
     }
 
@@ -38,7 +40,7 @@ struct NewSessionSheet: View {
                 TextField("Title", text: $title, prompt: Text(folderName))
                 LabeledContent("Directory") {
                     HStack {
-                        TextField("Directory", text: $directory)
+                        TextField("Directory", text: directory)
                             .labelsHidden()
                         Button("Choose…", action: chooseDirectory)
                     }
@@ -86,6 +88,15 @@ struct NewSessionSheet: View {
                 group = .existing(DeckGroup.listedPath(path, in: groups))
             }
         }
+        // A group brings its own directory, which for a worktree waits on
+        // agent-deck; of two switches in quick succession the later wins.
+        .onChange(of: group) { _, choice in
+            guard case .existing(let path) = choice else { return }
+            Task {
+                let directory = await model.newSessionDirectory(inGroup: path)
+                if group == choice { groupDirectory = directory }
+            }
+        }
     }
 
     /// A group agent-deck lists, or one to create, which `add` does when a
@@ -125,8 +136,12 @@ struct NewSessionSheet: View {
         }
     }
 
+    private var directory: Binding<String> {
+        Binding(get: { editedDirectory ?? groupDirectory }, set: { editedDirectory = $0 })
+    }
+
     private var folderName: String {
-        let path = directory.trimmingCharacters(in: .whitespaces)
+        let path = directory.wrappedValue.trimmingCharacters(in: .whitespaces)
         return path.isEmpty ? "" : URL(fileURLWithPath: (path as NSString).expandingTildeInPath).lastPathComponent
     }
 
@@ -151,7 +166,7 @@ struct NewSessionSheet: View {
     }
 
     private var canCreate: Bool {
-        !directory.trimmingCharacters(in: .whitespaces).isEmpty
+        !directory.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty
             && (!worktree || !branch.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
             && !(group == .new && groupPath.isEmpty)
     }
@@ -162,15 +177,15 @@ struct NewSessionSheet: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.prompt = "Choose"
-        panel.directoryURL = URL(fileURLWithPath: (directory as NSString).expandingTildeInPath)
+        panel.directoryURL = URL(fileURLWithPath: (directory.wrappedValue as NSString).expandingTildeInPath)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        directory = (url.path as NSString).abbreviatingWithTildeInPath
+        directory.wrappedValue = (url.path as NSString).abbreviatingWithTildeInPath
     }
 
     private func create() {
         let request = NewSessionRequest(
             title: title,
-            directory: directory,
+            directory: directory.wrappedValue,
             groupPath: groupPath,
             command: command,
             worktreeBranch: worktree ? branch.wrappedValue : nil,
