@@ -51,9 +51,9 @@ struct NewSessionSheet: View {
                 Toggle("Create in a git worktree", isOn: $worktree)
                 TextField("Branch", text: branch)
                     .disabled(!worktree)
-                Toggle("New branch", isOn: $newBranch)
+                Toggle("New branch", isOn: worktreeOption($newBranch))
                     .disabled(!worktree)
-                Toggle("Run the worktree setup script", isOn: $runsSetup)
+                Toggle("Run the worktree setup script", isOn: worktreeOption($runsSetup))
                     .disabled(!worktree)
                     .help("The repository's .agent-deck/worktree-setup.sh, once you have approved it with agent-deck worktree trust-hooks")
                 if let error {
@@ -141,6 +141,13 @@ struct NewSessionSheet: View {
             },
             set: { editedBranch = $0 }
         )
+    }
+
+    /// Off while there is no worktree for it to apply to, so a disabled
+    /// row does not claim what Create will not do; the choice waits for
+    /// the worktree to be switched back on.
+    private func worktreeOption(_ choice: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { worktree && choice.wrappedValue }, set: { choice.wrappedValue = $0 })
     }
 
     private var canCreate: Bool {
