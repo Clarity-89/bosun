@@ -451,6 +451,39 @@ import BosunTerminal
         #expect(!fixture.model.sessionList.collapsedGroups.contains("g"))
     }
 
+    /// agent-deck can call a session failed while deleting it: its pane goes
+    /// from under a waiting session before the row says stopped. That is the
+    /// delete you asked for, not news; another session's failure still is.
+    @Test func aFailureWhileTheSessionIsDeletedIsNoNews() async {
+        let fixture = DeckFixture(sessions: [deckSession("a"), deckSession("b")])
+        await fixture.model.connect()
+        #expect(await eventually { fixture.model.connection == .live })
+        fixture.deck.holdsDelete = true
+        fixture.model.deleteSession(fixture.session("a"))
+        #expect(await eventually { fixture.deck.calls("session remove") == ["session remove a"] })
+        fixture.deck.publish(.error, for: "a", cursor: 1)
+        fixture.deck.publish(.error, for: "b", cursor: 2)
+        #expect(await eventually { fixture.session("b").status == .error })
+        #expect(fixture.session("a").status == .error)
+        #expect(fixture.model.attention.count == 1, "only b's failure")
+        fixture.deck.releaseDelete()
+        #expect(await eventually { fixture.model.busySessions.isEmpty })
+        #expect(fixture.sessions.map(\.id) == ["b"])
+    }
+
+    /// A delete agent-deck refused leaves the session, and its failures are
+    /// news again.
+    @Test func aSessionWhoseDeleteFailedIsHeardAgain() async {
+        let fixture = DeckFixture(sessions: [deckSession("a")])
+        await fixture.model.connect()
+        #expect(await eventually { fixture.model.connection == .live })
+        fixture.deck.failures["session remove"] = AgentDeckCLIError.reported("state.db is locked")
+        fixture.model.deleteSession(fixture.session("a"))
+        #expect(await eventually { fixture.model.busySessions.isEmpty })
+        fixture.deck.publish(.error, for: "a", cursor: 1)
+        #expect(await eventually { fixture.model.attention.count == 1 })
+    }
+
     @Test func creatingASessionStartsSelectsAndAttachesIt() async throws {
         let fixture = DeckFixture(sessions: [deckSession("a")])
         await fixture.model.connect()

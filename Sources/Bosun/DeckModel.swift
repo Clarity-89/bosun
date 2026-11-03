@@ -64,7 +64,9 @@ final class DeckModel {
     private(set) var windowsBySession: [String: [SessionWindow]] = [:]
     /// Sessions with a lifecycle action in flight, and which; their actions
     /// wait for it, and their rows say what runs.
-    private(set) var busySessions: [String: LifecycleAction] = [:]
+    private(set) var busySessions: [String: LifecycleAction] = [:] {
+        didSet { attention.deleting(Set(busySessions.compactMap { $0.value == .delete ? $0.key : nil })) }
+    }
     /// The New Session dialog while it is open.
     private(set) var newSessionPrompt: NewSessionPrompt?
     /// agent-deck's groups as `group list` last reported them, the empty

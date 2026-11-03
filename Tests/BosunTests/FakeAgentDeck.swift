@@ -29,6 +29,9 @@ final class FakeAgentDeck: AgentDeck {
     /// Holds every `list` until `releaseList()`, to catch calls that
     /// arrive during one.
     var holdsList = false
+    /// Holds every `session remove` until `releaseDelete()`, for what
+    /// arrives while one runs.
+    var holdsDelete = false
     /// The repository each worktree session came from, by session ID, as
     /// `worktree info` answers.
     var worktreeRepositories: [String: String] = [:]
@@ -43,6 +46,7 @@ final class FakeAgentDeck: AgentDeck {
     private var log: [BusFrame] = []
     private var following: AsyncThrowingStream<BusFrame, any Error>.Continuation?
     private var listWaiters: [CheckedContinuation<Void, Never>] = []
+    private var deleteWaiters: [CheckedContinuation<Void, Never>] = []
     private var added = 0
 
     /// The recorded lines that are `name` or start with it.
@@ -62,6 +66,12 @@ final class FakeAgentDeck: AgentDeck {
         holdsList = false
         for waiter in listWaiters { waiter.resume() }
         listWaiters = []
+    }
+
+    func releaseDelete() {
+        holdsDelete = false
+        for waiter in deleteWaiters { waiter.resume() }
+        deleteWaiters = []
     }
 
     /// Records the line and throws the failure set for its command.
@@ -182,6 +192,9 @@ final class FakeAgentDeck: AgentDeck {
 
     func deleteSession(id: String) async throws {
         try record("session remove", id)
+        if holdsDelete {
+            await withCheckedContinuation { deleteWaiters.append($0) }
+        }
         sessions.removeAll { $0.id == id }
     }
 

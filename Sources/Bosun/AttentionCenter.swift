@@ -119,6 +119,11 @@ final class AttentionCenter {
         apply { $0.markUnread(sessionID: sessionID, at: .now) }
     }
 
+    /// The sessions Bosun is deleting now.
+    func deleting(_ sessionIDs: Set<String>) {
+        apply { $0.deleting = sessionIDs }
+    }
+
     // MARK: Acting on a change
 
     private func apply(_ change: (inout AttentionState) -> Void) {
