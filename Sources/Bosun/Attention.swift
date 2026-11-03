@@ -109,6 +109,10 @@ struct AttentionState: Equatable, Sendable {
     private var panes: [String: PolledPane] = [:]
     /// Sessions with a spinning pane title at the last poll.
     private var spinning: Set<String> = []
+    /// Sessions Bosun is deleting. What agent-deck reports of them meanwhile
+    /// is their end, which you asked for: their pane vanishes from under a
+    /// waiting session, an error to agent-deck for a moment.
+    var deleting: Set<String> = []
 
     /// A polled omp pane and the agent-deck session it is in.
     private struct PolledPane: Equatable, Sendable {
@@ -284,6 +288,7 @@ struct AttentionState: Equatable, Sendable {
     }
 
     private mutating func setUnread(_ key: AttentionKey, _ item: Unread, notify: Bool) -> [AttentionEvent] {
+        guard !deleting.contains(key.sessionID) else { return [] }
         unread[key] = item
         return [AttentionEvent(key: key, unread: item, notify: notify)]
     }
