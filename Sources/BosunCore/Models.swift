@@ -69,6 +69,31 @@ extension DeckSession {
     public func isIn(groupTree path: String) -> Bool {
         group == path || group.hasPrefix(path + "/")
     }
+
+    /// Runs in `directory` or below it, by its own path or its worktree's,
+    /// symlinks resolved as agent-deck stores some paths through them; a
+    /// directory whose name only starts the same is another one.
+    public func worksIn(_ directory: String) -> Bool {
+        let root = Self.canonical(directory)
+        return [path, worktreePath].compactMap { $0 }.map(Self.canonical).contains { $0 == root || $0.hasPrefix(root + "/") }
+    }
+
+    /// `path` without trailing slashes and with symlinks resolved, by
+    /// `realpath`, which needs the path to exist: a missing last component
+    /// is kept on its resolved parent.
+    private static func canonical(_ path: String) -> String {
+        var path = path
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        func real(_ path: String) -> String? {
+            guard let resolved = realpath(path, nil) else { return nil }
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        if let resolved = real(path) { return resolved }
+        let parent = (path as NSString).deletingLastPathComponent
+        guard parent != path, let resolvedParent = real(parent) else { return path }
+        return (resolvedParent as NSString).appendingPathComponent((path as NSString).lastPathComponent)
+    }
 }
 
 extension Date {

@@ -41,6 +41,22 @@ final class Sandbox {
         NewSessionRequest(title: "probe", directory: project, command: "sleep 600")
     }
 
+    /// Makes `project` a git repository with one commit, for worktrees.
+    func makeRepository() async throws {
+        try await git(["init", "-q", "-b", "main"])
+        try await git(["-c", "user.email=bosun@test", "-c", "user.name=bosun", "commit", "-q", "--allow-empty", "-m", "init"])
+    }
+
+    @discardableResult
+    func git(_ arguments: [String]) async throws -> String {
+        let result = try await Subprocess.run(
+            executable: "/usr/bin/git", arguments: ["-C", project] + arguments,
+            environment: ["HOME": root.appending(path: "home").path, "PATH": "/usr/bin:/bin"]
+        )
+        try result.checkSucceeded()
+        return result.stdout
+    }
+
     func tearDown() async {
         _ = try? await cli.tmux(["kill-server"])
         try? FileManager.default.removeItem(at: root)
@@ -161,6 +177,59 @@ struct AgentDeckIntegrationTests {
             #expect(model.shownSessionID == nil)
             #expect(model.selection == nil)
             #expect(model.livePanes.isEmpty)
+        }
+    }
+
+    /// Deleting a worktree session removes its directory and its entry in
+    /// the repository; a worktree a second session still works in stays
+    /// until that one goes too.
+    @Test func deletingAWorktreeSessionRemovesItsDirectory() async throws {
+        try await withSandbox { sandbox in
+            let cli = sandbox.cli
+            try await sandbox.makeRepository()
+            var request = NewSessionRequest(title: "owner", directory: sandbox.project, command: "sleep 600", worktreeBranch: "probe", createBranch: true, runsWorktreeSetup: false)
+            let owner = try await cli.addSession(request)
+            let worktree = try await cli.worktreeInfo(sessionID: owner.id)
+            #expect(FileManager.default.fileExists(atPath: worktree.path))
+            // agent-deck prefixes a bare branch name with `feature/`.
+            #expect(try await sandbox.git(["worktree", "list"]).contains("probe]"))
+            try await cli.startSession(id: owner.id)
+
+            // `-w` with the branch's existing worktree joins it.
+            request.title = "sharer"
+            request.createBranch = false
+            let sharer = try await cli.addSession(request)
+            try #require(try await cli.list().first { $0.id == sharer.id }).worksIn(worktree.path)
+
+            try await cli.deleteSession(id: owner.id)
+            #expect(FileManager.default.fileExists(atPath: worktree.path), "kept for the sharer")
+            try await cli.deleteSession(id: sharer.id)
+            #expect(!FileManager.default.fileExists(atPath: worktree.path))
+            #expect(try await !sandbox.git(["worktree", "list"]).contains("probe]"))
+            #expect(try await cli.list().isEmpty)
+        }
+    }
+
+    /// The directory of a worktree git no longer knows, its entry under
+    /// `.git/worktrees` gone, and a locked one, go all the same; a
+    /// repository of its own stays.
+    @Test func removingAWorktreeOutlivesGitsRefusals() async throws {
+        try await withSandbox { sandbox in
+            let worktrees = sandbox.root.appending(path: "worktrees").path
+            try await sandbox.makeRepository()
+            try await sandbox.git(["worktree", "add", "-q", "-b", "stale", worktrees + "/stale"])
+            try await sandbox.git(["worktree", "add", "-q", "-b", "locked", worktrees + "/locked"])
+            try await sandbox.git(["worktree", "lock", worktrees + "/locked"])
+            try FileManager.default.removeItem(atPath: sandbox.project + "/.git/worktrees/stale")
+
+            try await sandbox.cli.removeWorktree(at: worktrees + "/stale")
+            try await sandbox.cli.removeWorktree(at: worktrees + "/locked")
+            try await sandbox.cli.removeWorktree(at: sandbox.project)
+            #expect(!FileManager.default.fileExists(atPath: worktrees + "/stale"))
+            #expect(!FileManager.default.fileExists(atPath: worktrees + "/locked"))
+            #expect(FileManager.default.fileExists(atPath: sandbox.project + "/.git"))
+            let listing = try await sandbox.git(["worktree", "list"])
+            #expect(!listing.contains("stale") && !listing.contains("locked"), "\(listing)")
         }
     }
 }
