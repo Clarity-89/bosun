@@ -3,9 +3,10 @@ import os
 
 private let logger = Logger(subsystem: "com.bosun.Bosun", category: "LaunchEnvironment")
 
-/// What Bosun's process environment may hold. Every terminal Bosun opens
-/// starts from it: libghostty copies the process environment and adds to it,
-/// so a key here reaches each shell of the user's. `open` hands an app the
+/// What Bosun's process environment may hold, and what every child of
+/// Bosun's starts from. Every terminal Bosun opens starts from the
+/// process environment: libghostty copies it and adds to it, so a key
+/// here reaches each shell of the user's. `open` hands an app the
 /// environment of the shell that ran it, and a Bosun started from tmux, or
 /// from an agent's pane, would otherwise pass that shell's `TMUX`, `CI`,
 /// `NO_COLOR` and `AGENTDECK_KILL_SCOPE` to those shells: nx stops

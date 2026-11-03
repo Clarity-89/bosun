@@ -54,6 +54,7 @@ public protocol AgentDeck: Sendable {
     func selectWindow(_ windowID: String?, inView view: String) async throws
     func killView(_ view: String) async
     func killOrphanViews() async
+    func updateServerEnvironment() async
     func loneViews() async -> Set<String>
     func someoneElseOnWindow(ofView view: String) async -> Bool
     func setSizesWindow(_ sizes: Bool, view: String) async

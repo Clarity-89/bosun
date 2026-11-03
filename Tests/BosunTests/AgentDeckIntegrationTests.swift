@@ -100,6 +100,44 @@ private func firstFrame(
 @MainActor
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["BOSUN_INTEGRATION"] != nil, "set BOSUN_INTEGRATION=1"))
 struct AgentDeckIntegrationTests {
+    @Test func sshEnvironmentReachesNewAndExistingPanes() async throws {
+        try await withSandbox { sandbox in
+            var environment = sandbox.cli.childEnvironment(binaryDirectory: nil)
+            let socket = sandbox.root.appending(path: "agent.sock").path
+            let temporaryDirectory = sandbox.root.path + "/"
+            environment["SSH_AUTH_SOCK"] = socket
+            environment["TMPDIR"] = temporaryDirectory
+            let cli = AgentDeckCLI(environment: environment)
+
+            func expectPane(in session: String, socket: String, name: String) async throws {
+                let output = sandbox.root.appending(path: name).path
+                let command = #"printf '%s\n%s\n' "$SSH_AUTH_SOCK" "$TMPDIR" > "\#(output)"; exec sleep 30"#
+                try await cli.tmux(["new-window", "-d", "-t", "=\(session)", command]).checkSucceeded()
+                #expect(await eventually {
+                    (try? String(contentsOfFile: output, encoding: .utf8)) == "\(socket)\n\(temporaryDirectory)\n"
+                })
+            }
+
+            await cli.updateServerEnvironment()
+            #expect(try await !cli.tmux(["has-session"]).succeeded)
+            try await cli.tmux(["new-session", "-d", "-s", "fresh", "sleep 30"]).checkSucceeded()
+            try await expectPane(in: "fresh", socket: socket, name: "inherited")
+
+            // Old launches marked SSH_AUTH_SOCK removed at the session level.
+            for key in ["SSH_AUTH_SOCK", "TMPDIR"] {
+                try await cli.tmux(["set-environment", "-gu", key]).checkSucceeded()
+                try await cli.tmux(["set-environment", "-r", "-t", "=fresh", key]).checkSucceeded()
+            }
+            try await cli.tmux(["new-session", "-d", "-s", "forwarded", "sleep 30"]).checkSucceeded()
+            let forwardedSocket = sandbox.root.appending(path: "forwarded.sock").path
+            try await cli.tmux(["set-environment", "-t", "=forwarded", "SSH_AUTH_SOCK", forwardedSocket]).checkSucceeded()
+
+            await cli.updateServerEnvironment()
+            try await expectPane(in: "fresh", socket: socket, name: "repaired")
+            try await expectPane(in: "forwarded", socket: forwardedSocket, name: "override")
+        }
+    }
+
     @Test func theCLIRunsASessionOnThePrivateServerAndHearsItStop() async throws {
         try await withSandbox { sandbox in
             let cli = sandbox.cli
