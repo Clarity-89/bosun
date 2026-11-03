@@ -203,14 +203,11 @@ public actor AgentDeckCLI: AgentDeck {
             .flatMap { $0.hasPrefix("/") ? $0 : nil }
     }
 
-    /// A minimal environment for agent-deck children: never the launching
-    /// shell's `TMUX`/`AGENTDECK_*`, which would make `session attach` nest or
-    /// misattribute the caller. The chosen binary's directory leads PATH so a
-    /// re-exec by name (hooks, tmux-side helpers) lands on the same build.
-    /// A tmux server started from this environment gives its PATH to every
-    /// pane, so the login shell's PATH comes next. `inherited` is the
-    /// launcher's environment, named at every call: a sandbox `HOME` or
-    /// `TMUX_TMPDIR` reaches a child only through it.
+    /// Keep terminal and state-location variables, never the launching
+    /// agent's identity. A tmux server seeds panes from this environment,
+    /// so SSH_AUTH_SOCK must survive even when no client attaches.
+    /// The chosen binary leads PATH, then the login shell's directories.
+    /// Empty values do not override defaults.
     static func childEnvironment(
         binaryDirectory: String?,
         inherited: [String: String],
@@ -222,19 +219,13 @@ public actor AgentDeckCLI: AgentDeck {
             + ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         var seen = Set<String>()
 
-        var environment: [String: String] = [
-            "PATH": directories.filter { seen.insert($0).inserted }.joined(separator: ":"),
-            "HOME": inherited["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path,
-            "USER": inherited["USER"] ?? NSUserName(),
-            "SHELL": inherited["SHELL"] ?? "/bin/zsh",
-            "LANG": inherited["LANG"] ?? "en_US.UTF-8",
-        ]
-        environment["LOGNAME"] = inherited["LOGNAME"] ?? environment["USER"]
-        for key in LaunchEnvironment.stateLocations {
-            if let value = inherited[key], !value.isEmpty {
-                environment[key] = value
-            }
-        }
+        var environment = LaunchEnvironment.kept(inherited).filter { !$0.value.isEmpty }
+        environment["PATH"] = directories.filter { seen.insert($0).inserted }.joined(separator: ":")
+        environment["HOME"] = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        environment["USER"] = environment["USER"] ?? NSUserName()
+        environment["LOGNAME"] = environment["LOGNAME"] ?? environment["USER"]
+        environment["SHELL"] = environment["SHELL"] ?? "/bin/zsh"
+        environment["LANG"] = environment["LANG"] ?? "en_US.UTF-8"
         return environment
     }
 

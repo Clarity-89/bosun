@@ -41,6 +41,22 @@ final class Sandbox {
         NewSessionRequest(title: "probe", directory: project, command: "sleep 600")
     }
 
+    /// Makes `project` a git repository with one commit, for worktrees.
+    func makeRepository() async throws {
+        try await git(["init", "-q", "-b", "main"])
+        try await git(["-c", "user.email=bosun@test", "-c", "user.name=bosun", "commit", "-q", "--allow-empty", "-m", "init"])
+    }
+
+    @discardableResult
+    func git(_ arguments: [String]) async throws -> String {
+        let result = try await Subprocess.run(
+            executable: "/usr/bin/git", arguments: ["-C", project] + arguments,
+            environment: ["HOME": root.appending(path: "home").path, "PATH": "/usr/bin:/bin"]
+        )
+        try result.checkSucceeded()
+        return result.stdout
+    }
+
     func tearDown() async {
         _ = try? await cli.tmux(["kill-server"])
         try? FileManager.default.removeItem(at: root)
@@ -84,6 +100,44 @@ private func firstFrame(
 @MainActor
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["BOSUN_INTEGRATION"] != nil, "set BOSUN_INTEGRATION=1"))
 struct AgentDeckIntegrationTests {
+    @Test func sshEnvironmentReachesNewAndExistingPanes() async throws {
+        try await withSandbox { sandbox in
+            var environment = sandbox.cli.childEnvironment(binaryDirectory: nil)
+            let socket = sandbox.root.appending(path: "agent.sock").path
+            let temporaryDirectory = sandbox.root.path + "/"
+            environment["SSH_AUTH_SOCK"] = socket
+            environment["TMPDIR"] = temporaryDirectory
+            let cli = AgentDeckCLI(environment: environment)
+
+            func expectPane(in session: String, socket: String, name: String) async throws {
+                let output = sandbox.root.appending(path: name).path
+                let command = #"printf '%s\n%s\n' "$SSH_AUTH_SOCK" "$TMPDIR" > "\#(output)"; exec sleep 30"#
+                try await cli.tmux(["new-window", "-d", "-t", "=\(session)", command]).checkSucceeded()
+                #expect(await eventually {
+                    (try? String(contentsOfFile: output, encoding: .utf8)) == "\(socket)\n\(temporaryDirectory)\n"
+                })
+            }
+
+            await cli.updateServerEnvironment()
+            #expect(try await !cli.tmux(["has-session"]).succeeded)
+            try await cli.tmux(["new-session", "-d", "-s", "fresh", "sleep 30"]).checkSucceeded()
+            try await expectPane(in: "fresh", socket: socket, name: "inherited")
+
+            // Old launches marked SSH_AUTH_SOCK removed at the session level.
+            for key in ["SSH_AUTH_SOCK", "TMPDIR"] {
+                try await cli.tmux(["set-environment", "-gu", key]).checkSucceeded()
+                try await cli.tmux(["set-environment", "-r", "-t", "=fresh", key]).checkSucceeded()
+            }
+            try await cli.tmux(["new-session", "-d", "-s", "forwarded", "sleep 30"]).checkSucceeded()
+            let forwardedSocket = sandbox.root.appending(path: "forwarded.sock").path
+            try await cli.tmux(["set-environment", "-t", "=forwarded", "SSH_AUTH_SOCK", forwardedSocket]).checkSucceeded()
+
+            await cli.updateServerEnvironment()
+            try await expectPane(in: "fresh", socket: socket, name: "repaired")
+            try await expectPane(in: "forwarded", socket: forwardedSocket, name: "override")
+        }
+    }
+
     @Test func theCLIRunsASessionOnThePrivateServerAndHearsItStop() async throws {
         try await withSandbox { sandbox in
             let cli = sandbox.cli
@@ -161,6 +215,56 @@ struct AgentDeckIntegrationTests {
             #expect(model.shownSessionID == nil)
             #expect(model.selection == nil)
             #expect(model.livePanes.isEmpty)
+        }
+    }
+
+    /// Deleting a worktree session removes its directory and its entry in
+    /// the repository; a worktree a second session still works in stays
+    /// until that one goes too.
+    @Test func deletingAWorktreeSessionRemovesItsDirectory() async throws {
+        try await withSandbox { sandbox in
+            let cli = sandbox.cli
+            try await sandbox.makeRepository()
+            var request = NewSessionRequest(title: "owner", directory: sandbox.project, command: "sleep 600", worktreeBranch: "probe", createBranch: true, runsWorktreeSetup: false)
+            let owner = try await cli.addSession(request)
+            let worktree = try #require(try await cli.list().first { $0.id == owner.id }?.worktreePath)
+            #expect(FileManager.default.fileExists(atPath: worktree))
+            // agent-deck prefixes a bare branch name with `feature/`.
+            #expect(try await sandbox.git(["worktree", "list"]).contains("probe]"))
+            try await cli.startSession(id: owner.id)
+
+            // `-w` with the branch's existing worktree joins it.
+            request.title = "sharer"
+            request.createBranch = false
+            let sharer = try await cli.addSession(request)
+            #expect(try await cli.list().first { $0.id == sharer.id }?.worktreePath == worktree)
+
+            try await cli.deleteSession(id: owner.id)
+            #expect(FileManager.default.fileExists(atPath: worktree), "kept for the sharer")
+            try await cli.deleteSession(id: sharer.id)
+            #expect(!FileManager.default.fileExists(atPath: worktree))
+            #expect(try await !sandbox.git(["worktree", "list"]).contains("probe]"))
+            #expect(try await cli.list().isEmpty)
+        }
+    }
+
+    /// A worktree agent-deck cannot remove, its repository gone, fails the
+    /// delete with agent-deck's reason, though the session itself is gone:
+    /// the directory is still there, for the user to know about.
+    @Test func aWorktreeLeftBehindFailsTheDelete() async throws {
+        try await withSandbox { sandbox in
+            let cli = sandbox.cli
+            try await sandbox.makeRepository()
+            let request = NewSessionRequest(title: "orphan", directory: sandbox.project, command: "sleep 600", worktreeBranch: "probe", createBranch: true, runsWorktreeSetup: false)
+            let orphan = try await cli.addSession(request)
+            let worktree = try #require(try await cli.list().first { $0.id == orphan.id }?.worktreePath)
+            try FileManager.default.removeItem(atPath: sandbox.project + "/.git")
+
+            await #expect(throws: AgentDeckCLIError.reported("Worktree remove failed for \(orphan.id): not a git or jujutsu repository: \(worktree)")) {
+                try await cli.deleteSession(id: orphan.id)
+            }
+            #expect(FileManager.default.fileExists(atPath: worktree))
+            #expect(try await cli.list().isEmpty)
         }
     }
 }

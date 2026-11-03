@@ -867,6 +867,7 @@ final class DeckModel {
             self.binary = binary
             logger.info("using \(binary.path, privacy: .public) v\(binary.version, privacy: .public)")
             await deck.killOrphanViews()
+            await deck.updateServerEnvironment()
             statusEventsEnabled = try await deck.statusEventsEnabled()
             // Cursor before the list: anything published in between is
             // replayed onto the fresh list instead of being missed.

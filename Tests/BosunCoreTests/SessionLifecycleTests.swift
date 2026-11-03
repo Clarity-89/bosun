@@ -30,6 +30,29 @@ import Testing
             try AgentDeckCLI.checkRestarted(result)
         }
     }
+
+    /// agent-deck exits 0 from `session remove --prune-worktree` whether the
+    /// worktree went or stayed; only its stderr says. A `note:` is one kept
+    /// for another session, and no failure.
+    @Test func aWorktreeAgentDeckCouldNotRemoveFailsTheDelete() {
+        let reply = """
+            {
+              "id": "c64f038c-1793696898",
+              "success": true,
+              "title": "owner"
+            }
+            """
+        let kept = ProcessResult(command: "agent-deck session remove --json", status: 0, stdout: reply, stderr: """
+            warn: inbox sweep for c64f038c-1793696898 failed: no such file
+            warn: worktree remove failed for c64f038c-1793696898: not a git or jujutsu repository: /private/tmp/project/.worktrees/feature-probe
+
+            """)
+        #expect(throws: AgentDeckCLIError.reported("Worktree remove failed for c64f038c-1793696898: not a git or jujutsu repository: /private/tmp/project/.worktrees/feature-probe")) {
+            try AgentDeckCLI.checkWorktreeRemoved(kept)
+        }
+        let shared = ProcessResult(command: "agent-deck session remove --json", status: 0, stdout: reply, stderr: "note: worktree ~/project/.worktrees/feature-probe kept: another session still uses it\n")
+        #expect(throws: Never.self) { try AgentDeckCLI.checkWorktreeRemoved(shared) }
+    }
 }
 
 /// Which sessions a group's Delete takes with it: a session in a group whose

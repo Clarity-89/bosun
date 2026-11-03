@@ -282,6 +282,10 @@ final class FakeAgentDeck: AgentDeck {
         try? record("kill-orphan-views")
     }
 
+    func updateServerEnvironment() async {
+        try? record("set-environment")
+    }
+
     func loneViews() async -> Set<String> {
         loneViews
     }

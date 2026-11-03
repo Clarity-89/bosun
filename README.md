@@ -12,6 +12,10 @@ A macOS app over [agent-deck](https://github.com/asheshgoplani/agent-deck). Agen
 
 macOS 26, Xcode 26 or a Swift 6.2 or later toolchain, [tmux](https://github.com/tmux/tmux) 3.2 or later, agent-deck on your PATH, and the [GitHub CLI](https://cli.github.com) signed in for the GitHub features.
 
+Bosun preserves `SSH_AUTH_SOCK` and `TMPDIR` for agent-deck and tmux.
+At startup, it repairs missing server values and clears session-level removal markers, preserving explicit per-session overrides.
+Existing shells keep their old environment; open a new pane to use the repaired values.
+
 ## Build
 
 ```sh

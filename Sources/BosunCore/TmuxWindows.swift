@@ -149,6 +149,29 @@ extension AgentDeckCLI {
         try await tmux(arguments).checkSucceeded()
     }
 
+    /// Repair a server started without the login session's environment.
+    /// Removed session entries mask global values; explicit overrides stay.
+    public func updateServerEnvironment() async {
+        let environment = childEnvironment(binaryDirectory: nil)
+        let updates = ["SSH_AUTH_SOCK", "TMPDIR"].compactMap { key in
+            environment[key].map { (key: key, value: $0) }
+        }
+        guard !updates.isEmpty,
+              let listing = try? await tmux(["list-sessions", "-F", "#{session_id}"]),
+              listing.succeeded
+        else { return }
+        for (key, value) in updates {
+            guard let result = try? await tmux(["set-environment", "-g", key, value]), result.succeeded else { return }
+        }
+        for session in listing.stdout.split(whereSeparator: \.isNewline) {
+            guard let local = try? await tmux(["show-environment", "-t", String(session)]), local.succeeded else { continue }
+            let entries = local.stdout.split(whereSeparator: \.isNewline)
+            for (key, _) in updates where entries.contains(Substring("-" + key)) {
+                _ = try? await tmux(["set-environment", "-u", "-t", String(session), key])
+            }
+        }
+    }
+
     /// tmux as the agent-deck binary's children see it: PATH lookup in the
     /// child environment, which includes the login shell's PATH.
     func tmux(_ arguments: [String]) async throws -> ProcessResult {
