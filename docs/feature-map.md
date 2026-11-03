@@ -30,3 +30,4 @@ the agent-deck changes it needs. Nothing else in the table needs a core change.
 2. `skill attached/attach/detach --json`.
 3. Registry coverage for `session.show`, `session.send`, `harness.list`, `skill.*` so the daemon `call` path becomes useful.
 4. Done on agent-deck's `feature/status-owner` branch, not upstream yet: `events stats --json` reports `status_owner` (`tui`, `notify-daemon` or `none`), and `notify-daemon install --json` installs the notify daemon without a conductor. Bosun uses both to keep statuses live with the TUI closed (#7).
+5. Done on agent-deck's `local-build` branch, not upstream yet: `session remove --prune-worktree --delete-branch` deletes the removed worktree's branch with it, and warns on stderr about one it could not. Bosun's Delete passes it, so a new session can take the same branch name again.

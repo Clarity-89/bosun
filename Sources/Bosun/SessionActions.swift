@@ -165,7 +165,7 @@ enum SessionPrompts {
     static func confirmDelete(_ session: DeckSession, model: DeckModel) {
         confirm(
             "Delete “\(session.title)”?",
-            "This stops all of its processes, deletes its git worktree if it has one and no other session works in it, uncommitted changes included, and removes it from agent-deck. The agent's own conversation files are kept.",
+            "This stops all of its processes, deletes its git worktree if it has one and no other session works in it, uncommitted changes and its branch included, and removes it from agent-deck. The agent's own conversation files are kept.",
             button: "Delete"
         ) { model.deleteSession(session) }
     }
@@ -176,7 +176,7 @@ enum SessionPrompts {
         let count = model.sessions(inGroupTree: group.path).count
         confirm(
             "Delete the group “\(group.name)” and its \(count == 1 ? "session" : "\(count) sessions")?",
-            "Every session in it and its subgroups goes, archived ones included. Each stops all of its processes, deletes its git worktree if it has one and no other session works in it, uncommitted changes included, and leaves agent-deck. The agents' own conversation files are kept.",
+            "Every session in it and its subgroups goes, archived ones included. Each stops all of its processes, deletes its git worktree if it has one and no other session works in it, uncommitted changes and its branch included, and leaves agent-deck. The agents' own conversation files are kept.",
             button: "Delete Group"
         ) { model.deleteGroup(group) }
     }

@@ -218,9 +218,9 @@ struct AgentDeckIntegrationTests {
         }
     }
 
-    /// Deleting a worktree session removes its directory and its entry in
-    /// the repository; a worktree a second session still works in stays
-    /// until that one goes too.
+    /// Deleting a worktree session removes its directory, its entry in the
+    /// repository and its branch; a worktree a second session still works
+    /// in stays, branch and all, until that one goes too.
     @Test func deletingAWorktreeSessionRemovesItsDirectory() async throws {
         try await withSandbox { sandbox in
             let cli = sandbox.cli
@@ -241,9 +241,12 @@ struct AgentDeckIntegrationTests {
 
             try await cli.deleteSession(id: owner.id)
             #expect(FileManager.default.fileExists(atPath: worktree), "kept for the sharer")
+            #expect(try await sandbox.git(["branch", "--list", "feature/probe"]).contains("feature/probe"), "kept for the sharer")
             try await cli.deleteSession(id: sharer.id)
             #expect(!FileManager.default.fileExists(atPath: worktree))
             #expect(try await !sandbox.git(["worktree", "list"]).contains("probe]"))
+            #expect(try await sandbox.git(["branch", "--list", "feature/probe"]).isEmpty)
+            #expect(try await sandbox.git(["branch", "--list", "main"]).contains("main"))
             #expect(try await cli.list().isEmpty)
         }
     }

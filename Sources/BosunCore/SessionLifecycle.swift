@@ -52,27 +52,32 @@ extension AgentDeckCLI {
     }
 
     /// Stops the session's processes, deletes its git worktree, uncommitted
-    /// changes included, and removes it from agent-deck. agent-deck keeps a
-    /// worktree another session still works in; the agent's own conversation
-    /// files are kept either way. The removal gets the minutes a large tree
-    /// takes to delete: a timeout would kill agent-deck, and the git it
-    /// runs, between the session's end and its row's. A worktree agent-deck
-    /// could not remove fails the delete here, though the session is gone:
-    /// agent-deck says so on stderr only, and exits 0.
+    /// changes included, and the branch it was on, and removes it from
+    /// agent-deck. agent-deck keeps a worktree another session still works
+    /// in, with its branch, and never deletes the repository's default
+    /// branch; the agent's own conversation files are kept either way. The
+    /// removal gets the minutes a large tree takes to delete: a timeout
+    /// would kill agent-deck, and the git it runs, between the session's
+    /// end and its row's. A worktree or branch agent-deck could not remove
+    /// fails the delete here, though the session is gone: agent-deck says
+    /// so on stderr only, and exits 0.
     public func deleteSession(id: String) async throws {
-        let result = try await execute(["session", "remove", id, "--force", "--prune-worktree", "--json"], timeout: .seconds(300))
+        let result = try await execute(["session", "remove", id, "--force", "--prune-worktree", "--delete-branch", "--json"], timeout: .seconds(300))
         try Self.checkReported(result)
         try Self.checkWorktreeRemoved(result)
     }
 
-    /// `session remove --prune-worktree` warns on stderr about a worktree it
-    /// could not remove, `warn: worktree remove failed for <id>: <why>`, and
-    /// says `note:` of one it kept for another session; only the first is a
-    /// failure, with agent-deck's reason.
+    /// `session remove --prune-worktree --delete-branch` warns on stderr
+    /// about a worktree or a branch it could not remove, `warn: worktree
+    /// remove failed for <id>: <why>` or `warn: branch delete failed for
+    /// <id>: <why>`, and says `note:` of one it kept on purpose; only a
+    /// warning is a failure, with agent-deck's reason.
     static func checkWorktreeRemoved(_ result: ProcessResult) throws {
-        let prefix = "warn: worktree remove failed for "
-        if let warning = result.stderr.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix(prefix) }) {
-            throw AgentDeckCLIError.reported("Worktree remove failed for \(warning.dropFirst(prefix.count))")
+        let failures = ["warn: worktree remove failed for ", "warn: branch delete failed for "]
+        for line in result.stderr.split(whereSeparator: \.isNewline) {
+            guard let prefix = failures.first(where: { line.hasPrefix($0) }) else { continue }
+            let what = prefix.dropFirst("warn: ".count)
+            throw AgentDeckCLIError.reported(what.prefix(1).uppercased() + what.dropFirst() + line.dropFirst(prefix.count))
         }
     }
 

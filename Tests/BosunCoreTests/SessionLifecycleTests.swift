@@ -31,10 +31,10 @@ import Testing
         }
     }
 
-    /// agent-deck exits 0 from `session remove --prune-worktree` whether the
-    /// worktree went or stayed; only its stderr says. A `note:` is one kept
-    /// for another session, and no failure.
-    @Test func aWorktreeAgentDeckCouldNotRemoveFailsTheDelete() {
+    /// agent-deck exits 0 from `session remove --prune-worktree
+    /// --delete-branch` whether the worktree and its branch went or stayed;
+    /// only its stderr says. A `note:` is one kept on purpose, and no failure.
+    @Test func aWorktreeOrBranchAgentDeckCouldNotRemoveFailsTheDelete() {
         let reply = """
             {
               "id": "c64f038c-1793696898",
@@ -50,7 +50,18 @@ import Testing
         #expect(throws: AgentDeckCLIError.reported("Worktree remove failed for c64f038c-1793696898: not a git or jujutsu repository: /private/tmp/project/.worktrees/feature-probe")) {
             try AgentDeckCLI.checkWorktreeRemoved(kept)
         }
-        let shared = ProcessResult(command: "agent-deck session remove --json", status: 0, stdout: reply, stderr: "note: worktree ~/project/.worktrees/feature-probe kept: another session still uses it\n")
+        let checkedOut = ProcessResult(command: "agent-deck session remove --json", status: 0, stdout: reply, stderr: """
+            warn: branch delete failed for c64f038c-1793696898: failed to delete branch: error: cannot delete branch 'feature/probe' used by worktree at '/private/tmp/project/.worktrees/other': exit status 1
+
+            """)
+        #expect(throws: AgentDeckCLIError.reported("Branch delete failed for c64f038c-1793696898: failed to delete branch: error: cannot delete branch 'feature/probe' used by worktree at '/private/tmp/project/.worktrees/other': exit status 1")) {
+            try AgentDeckCLI.checkWorktreeRemoved(checkedOut)
+        }
+        let shared = ProcessResult(command: "agent-deck session remove --json", status: 0, stdout: reply, stderr: """
+            note: worktree ~/project/.worktrees/feature-probe kept: another session still uses it
+            note: branch main kept: the repository's default branch
+
+            """)
         #expect(throws: Never.self) { try AgentDeckCLI.checkWorktreeRemoved(shared) }
     }
 }
