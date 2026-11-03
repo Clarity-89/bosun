@@ -90,13 +90,7 @@ extension AgentDeckCLI {
     /// agent-deck's record of where the worktree came from, which outlives
     /// the worktree; a session in a plain directory is a refusal.
     public func worktreeRepository(sessionID: String) async throws -> String {
-        try await worktreeInfo(sessionID: sessionID).mainRepo
-    }
-
-    /// `worktree info`: agent-deck's record of the session's worktree. A
-    /// session in a plain directory is a refusal.
-    func worktreeInfo(sessionID: String) async throws -> WorktreeInfo {
-        try await decode(WorktreeInfo.self, ["worktree", "info", sessionID, "--json"])
+        try await decode(WorktreeInfo.self, ["worktree", "info", sessionID, "--json"]).mainRepo
     }
 
     /// The reply is the JSON object stdout ends with: a worktree setup hook
@@ -206,14 +200,10 @@ private struct AddReply: Decodable {
     let id: String
 }
 
-/// agent-deck's row on a session's worktree, which stays as it was made
-/// whatever became of the directory.
-struct WorktreeInfo: Decodable {
-    let path: String
+private struct WorktreeInfo: Decodable {
     let mainRepo: String
 
     private enum CodingKeys: String, CodingKey {
-        case path = "worktree_path"
         case mainRepo = "main_repo"
     }
 }

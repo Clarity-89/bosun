@@ -189,8 +189,8 @@ struct AgentDeckIntegrationTests {
             try await sandbox.makeRepository()
             var request = NewSessionRequest(title: "owner", directory: sandbox.project, command: "sleep 600", worktreeBranch: "probe", createBranch: true, runsWorktreeSetup: false)
             let owner = try await cli.addSession(request)
-            let worktree = try await cli.worktreeInfo(sessionID: owner.id)
-            #expect(FileManager.default.fileExists(atPath: worktree.path))
+            let worktree = try #require(try await cli.list().first { $0.id == owner.id }?.worktreePath)
+            #expect(FileManager.default.fileExists(atPath: worktree))
             // agent-deck prefixes a bare branch name with `feature/`.
             #expect(try await sandbox.git(["worktree", "list"]).contains("probe]"))
             try await cli.startSession(id: owner.id)
@@ -199,37 +199,34 @@ struct AgentDeckIntegrationTests {
             request.title = "sharer"
             request.createBranch = false
             let sharer = try await cli.addSession(request)
-            try #require(try await cli.list().first { $0.id == sharer.id }).worksIn(worktree.path)
+            #expect(try await cli.list().first { $0.id == sharer.id }?.worktreePath == worktree)
 
             try await cli.deleteSession(id: owner.id)
-            #expect(FileManager.default.fileExists(atPath: worktree.path), "kept for the sharer")
+            #expect(FileManager.default.fileExists(atPath: worktree), "kept for the sharer")
             try await cli.deleteSession(id: sharer.id)
-            #expect(!FileManager.default.fileExists(atPath: worktree.path))
+            #expect(!FileManager.default.fileExists(atPath: worktree))
             #expect(try await !sandbox.git(["worktree", "list"]).contains("probe]"))
             #expect(try await cli.list().isEmpty)
         }
     }
 
-    /// The directory of a worktree git no longer knows, its entry under
-    /// `.git/worktrees` gone, and a locked one, go all the same; a
-    /// repository of its own stays.
-    @Test func removingAWorktreeOutlivesGitsRefusals() async throws {
+    /// A worktree agent-deck cannot remove, its repository gone, fails the
+    /// delete with agent-deck's reason, though the session itself is gone:
+    /// the directory is still there, for the user to know about.
+    @Test func aWorktreeLeftBehindFailsTheDelete() async throws {
         try await withSandbox { sandbox in
-            let worktrees = sandbox.root.appending(path: "worktrees").path
+            let cli = sandbox.cli
             try await sandbox.makeRepository()
-            try await sandbox.git(["worktree", "add", "-q", "-b", "stale", worktrees + "/stale"])
-            try await sandbox.git(["worktree", "add", "-q", "-b", "locked", worktrees + "/locked"])
-            try await sandbox.git(["worktree", "lock", worktrees + "/locked"])
-            try FileManager.default.removeItem(atPath: sandbox.project + "/.git/worktrees/stale")
+            let request = NewSessionRequest(title: "orphan", directory: sandbox.project, command: "sleep 600", worktreeBranch: "probe", createBranch: true, runsWorktreeSetup: false)
+            let orphan = try await cli.addSession(request)
+            let worktree = try #require(try await cli.list().first { $0.id == orphan.id }?.worktreePath)
+            try FileManager.default.removeItem(atPath: sandbox.project + "/.git")
 
-            try await sandbox.cli.removeWorktree(at: worktrees + "/stale")
-            try await sandbox.cli.removeWorktree(at: worktrees + "/locked")
-            try await sandbox.cli.removeWorktree(at: sandbox.project)
-            #expect(!FileManager.default.fileExists(atPath: worktrees + "/stale"))
-            #expect(!FileManager.default.fileExists(atPath: worktrees + "/locked"))
-            #expect(FileManager.default.fileExists(atPath: sandbox.project + "/.git"))
-            let listing = try await sandbox.git(["worktree", "list"])
-            #expect(!listing.contains("stale") && !listing.contains("locked"), "\(listing)")
+            await #expect(throws: AgentDeckCLIError.reported("Worktree remove failed for \(orphan.id): not a git or jujutsu repository: \(worktree)")) {
+                try await cli.deleteSession(id: orphan.id)
+            }
+            #expect(FileManager.default.fileExists(atPath: worktree))
+            #expect(try await cli.list().isEmpty)
         }
     }
 }
