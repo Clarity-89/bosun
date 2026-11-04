@@ -463,7 +463,7 @@ import BosunTerminal
         #expect(await eventually { fixture.deck.calls("session remove") == ["session remove a"] })
         fixture.deck.publish(.error, for: "a", cursor: 1)
         fixture.deck.publish(.error, for: "b", cursor: 2)
-        #expect(await eventually { fixture.session("b").status == .error })
+        #expect(await eventually { fixture.model.attention[fixture.session("b")].unread })
         #expect(fixture.session("a").status == .error)
         #expect(fixture.model.attention.count == 1, "only b's failure")
         fixture.deck.releaseDelete()
@@ -482,6 +482,26 @@ import BosunTerminal
         #expect(await eventually { fixture.model.busySessions.isEmpty })
         fixture.deck.publish(.error, for: "a", cursor: 1)
         #expect(await eventually { fixture.model.attention.count == 1 })
+    }
+
+    /// A tmux server quitting makes agent-deck call every session failed;
+    /// Bosun asks tmux, and a session it no longer has is ended, not news,
+    /// its unread turn gone with it. A failure in a session tmux still has
+    /// is.
+    @Test func anErrorForASessionTmuxNoLongerHasIsNoNews() async {
+        let fixture = DeckFixture(
+            sessions: [deckSession("a"), deckSession("b")], windows: ["agentdeck_b": [window("@2", index: 0)]]
+        )
+        await fixture.model.connect()
+        #expect(await eventually { fixture.model.connection == .live })
+        fixture.deck.publish(.waiting, for: "a", cursor: 1)
+        #expect(await eventually { fixture.model.attention.count == 1 })
+        fixture.deck.publish(.error, for: "a", cursor: 2)
+        fixture.deck.publish(.error, for: "b", cursor: 3)
+        #expect(await eventually { fixture.model.attention[fixture.session("b")].unread })
+        #expect(fixture.session("a").status == .error)
+        #expect(!fixture.model.attention[fixture.session("a")].unread)
+        #expect(fixture.model.attention.count == 1, "only b's failure")
     }
 
     @Test func creatingASessionStartsSelectsAndAttachesIt() async throws {

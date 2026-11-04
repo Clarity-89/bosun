@@ -82,6 +82,17 @@ extension AttentionState {
         #expect(state.statusChanged(sessionID: "a", from: .error, to: .error, at: t0).isEmpty)
     }
 
+    /// A tmux server quitting makes agent-deck call every omp and shell
+    /// session failed; with nothing left to look at, that ends them like a
+    /// stop, a turn still unread included.
+    @Test func anErrorInASessionTmuxNoLongerHasIsNoFailure() {
+        var state = AttentionState()
+        _ = state.statusChanged(sessionID: "a", from: .running, to: .waiting, at: t0)
+        state.tmuxGone = ["a"]
+        #expect(state.statusChanged(sessionID: "a", from: .waiting, to: .error, at: t0).isEmpty)
+        #expect(state.unreadCount == 0)
+    }
+
     /// The TUI acknowledging means you saw it there; a shell's prompt
     /// returning, or a turn agent-deck already counts as seen, is not news.
     @Test func acknowledgedOrIdleTurnsAreNotUnread() {
@@ -262,16 +273,30 @@ extension AttentionState {
         var state = AttentionState()
         #expect(state.listed([session("a", status: .waiting, active: t0)], previous: nil, at: t0).isEmpty)
         var relaunched = AttentionState(snapshot: state.snapshot)
+        relaunched.tmuxGone = ["e"]
         let later = t0.addingTimeInterval(3600)
         let events = relaunched.listed([
             session("a", status: .waiting, active: t0.addingTimeInterval(60)),
             session("b", status: .error, active: t0.addingTimeInterval(60)),
             session("c", status: .waiting, active: t0.addingTimeInterval(-60)),
             session("d", status: .running, active: t0.addingTimeInterval(60)),
+            session("e", status: .error, active: t0.addingTimeInterval(60)),
         ], previous: nil, at: later)
         #expect(events.map(\.key.sessionID) == ["a", "b"])
         #expect(events.map(\.unread.kind) == [.finished, .failed])
         #expect(events.map(\.notify) == [false, false])
+    }
+
+    /// A list, not a frame, can be what reports the errors a tmux server
+    /// quitting left: one without its tmux session is no news there either,
+    /// and one tmux still has is.
+    @Test func listedErrorsWithoutTheirTmuxSessionAreNoNews() {
+        var state = AttentionState()
+        let before = [session("a", status: .running), session("b", status: .running)]
+        _ = state.listed(before, previous: nil, at: t0)
+        state.tmuxGone = ["a"]
+        let events = state.listed([session("a", status: .error), session("b", status: .error)], previous: before, at: t0)
+        #expect(events.map(\.key.sessionID) == ["b"])
     }
 
     @Test func goneSessionsLeaveNothingUnread() {

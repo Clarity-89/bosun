@@ -124,6 +124,11 @@ final class AttentionCenter {
         apply { $0.deleting = sessionIDs }
     }
 
+    /// The sessions tmux no longer has a session for.
+    func tmuxGone(_ sessionIDs: Set<String>) {
+        apply { $0.tmuxGone = sessionIDs }
+    }
+
     // MARK: Acting on a change
 
     private func apply(_ change: (inout AttentionState) -> Void) {

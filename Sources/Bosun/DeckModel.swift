@@ -94,6 +94,10 @@ final class DeckModel {
     /// views included. The poll's own, so a listing with nothing new
     /// touches nothing observed.
     @ObservationIgnored private var currentWindows: [String: String] = [:]
+    /// Every tmux session's windows at the last listing, by tmux session
+    /// name; `windowsBySession` is it keyed back to the sessions, redone
+    /// when either changes.
+    @ObservationIgnored private var windowsByTmuxSession: [String: [SessionWindow]] = [:]
     @ObservationIgnored private var pendingReveal: (sessionID: String, windowID: String?)?
     /// The session a reveal put in the pane before it had a terminal; the
     /// keyboard goes into the terminal once its attach lands.
@@ -241,25 +245,33 @@ final class DeckModel {
         windowsTask = nil
     }
 
-    /// Window rows for every session, keyed back from tmux session name
-    /// to agent-deck id. A listing with nothing new leaves the rows alone;
-    /// the shown pane's selection follows its view either way. A failure
-    /// is logged: in the footer it would return every 2 s.
+    /// tmux's window rows, kept for `rekeyWindows()`. A failure is logged:
+    /// in the footer it would return every 2 s.
     private func listWindows() async {
         do {
             let listing = try await deck.listAllWindows()
-            let windows: [String: [SessionWindow]] = sessions.reduce(into: [:]) { result, session in
-                if let name = session.tmuxSession, let windows = listing.windows[name] {
-                    result[session.id] = windows
-                }
-            }
-            if windows != windowsBySession {
-                windowsBySession = windows
-                shownChanged()
-            }
+            windowsByTmuxSession = listing.windows
+            rekeyWindows()
             followShownWindow(listed: listing.currentWindows)
         } catch {
             logger.error("list-windows failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The last listing keyed back from tmux session name to agent-deck id,
+    /// against the sessions as they are now, and which of them tmux lacks.
+    /// A result with nothing new leaves the rows alone; the shown pane's
+    /// selection follows its view either way.
+    private func rekeyWindows() {
+        let windows: [String: [SessionWindow]] = sessions.reduce(into: [:]) { result, session in
+            if let name = session.tmuxSession, let windows = windowsByTmuxSession[name] {
+                result[session.id] = windows
+            }
+        }
+        attention.tmuxGone(Set(sessions.map(\.id)).subtracting(windows.keys))
+        if windows != windowsBySession {
+            windowsBySession = windows
+            shownChanged()
         }
     }
 
@@ -306,13 +318,17 @@ final class DeckModel {
     private func loadSessions() async {
         do {
             // Without the group order (a failed `group list`) the last one
-            // still keeps each group's rows together.
+            // still keeps each group's rows together. The windows alongside:
+            // attention hears the list against what tmux has now, with no
+            // await between the rows landing and it hearing them.
             async let listed = deck.list()
             async let groupOrder = deck.groups()
+            async let windows: Void = loadAllWindows()
             let all = try await listed
             if let groups = try? await groupOrder {
                 deckGroups = groups
             }
+            await windows
             let previous = hasListed ? sessions : nil
             archivedSessions = all.filter(\.archived)
             sessions = DeckSession.inDeckOrder(all.filter { !$0.archived }, groupPaths: deckGroups.map(\.path))
@@ -320,12 +336,12 @@ final class DeckModel {
             hasListed = true
             recover(.list)
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
+            rekeyWindows()
             attention.listed(sessions, previous: previous)
             inbox.listed(sessions)
             sideTerminals.listed(sessions)
             inbox.start()
             dropStalePanes(loneViews: await deck.loneViews())
-            await loadAllWindows()
             if let (sessionID, windowID) = pendingReveal {
                 pendingReveal = nil
                 reveal(sessionID: sessionID, windowID: windowID)
@@ -911,7 +927,7 @@ final class DeckModel {
                 logger.info("follower live after \(cursor, privacy: .public)")
                 for try await frame in frames {
                     cursor = max(cursor, frame.cursor)
-                    apply(frame)
+                    await apply(frame)
                 }
                 // The stream ends without an error only when this task is cancelled.
                 return
@@ -993,7 +1009,7 @@ final class DeckModel {
         fail(.daemon, "The notify daemon is installed but has not started publishing statuses")
     }
 
-    private func apply(_ frame: BusFrame) {
+    private func apply(_ frame: BusFrame) async {
         // `--kind session.status` also matches dot-prefixed sub-kinds agent-deck may add.
         guard frame.kind == "session.status", let change = frame.data else { return }
         guard let index = sessions.firstIndex(where: { $0.id == frame.sessionID }) else {
@@ -1009,7 +1025,17 @@ final class DeckModel {
         // The bus carries no substate, and the old one described the previous status.
         sessions[index].substate = nil
         logger.info("status \(frame.sessionID, privacy: .public) -> \(change.to.rawValue, privacy: .public)")
-        attention.statusChanged(sessions[index], from: from, to: change.to)
+        if change.to == .error {
+            // Whether tmux still has the session decides what its error
+            // means (`AttentionState.tmuxGone`), and the last listing may
+            // predate a server that just quit. Inline, so frames keep
+            // their order.
+            await loadAllWindows()
+        }
+        // A list landing meanwhile may have replaced the rows; one that
+        // moved this row on has reported it itself.
+        guard let row = sessions.first(where: { $0.id == frame.sessionID }), row.status == change.to else { return }
+        attention.statusChanged(row, from: from, to: change.to)
         if change.to == .stopped { dropStalePanes() }
     }
 

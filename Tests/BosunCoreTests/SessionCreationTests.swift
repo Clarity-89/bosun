@@ -40,6 +40,14 @@ import Testing
         #expect(!plain.contains("--skip-hooks"))
     }
 
+    @Test(arguments: [true, false])
+    func sandboxIsAskedForOnlyWhenChosen(sandbox: Bool) {
+        let arguments = AgentDeckCLI.addArguments(NewSessionRequest(
+            directory: "/tmp/p", command: "claude", sandbox: sandbox
+        ))
+        #expect(arguments.contains("--sandbox") == sandbox)
+    }
+
     @Test func quickSessionLeavesTheTitleToAgentDeck() {
         let arguments = AgentDeckCLI.addArguments(NewSessionRequest(
             title: "ignored", directory: "/tmp/p", command: "omp", quick: true

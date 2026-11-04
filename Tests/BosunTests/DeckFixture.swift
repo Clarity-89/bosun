@@ -61,8 +61,16 @@ final class DeckFixture {
     let defaults = MemoryDefaults()
     let model: DeckModel
 
-    /// `groups` defaults to the sessions' groups in order of appearance.
-    init(sessions: [DeckSession] = [], groups: [String]? = nil, windows: [String: [SessionWindow]] = [:]) {
+    /// `groups` defaults to the sessions' groups in order of appearance;
+    /// `windows` to one window in each session's tmux session, as agent-deck
+    /// starts them.
+    init(sessions: [DeckSession] = [], groups: [String]? = nil, windows: [String: [SessionWindow]]? = nil) {
+        let windows = windows ?? Dictionary(
+            sessions.enumerated().compactMap { offset, session in
+                session.tmuxSession.map { ($0, [window("@\(offset + 1)", index: 0)]) }
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
         deck.sessions = sessions
         var seen = Set<String>()
         deck.groups = (groups ?? sessions.map(\.group).filter { seen.insert($0).inserted })
