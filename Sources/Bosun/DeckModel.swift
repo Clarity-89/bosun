@@ -318,7 +318,8 @@ final class DeckModel {
             }
             let previous = hasListed ? sessions : nil
             archivedSessions = all.filter(\.archived)
-            sessions = DeckSession.inDeckOrder(all.filter { !$0.archived }, groupPaths: deckGroups.map(\.path))
+            let current = DeckSession.inDeckOrder(all.filter { !$0.archived }, groupPaths: deckGroups.map(\.path))
+            sessions = current
             hasLoadedSessions = true
             hasListed = true
             recover(.list)
@@ -327,9 +328,10 @@ final class DeckModel {
             sideTerminals.listed(sessions)
             inbox.start()
             dropStalePanes(loneViews: await deck.loneViews())
-            // After the windows, which say what tmux still has.
+            // After the windows, which say what tmux still has. `current`,
+            // not `sessions`: a frame landing meanwhile is its own news.
             await loadAllWindows()
-            attention.listed(sessions, previous: previous)
+            attention.listed(current, previous: previous)
             if let (sessionID, windowID) = pendingReveal {
                 pendingReveal = nil
                 reveal(sessionID: sessionID, windowID: windowID)

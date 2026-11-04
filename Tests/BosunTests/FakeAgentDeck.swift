@@ -32,6 +32,9 @@ final class FakeAgentDeck: AgentDeck {
     /// Holds every `session remove` until `releaseDelete()`, for what
     /// arrives while one runs.
     var holdsDelete = false
+    /// Holds every `list-windows` until `releaseWindows()`, for what
+    /// arrives while the list waits on tmux.
+    var holdsWindows = false
     /// The repository each worktree session came from, by session ID, as
     /// `worktree info` answers.
     var worktreeRepositories: [String: String] = [:]
@@ -47,6 +50,7 @@ final class FakeAgentDeck: AgentDeck {
     private var following: AsyncThrowingStream<BusFrame, any Error>.Continuation?
     private var listWaiters: [CheckedContinuation<Void, Never>] = []
     private var deleteWaiters: [CheckedContinuation<Void, Never>] = []
+    private var windowWaiters: [CheckedContinuation<Void, Never>] = []
     private var added = 0
 
     /// The recorded lines that are `name` or start with it.
@@ -72,6 +76,12 @@ final class FakeAgentDeck: AgentDeck {
         holdsDelete = false
         for waiter in deleteWaiters { waiter.resume() }
         deleteWaiters = []
+    }
+
+    func releaseWindows() {
+        holdsWindows = false
+        for waiter in windowWaiters { waiter.resume() }
+        windowWaiters = []
     }
 
     /// Records the line and throws the failure set for its command.
@@ -231,6 +241,9 @@ final class FakeAgentDeck: AgentDeck {
 
     func listAllWindows() async throws -> WindowListing {
         try record("list-windows")
+        if holdsWindows {
+            await withCheckedContinuation { windowWaiters.append($0) }
+        }
         return windows
     }
 
