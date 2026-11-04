@@ -113,6 +113,12 @@ struct AttentionState: Equatable, Sendable {
     /// is their end, which you asked for: their pane vanishes from under a
     /// waiting session, an error to agent-deck for a moment.
     var deleting: Set<String> = []
+    /// Sessions tmux no longer has a session for. agent-deck calls one of
+    /// them an error when its harness left neither an exit code nor a hook
+    /// to say otherwise, omp and a plain shell among them, and a tmux
+    /// server quitting makes one of every session at once; there is
+    /// nothing in it to go and look at, so its error ends it like a stop.
+    var tmuxGone: Set<String> = []
 
     /// A polled omp pane and the agent-deck session it is in.
     private struct PolledPane: Equatable, Sendable {
@@ -133,18 +139,12 @@ struct AttentionState: Equatable, Sendable {
     /// A status change agent-deck reports. A turn ending (running to waiting)
     /// or a failure makes the session unread; the next turn, a stop, or the
     /// TUI acknowledging (waiting to idle) clears it. A session with omp in
-    /// its panes takes turns from the panes instead. An error in a session
-    /// whose tmux session is gone (`tmuxGone`) ends it like a stop:
-    /// agent-deck calls a vanished session an error when its harness left
-    /// neither an exit code nor a hook to say otherwise, omp and a plain
-    /// shell among them, and a tmux server quitting makes one of every
-    /// session at once; there is nothing in it to go and look at.
-    mutating func statusChanged(
-        sessionID: String, from: SessionStatus?, to: SessionStatus, tmuxGone: Bool = false, at now: Date
-    ) -> [AttentionEvent] {
+    /// its panes takes turns from the panes instead; one tmux no longer has
+    /// (`tmuxGone`) ends on an error.
+    mutating func statusChanged(sessionID: String, from: SessionStatus?, to: SessionStatus, at now: Date) -> [AttentionEvent] {
         let key = AttentionKey(sessionID: sessionID, paneID: nil)
         switch to {
-        case .error where tmuxGone:
+        case .error where tmuxGone.contains(sessionID):
             unread[key] = nil
         case .error where from != .error:
             return setUnread(key, Unread(kind: .failed, since: now), notify: true)
@@ -164,27 +164,23 @@ struct AttentionState: Equatable, Sendable {
     /// status changes since the last list, a Claude or Codex question menu
     /// opening, sessions gone. The first list after a launch (`previous` nil)
     /// marks, quietly, what turned waiting or failed while Bosun was closed;
-    /// the very first one marks nothing. `tmuxGone` names the sessions in
-    /// error whose tmux session tmux no longer has, failures in name only.
-    mutating func listed(
-        _ sessions: [DeckSession], previous: [DeckSession]?, tmuxGone: Set<String> = [], at now: Date
-    ) -> [AttentionEvent] {
+    /// the very first one marks nothing.
+    mutating func listed(_ sessions: [DeckSession], previous: [DeckSession]?, at now: Date) -> [AttentionEvent] {
         let known = Set(sessions.map(\.id))
         unread = unread.filter { known.contains($0.key.sessionID) }
         var events: [AttentionEvent] = []
         let before = Dictionary((previous ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for session in sessions {
             let key = AttentionKey(sessionID: session.id, paneID: nil)
-            let gone = tmuxGone.contains(session.id)
             if let old = before[session.id] {
                 if old.status != session.status {
-                    events += statusChanged(sessionID: session.id, from: old.status, to: session.status, tmuxGone: gone, at: now)
+                    events += statusChanged(sessionID: session.id, from: old.status, to: session.status, at: now)
                 }
                 if session.asksInAgentDeck, !old.asksInAgentDeck {
                     events += setUnread(key, Unread(kind: .asks, since: now), notify: true)
                 }
             } else if previous == nil, let observedUntil, let active = session.lastActivityAt, active > observedUntil,
-                      session.status == .waiting || (session.status == .error && !gone) {
+                      session.status == .waiting || (session.status == .error && !tmuxGone.contains(session.id)) {
                 events += setUnread(key, Unread(kind: session.status == .error ? .failed : .finished, since: now), notify: false)
             }
         }

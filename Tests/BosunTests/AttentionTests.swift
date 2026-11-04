@@ -88,7 +88,8 @@ extension AttentionState {
     @Test func anErrorInASessionTmuxNoLongerHasIsNoFailure() {
         var state = AttentionState()
         _ = state.statusChanged(sessionID: "a", from: .running, to: .waiting, at: t0)
-        #expect(state.statusChanged(sessionID: "a", from: .waiting, to: .error, tmuxGone: true, at: t0).isEmpty)
+        state.tmuxGone = ["a"]
+        #expect(state.statusChanged(sessionID: "a", from: .waiting, to: .error, at: t0).isEmpty)
         #expect(state.unreadCount == 0)
     }
 
@@ -272,6 +273,7 @@ extension AttentionState {
         var state = AttentionState()
         #expect(state.listed([session("a", status: .waiting, active: t0)], previous: nil, at: t0).isEmpty)
         var relaunched = AttentionState(snapshot: state.snapshot)
+        relaunched.tmuxGone = ["e"]
         let later = t0.addingTimeInterval(3600)
         let events = relaunched.listed([
             session("a", status: .waiting, active: t0.addingTimeInterval(60)),
@@ -279,7 +281,7 @@ extension AttentionState {
             session("c", status: .waiting, active: t0.addingTimeInterval(-60)),
             session("d", status: .running, active: t0.addingTimeInterval(60)),
             session("e", status: .error, active: t0.addingTimeInterval(60)),
-        ], previous: nil, tmuxGone: ["e"], at: later)
+        ], previous: nil, at: later)
         #expect(events.map(\.key.sessionID) == ["a", "b"])
         #expect(events.map(\.unread.kind) == [.finished, .failed])
         #expect(events.map(\.notify) == [false, false])
@@ -291,9 +293,8 @@ extension AttentionState {
         var state = AttentionState()
         let before = [session("a", status: .running), session("b", status: .running)]
         _ = state.listed(before, previous: nil, at: t0)
-        let events = state.listed(
-            [session("a", status: .error), session("b", status: .error)], previous: before, tmuxGone: ["a"], at: t0
-        )
+        state.tmuxGone = ["a"]
+        let events = state.listed([session("a", status: .error), session("b", status: .error)], previous: before, at: t0)
         #expect(events.map(\.key.sessionID) == ["b"])
     }
 
