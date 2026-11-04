@@ -22,6 +22,9 @@ public struct NewSessionRequest: Sendable, Equatable {
     public var runsWorktreeSetup: Bool
     /// A quick session: agent-deck generates the title.
     public var quick: Bool
+    /// Runs the command in agent-deck's Docker sandbox, with the directory
+    /// mounted at `/workspace`; the image has to hold the command.
+    public var sandbox: Bool
 
     public init(
         title: String = "",
@@ -31,7 +34,8 @@ public struct NewSessionRequest: Sendable, Equatable {
         worktreeBranch: String? = nil,
         createBranch: Bool = false,
         runsWorktreeSetup: Bool = true,
-        quick: Bool = false
+        quick: Bool = false,
+        sandbox: Bool = false
     ) {
         self.title = title
         self.directory = directory
@@ -41,6 +45,7 @@ public struct NewSessionRequest: Sendable, Equatable {
         self.createBranch = createBranch
         self.runsWorktreeSetup = runsWorktreeSetup
         self.quick = quick
+        self.sandbox = sandbox
     }
 }
 
@@ -167,6 +172,9 @@ extension AgentDeckCLI {
         let command = request.command.trimmingCharacters(in: .whitespaces)
         if !command.isEmpty {
             arguments += ["-c", command]
+        }
+        if request.sandbox {
+            arguments.append("--sandbox")
         }
         if let branch = request.worktreeBranch?.trimmingCharacters(in: .whitespaces), !branch.isEmpty {
             arguments += ["-w", branch]
