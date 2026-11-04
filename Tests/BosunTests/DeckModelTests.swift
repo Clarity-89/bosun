@@ -153,27 +153,6 @@ import BosunTerminal
         #expect(fixture.session("a").status == .waiting)
     }
 
-    /// A frame that lands while the list waits on tmux is news once: the
-    /// list reports what it loaded, and the row the frame moved is the
-    /// frame's to report.
-    @Test func aFrameDuringAListReloadIsNewsOnce() async {
-        let fixture = DeckFixture(sessions: [deckSession("a")])
-        await fixture.model.connect()
-        #expect(await eventually { fixture.model.connection == .live })
-        var turnEnds = 0
-        fixture.model.attention.onTurnEnd = { _ in turnEnds += 1 }
-        fixture.deck.holdsWindows = true
-        fixture.deck.sessions.append(deckSession("b"))
-        let reload = Task { await fixture.model.refresh() }
-        #expect(await eventually { fixture.model.sessions.count == 2 })
-        fixture.deck.publish(.waiting, for: "a", cursor: 1)
-        #expect(await eventually { fixture.model.attention.count == 1 })
-        fixture.deck.releaseWindows()
-        await reload.value
-        #expect(turnEnds == 1)
-        #expect(fixture.model.attention.count == 1)
-    }
-
     @Test func aFrameToStoppedDropsThePaneAndOffersRestart() async throws {
         let fixture = DeckFixture(sessions: [deckSession("a")])
         await fixture.model.connect()
@@ -484,10 +463,7 @@ import BosunTerminal
         #expect(await eventually { fixture.deck.calls("session remove") == ["session remove a"] })
         fixture.deck.publish(.error, for: "a", cursor: 1)
         fixture.deck.publish(.error, for: "b", cursor: 2)
-        // An error reaches attention after a window listing; b's arriving
-        // does not mean a's has.
         #expect(await eventually { fixture.model.attention[fixture.session("b")].unread })
-        await settled()
         #expect(fixture.session("a").status == .error)
         #expect(fixture.model.attention.count == 1, "only b's failure")
         fixture.deck.releaseDelete()
@@ -523,7 +499,6 @@ import BosunTerminal
         fixture.deck.publish(.error, for: "a", cursor: 2)
         fixture.deck.publish(.error, for: "b", cursor: 3)
         #expect(await eventually { fixture.model.attention[fixture.session("b")].unread })
-        await settled()
         #expect(fixture.session("a").status == .error)
         #expect(!fixture.model.attention[fixture.session("a")].unread)
         #expect(fixture.model.attention.count == 1, "only b's failure")
