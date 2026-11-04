@@ -23,7 +23,9 @@ public struct NewSessionRequest: Sendable, Equatable {
     /// A quick session: agent-deck generates the title.
     public var quick: Bool
     /// Runs the command in agent-deck's Docker sandbox, with the directory
-    /// mounted at `/workspace`; the image has to hold the command.
+    /// mounted at `/workspace`. Needs a command the image holds: the
+    /// container runs it alone, and dies at start without one, leaving
+    /// itself behind.
     public var sandbox: Bool
 
     public init(
