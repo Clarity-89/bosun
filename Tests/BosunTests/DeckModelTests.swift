@@ -476,10 +476,7 @@ import BosunTerminal
     /// from under a waiting session before the row says stopped. That is the
     /// delete you asked for, not news; another session's failure still is.
     @Test func aFailureWhileTheSessionIsDeletedIsNoNews() async {
-        let fixture = DeckFixture(
-            sessions: [deckSession("a"), deckSession("b")],
-            windows: ["agentdeck_a": [window("@1", index: 0)], "agentdeck_b": [window("@2", index: 0)]]
-        )
+        let fixture = DeckFixture(sessions: [deckSession("a"), deckSession("b")])
         await fixture.model.connect()
         #expect(await eventually { fixture.model.connection == .live })
         fixture.deck.holdsDelete = true
@@ -498,7 +495,7 @@ import BosunTerminal
     /// A delete agent-deck refused leaves the session, and its failures are
     /// news again.
     @Test func aSessionWhoseDeleteFailedIsHeardAgain() async {
-        let fixture = DeckFixture(sessions: [deckSession("a")], windows: ["agentdeck_a": [window("@1", index: 0)]])
+        let fixture = DeckFixture(sessions: [deckSession("a")])
         await fixture.model.connect()
         #expect(await eventually { fixture.model.connection == .live })
         fixture.deck.failures["session remove"] = AgentDeckCLIError.reported("state.db is locked")
