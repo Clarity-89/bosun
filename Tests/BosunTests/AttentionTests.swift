@@ -287,8 +287,9 @@ extension AttentionState {
         #expect(events.map(\.notify) == [false, false])
     }
 
-    /// After a reboot the first list finds every session in error, none of
-    /// them with a tmux session to look at.
+    /// A list, not a frame, can be what reports the errors a tmux server
+    /// quitting left: one without its tmux session is no news there either,
+    /// and one tmux still has is.
     @Test func listedErrorsWithoutTheirTmuxSessionAreNoNews() {
         var state = AttentionState()
         let before = [session("a", status: .running), session("b", status: .running)]

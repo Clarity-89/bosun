@@ -113,11 +113,14 @@ struct AttentionState: Equatable, Sendable {
     /// is their end, which you asked for: their pane vanishes from under a
     /// waiting session, an error to agent-deck for a moment.
     var deleting: Set<String> = []
-    /// Sessions tmux no longer has a session for. agent-deck calls one of
-    /// them an error when its harness left neither an exit code nor a hook
-    /// to say otherwise, omp and a plain shell among them, and a tmux
-    /// server quitting makes one of every session at once; there is
-    /// nothing in it to go and look at, so its error ends it like a stop.
+    /// Sessions tmux had no session for at the last listing. agent-deck
+    /// calls one of them an error when its harness left neither an exit
+    /// code nor a hook to say otherwise, omp and a plain shell among them,
+    /// and a tmux server quitting makes one of every session at once; with
+    /// nothing in it to go and look at, its error ends it like a stop. Only
+    /// errors read it, unlike `deleting`: a listing can trail a session's
+    /// new tmux session by a poll, and a turn ending there is still news,
+    /// where an error has tmux asked again first.
     var tmuxGone: Set<String> = []
 
     /// A polled omp pane and the agent-deck session it is in.
@@ -180,8 +183,8 @@ struct AttentionState: Equatable, Sendable {
                     events += setUnread(key, Unread(kind: .asks, since: now), notify: true)
                 }
             } else if previous == nil, let observedUntil, let active = session.lastActivityAt, active > observedUntil,
-                      session.status == .waiting || (session.status == .error && !tmuxGone.contains(session.id)) {
-                events += setUnread(key, Unread(kind: session.status == .error ? .failed : .finished, since: now), notify: false)
+                      let kind = missedKind(of: session) {
+                events += setUnread(key, Unread(kind: kind, since: now), notify: false)
             }
         }
         observedUntil = now
@@ -294,6 +297,16 @@ struct AttentionState: Equatable, Sendable {
 
     private func hasOmp(_ sessionID: String) -> Bool {
         panes.values.contains { $0.sessionID == sessionID }
+    }
+
+    /// What a session found in this status while Bosun was closed has
+    /// waiting for you: a turn's end, or a failure in a session tmux has.
+    private func missedKind(of session: DeckSession) -> AttentionKind? {
+        switch session.status {
+        case .waiting: .finished
+        case .error where !tmuxGone.contains(session.id): .failed
+        default: nil
+        }
     }
 
     private mutating func setUnread(_ key: AttentionKey, _ item: Unread, notify: Bool) -> [AttentionEvent] {
