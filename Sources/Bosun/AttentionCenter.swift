@@ -68,12 +68,15 @@ final class AttentionCenter {
 
     // MARK: What happened
 
-    func statusChanged(_ session: DeckSession, from: SessionStatus?, to: SessionStatus) {
-        apply(in: [session]) { $0.statusChanged(sessionID: session.id, from: from, to: to, at: .now) }
+    /// `tmuxGone`: the session's tmux session is no longer there, so an
+    /// error is one in name only.
+    func statusChanged(_ session: DeckSession, from: SessionStatus?, to: SessionStatus, tmuxGone: Bool = false) {
+        apply(in: [session]) { $0.statusChanged(sessionID: session.id, from: from, to: to, tmuxGone: tmuxGone, at: .now) }
     }
 
-    func listed(_ sessions: [DeckSession], previous: [DeckSession]?) {
-        apply(in: sessions) { $0.listed(sessions, previous: previous, at: .now) }
+    /// `tmuxGone`: the sessions in error whose tmux session is no longer there.
+    func listed(_ sessions: [DeckSession], previous: [DeckSession]?, tmuxGone: Set<String> = []) {
+        apply(in: sessions) { $0.listed(sessions, previous: previous, tmuxGone: tmuxGone, at: .now) }
     }
 
     /// One poll of the panes, matched to sessions by tmux session name.

@@ -82,6 +82,16 @@ extension AttentionState {
         #expect(state.statusChanged(sessionID: "a", from: .error, to: .error, at: t0).isEmpty)
     }
 
+    /// A tmux server quitting makes agent-deck call every omp and shell
+    /// session failed; with nothing left to look at, that ends them like a
+    /// stop, a turn still unread included.
+    @Test func anErrorInASessionTmuxNoLongerHasIsNoFailure() {
+        var state = AttentionState()
+        _ = state.statusChanged(sessionID: "a", from: .running, to: .waiting, at: t0)
+        #expect(state.statusChanged(sessionID: "a", from: .waiting, to: .error, tmuxGone: true, at: t0).isEmpty)
+        #expect(state.unreadCount == 0)
+    }
+
     /// The TUI acknowledging means you saw it there; a shell's prompt
     /// returning, or a turn agent-deck already counts as seen, is not news.
     @Test func acknowledgedOrIdleTurnsAreNotUnread() {
@@ -268,10 +278,23 @@ extension AttentionState {
             session("b", status: .error, active: t0.addingTimeInterval(60)),
             session("c", status: .waiting, active: t0.addingTimeInterval(-60)),
             session("d", status: .running, active: t0.addingTimeInterval(60)),
-        ], previous: nil, at: later)
+            session("e", status: .error, active: t0.addingTimeInterval(60)),
+        ], previous: nil, tmuxGone: ["e"], at: later)
         #expect(events.map(\.key.sessionID) == ["a", "b"])
         #expect(events.map(\.unread.kind) == [.finished, .failed])
         #expect(events.map(\.notify) == [false, false])
+    }
+
+    /// After a reboot the first list finds every session in error, none of
+    /// them with a tmux session to look at.
+    @Test func listedErrorsWithoutTheirTmuxSessionAreNoNews() {
+        var state = AttentionState()
+        let before = [session("a", status: .running), session("b", status: .running)]
+        _ = state.listed(before, previous: nil, at: t0)
+        let events = state.listed(
+            [session("a", status: .error), session("b", status: .error)], previous: before, tmuxGone: ["a"], at: t0
+        )
+        #expect(events.map(\.key.sessionID) == ["b"])
     }
 
     @Test func goneSessionsLeaveNothingUnread() {

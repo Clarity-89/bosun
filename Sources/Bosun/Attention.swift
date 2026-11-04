@@ -133,10 +133,19 @@ struct AttentionState: Equatable, Sendable {
     /// A status change agent-deck reports. A turn ending (running to waiting)
     /// or a failure makes the session unread; the next turn, a stop, or the
     /// TUI acknowledging (waiting to idle) clears it. A session with omp in
-    /// its panes takes turns from the panes instead.
-    mutating func statusChanged(sessionID: String, from: SessionStatus?, to: SessionStatus, at now: Date) -> [AttentionEvent] {
+    /// its panes takes turns from the panes instead. An error in a session
+    /// whose tmux session is gone (`tmuxGone`) ends it like a stop:
+    /// agent-deck calls a vanished session an error when its harness left
+    /// neither an exit code nor a hook to say otherwise, omp and a plain
+    /// shell among them, and a tmux server quitting makes one of every
+    /// session at once; there is nothing in it to go and look at.
+    mutating func statusChanged(
+        sessionID: String, from: SessionStatus?, to: SessionStatus, tmuxGone: Bool = false, at now: Date
+    ) -> [AttentionEvent] {
         let key = AttentionKey(sessionID: sessionID, paneID: nil)
         switch to {
+        case .error where tmuxGone:
+            unread[key] = nil
         case .error where from != .error:
             return setUnread(key, Unread(kind: .failed, since: now), notify: true)
         case .waiting where from == .running && !hasOmp(sessionID):
@@ -155,23 +164,27 @@ struct AttentionState: Equatable, Sendable {
     /// status changes since the last list, a Claude or Codex question menu
     /// opening, sessions gone. The first list after a launch (`previous` nil)
     /// marks, quietly, what turned waiting or failed while Bosun was closed;
-    /// the very first one marks nothing.
-    mutating func listed(_ sessions: [DeckSession], previous: [DeckSession]?, at now: Date) -> [AttentionEvent] {
+    /// the very first one marks nothing. `tmuxGone` names the sessions in
+    /// error whose tmux session tmux no longer has, failures in name only.
+    mutating func listed(
+        _ sessions: [DeckSession], previous: [DeckSession]?, tmuxGone: Set<String> = [], at now: Date
+    ) -> [AttentionEvent] {
         let known = Set(sessions.map(\.id))
         unread = unread.filter { known.contains($0.key.sessionID) }
         var events: [AttentionEvent] = []
         let before = Dictionary((previous ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for session in sessions {
             let key = AttentionKey(sessionID: session.id, paneID: nil)
+            let gone = tmuxGone.contains(session.id)
             if let old = before[session.id] {
                 if old.status != session.status {
-                    events += statusChanged(sessionID: session.id, from: old.status, to: session.status, at: now)
+                    events += statusChanged(sessionID: session.id, from: old.status, to: session.status, tmuxGone: gone, at: now)
                 }
                 if session.asksInAgentDeck, !old.asksInAgentDeck {
                     events += setUnread(key, Unread(kind: .asks, since: now), notify: true)
                 }
             } else if previous == nil, let observedUntil, let active = session.lastActivityAt, active > observedUntil,
-                      [.waiting, .error].contains(session.status) {
+                      session.status == .waiting || (session.status == .error && !gone) {
                 events += setUnread(key, Unread(kind: session.status == .error ? .failed : .finished, since: now), notify: false)
             }
         }

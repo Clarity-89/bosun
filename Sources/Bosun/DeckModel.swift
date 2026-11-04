@@ -320,12 +320,13 @@ final class DeckModel {
             hasListed = true
             recover(.list)
             logger.info("list loaded \(self.sessions.count, privacy: .public) sessions")
-            attention.listed(sessions, previous: previous)
             inbox.listed(sessions)
             sideTerminals.listed(sessions)
             inbox.start()
             dropStalePanes(loneViews: await deck.loneViews())
+            // After the windows: they say which errors are sessions tmux no longer has.
             await loadAllWindows()
+            attention.listed(sessions, previous: previous, tmuxGone: tmuxGoneSessions)
             if let (sessionID, windowID) = pendingReveal {
                 pendingReveal = nil
                 reveal(sessionID: sessionID, windowID: windowID)
@@ -1009,8 +1010,33 @@ final class DeckModel {
         // The bus carries no substate, and the old one described the previous status.
         sessions[index].substate = nil
         logger.info("status \(frame.sessionID, privacy: .public) -> \(change.to.rawValue, privacy: .public)")
-        attention.statusChanged(sessions[index], from: from, to: change.to)
+        if change.to == .error {
+            confirmFailure(frame.sessionID, from: from)
+        } else {
+            attention.statusChanged(sessions[index], from: from, to: change.to)
+        }
         if change.to == .stopped { dropStalePanes() }
+    }
+
+    /// agent-deck calls a session whose tmux session is gone an error when
+    /// its harness left neither an exit code nor a hook to say otherwise,
+    /// omp and a plain shell among them, and a tmux server quitting makes
+    /// one of every session at once. Nothing in those failed that you could
+    /// go and look at, so only an error in a session tmux still has is
+    /// marked and told; tmux is asked fresh, as the last listing may be
+    /// from before the server went.
+    private func confirmFailure(_ sessionID: String, from: SessionStatus) {
+        Task {
+            await loadAllWindows()
+            guard let session = sessions.first(where: { $0.id == sessionID }), session.status == .error else { return }
+            attention.statusChanged(session, from: from, to: .error, tmuxGone: tmuxGoneSessions.contains(sessionID))
+        }
+    }
+
+    /// The sessions in error that the last window listing had no tmux
+    /// session for: ended, not failed.
+    private var tmuxGoneSessions: Set<String> {
+        Set(sessions.filter { $0.status == .error && windowsBySession[$0.id] == nil }.map(\.id))
     }
 
     // MARK: Attention
