@@ -484,7 +484,10 @@ import BosunTerminal
         #expect(await eventually { fixture.deck.calls("session remove") == ["session remove a"] })
         fixture.deck.publish(.error, for: "a", cursor: 1)
         fixture.deck.publish(.error, for: "b", cursor: 2)
-        #expect(await eventually { fixture.session("b").status == .error })
+        // An error reaches attention after a window listing; b's arriving
+        // does not mean a's has.
+        #expect(await eventually { fixture.model.attention[fixture.session("b")].unread })
+        await settled()
         #expect(fixture.session("a").status == .error)
         #expect(fixture.model.attention.count == 1, "only b's failure")
         fixture.deck.releaseDelete()
@@ -520,6 +523,7 @@ import BosunTerminal
         fixture.deck.publish(.error, for: "a", cursor: 2)
         fixture.deck.publish(.error, for: "b", cursor: 3)
         #expect(await eventually { fixture.model.attention[fixture.session("b")].unread })
+        await settled()
         #expect(fixture.session("a").status == .error)
         #expect(!fixture.model.attention[fixture.session("a")].unread)
         #expect(fixture.model.attention.count == 1, "only b's failure")
