@@ -598,6 +598,33 @@ import BosunTerminal
         #expect(fixture.deck.calls("send-keys").count == 1)
     }
 
+    /// The toolbar's mark follows the session on view: its directory is
+    /// read as the pane comes to it, again as its agent's turn ends, and
+    /// never for a session the pane does not show.
+    @Test func theShownSessionsWorkTreeIsReadOnShowAndTurnEnd() async throws {
+        let fixture = DeckFixture(sessions: [deckSession("a"), deckSession("b")])
+        fixture.workTreeScans.answers["/p/a"] = [" M Sources/One.swift", "?? Two.swift"]
+        await fixture.model.connect()
+        #expect(await eventually { fixture.model.connection == .live })
+        #expect(fixture.workTreeScans.asked.isEmpty)
+        _ = try await fixture.selectAndAttach("a")
+        #expect(await eventually { fixture.model.workTree["/p/a"]?.count == 2 })
+        #expect(fixture.workTreeScans.asked == ["/p/a"])
+        fixture.workTreeScans.answers["/p/a"] = []
+        fixture.deck.publish(.waiting, for: "b", cursor: 1)
+        #expect(await eventually { fixture.session("b").status == .waiting })
+        await settled()
+        #expect(fixture.workTreeScans.asked == ["/p/a"])
+        fixture.deck.publish(.waiting, for: "a", cursor: 2)
+        #expect(await eventually { fixture.model.workTree["/p/a"]?.isEmpty == true })
+        #expect(fixture.workTreeScans.asked == ["/p/a", "/p/a"])
+        // A directory outside any repository has no mark.
+        _ = try await fixture.selectAndAttach("b")
+        #expect(await eventually { fixture.workTreeScans.asked == ["/p/a", "/p/a", "/p/b"] })
+        await settled()
+        #expect(fixture.model.workTree["/p/b"] == nil)
+    }
+
     /// A new window opens in Bosun's view once the session has one, so it
     /// shows here while other clients stay on their window.
     @Test func openShellHereGoesThroughTheViewOnceThereIsOne() async throws {

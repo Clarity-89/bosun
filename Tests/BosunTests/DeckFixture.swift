@@ -52,13 +52,27 @@ final class MemoryDefaults: @MainActor Defaults {
     func set(_ value: Any?, forKey key: String) { values[key] = value }
 }
 
-/// A model on a fake agent-deck, an empty GitHub and defaults of its own.
-/// Its loops stop when the test ends, or the model would poll the fake
-/// for as long as the process runs.
+/// The work-tree scans a model asks for, and what each directory answers.
+@MainActor
+final class WorkTreeScans {
+    var answers: [String: [String]] = [:]
+    private(set) var asked: [String] = []
+
+    func scan(_ path: String) -> [String]? {
+        asked.append(path)
+        return answers[path]
+    }
+}
+
+/// A model on a fake agent-deck, an empty GitHub, defaults of its own, a
+/// to-do file under /tmp and no git. Its loops stop when the test ends, or
+/// the model would poll the fake for as long as the process runs.
 @MainActor
 final class DeckFixture {
     let deck = FakeAgentDeck()
     let defaults = MemoryDefaults()
+    let workTreeScans = WorkTreeScans()
+    let todoFile = FileManager.default.temporaryDirectory.appending(path: "bosun-tests-\(UUID().uuidString)/todo.md")
     let model: DeckModel
 
     /// `groups` defaults to the sessions' groups in order of appearance;
@@ -77,11 +91,17 @@ final class DeckFixture {
             .filter { !$0.isEmpty }
             .map { DeckGroup(path: $0, label: $0) }
         deck.windows = WindowListing(windows: windows, currentWindows: windows.compactMapValues { $0.first?.windowID })
-        model = DeckModel(deck: deck, gitHub: FakeGitHub(), defaults: defaults)
+        let scans = workTreeScans
+        model = DeckModel(
+            deck: deck, gitHub: FakeGitHub(), defaults: defaults,
+            todos: TodoStore(url: todoFile),
+            workTree: WorkTreeCenter { path in await scans.scan(path) }
+        )
     }
 
     isolated deinit {
         model.stop()
+        try? FileManager.default.removeItem(at: todoFile.deletingLastPathComponent())
     }
 
     var sessions: [DeckSession] { model.sessions }

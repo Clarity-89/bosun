@@ -20,7 +20,7 @@ enum Shortcut: CaseIterable {
     case newSession, quickSession
     case rename, restart, stop, delete
     case splitSideBySide, openInGhostty, worktreeSetup
-    case showSessions, showInbox, toggleSessionList, toggleSideTerminals, focusTerminal, focusSidebar, cheatSheet, settings
+    case showSessions, showInbox, showTodos, toggleSessionList, toggleSideTerminals, focusTerminal, focusSidebar, cheatSheet, settings
 
     enum Section: String, CaseIterable {
         case sessionList = "Session list"
@@ -32,7 +32,7 @@ enum Shortcut: CaseIterable {
         switch self {
         case .moveDown, .moveUp, .activate, .toggleGroup, .foldGroup, .unfoldGroup, .reorderUp, .reorderDown, .search: .sessionList
         case .newSession, .quickSession, .rename, .restart, .stop, .delete, .splitSideBySide, .openInGhostty, .worktreeSetup: .sessions
-        case .showSessions, .showInbox, .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .cheatSheet, .settings: .window
+        case .showSessions, .showInbox, .showTodos, .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .cheatSheet, .settings: .window
         }
     }
 
@@ -59,12 +59,13 @@ enum Shortcut: CaseIterable {
         case .worktreeSetup: "Run the worktree setup script again"
         case .showSessions: "Switch the sidebar to Sessions"
         case .showInbox: "Switch the sidebar to the Inbox"
+        case .showTodos: "Switch the sidebar to the to-do list and its agent; the keyboard goes to the agent"
         case .toggleSessionList: "Hide or show the session list"
         case .toggleSideTerminals: "Show or hide the side shells; the keyboard goes with them"
         case .focusTerminal: "Focus the terminal"
         case .focusSidebar: "Focus the session list"
         case .cheatSheet: "Show these shortcuts"
-        case .settings: "Settings: notifications and the unread count"
+        case .settings: "Settings: notifications, the unread count and the to-do agent's model"
         }
     }
 
@@ -89,7 +90,7 @@ enum Shortcut: CaseIterable {
         case .splitSideBySide: "H"
         case .worktreeSetup: "b"
         case .cheatSheet: "?"
-        case .showSessions, .showInbox, .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .settings: nil
+        case .showSessions, .showInbox, .showTodos, .toggleSessionList, .toggleSideTerminals, .focusTerminal, .focusSidebar, .settings: nil
         }
     }
 
@@ -134,6 +135,7 @@ enum Shortcut: CaseIterable {
         // Ghostty's `goto_tab`, which a single pane never performs.
         case .showSessions: KeyboardShortcut("1")
         case .showInbox: KeyboardShortcut("2")
+        case .showTodos: KeyboardShortcut("3")
         // The TUI's key for its list. No ⌘: agent-deck's tmux binding
         // already swallows ⌃Q outside its own sessions, so in Bosun's views
         // the terminal never had it.

@@ -122,6 +122,7 @@ struct AttentionSettingsView: View {
             Section("Unread count") {
                 Toggle("In the menu bar", isOn: $menuBarCount)
             }
+            TodoAgentSettings()
         }
         .formStyle(.grouped)
         .frame(width: 400)

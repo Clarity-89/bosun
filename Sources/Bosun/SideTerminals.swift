@@ -75,16 +75,9 @@ final class SideTerminals {
     }
 
     private func launch(in directory: String, at index: Int) -> TerminalPane {
-        // Smaller than the session's terminal: two of them share a narrow column.
-        let terminal = TerminalPane(command: AgentDeckCLI.userShell, environment: [:], workingDirectory: directory, fontSizeOffset: -2)
-        terminal.yieldsKeyEquivalent = { Shortcut.menuAction(for: $0) != nil }
-        terminal.onProcessExit = { [weak self, weak terminal] _ in
-            guard let self, let terminal, let pair = panes[directory], pair[index] === terminal else { return }
+        .owned(command: AgentDeckCLI.userShell, directory: directory) { [weak self] terminal, _ in
+            guard let self, let pair = panes[directory], pair[index] === terminal else { return }
             panes[directory]?[index] = nil
-            // The engine reports the end from inside its own callback, which
-            // has to return before the surface goes; so it goes after.
-            Task { terminal.teardown() }
         }
-        return terminal
     }
 }

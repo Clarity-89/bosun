@@ -54,7 +54,7 @@ struct BosunApp: App {
 }
 
 /// Keyboard focus moves between the list and the terminal only on request,
-/// so each direction gets a View menu item, beside the sidebar's two lists,
+/// so each direction gets a View menu item, beside the sidebar's three lists,
 /// hiding the list, showing the side shells and the session search.
 struct FocusCommands: Commands {
     @FocusedValue(\.sidebarFocus) private var sidebarFocus
@@ -70,6 +70,9 @@ struct FocusCommands: Commands {
                 .disabled(sidebarTab == nil)
             Button("Go to Inbox") { sidebarTab = .inbox }
                 .shortcut(.showInbox)
+                .disabled(sidebarTab == nil)
+            Button("Go to To-dos") { sidebarTab = .todos }
+                .shortcut(.showTodos)
                 .disabled(sidebarTab == nil)
             Button(sessionListVisibility == .detailOnly ? "Show Session List" : "Hide Session List") {
                 sessionListVisibility = sessionListVisibility == .detailOnly ? .all : .detailOnly

@@ -41,7 +41,7 @@ public enum Terminal {
         try result.checkSucceeded()
     }
 
-    private static func shellQuote(_ value: String) -> String {
+    static func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
