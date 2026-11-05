@@ -86,6 +86,25 @@ struct GitHubToolbarLinks: View {
     }
 }
 
+/// The shown session's uncommitted changes, beside its GitHub links: how
+/// many paths `git status` lists, each in the tooltip as git prints it.
+/// Says, does nothing: the agent or a shell commits.
+struct WorkTreeMark: View {
+    let changes: [String]
+
+    var body: some View {
+        Label {
+            Text(verbatim: "\(changes.count) changed").monospacedDigit()
+        } icon: {
+            Image(systemName: "pencil.line")
+        }
+        .labelStyle(.titleAndIcon)
+        .foregroundStyle(.secondary)
+        .help("Not committed in the session's directory:\n" + changes.joined(separator: "\n"))
+        .accessibilityLabel("\(changes.count) uncommitted changes")
+    }
+}
+
 /// Looks like a link, not a button: no hover plate, which sat badly beside
 /// the toolbar's glass, but the pointing hand and an underline under the
 /// pointer.

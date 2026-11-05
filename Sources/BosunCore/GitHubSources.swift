@@ -130,7 +130,19 @@ public enum GitRepo {
         )
     }
 
-    /// Trimmed stdout, nil on any failure.
+    /// What the work tree at `path` has that is not committed, each line as
+    /// `git status --porcelain` prints it, untracked files included; empty
+    /// when clean, nil when `path` is not in a repository or git did not
+    /// answer in time. Unlike `info` this stats every tracked file, which a
+    /// large repository makes slow, so a caller asks for one directory at a
+    /// time.
+    public static func changes(path: String) async -> [String]? {
+        guard let output = await git(path, ["status", "--porcelain", "--untracked-files=normal"]) else { return nil }
+        return output.split(separator: "\n").map(String.init)
+    }
+
+    /// Stdout without its final newline, nil on any failure. Spaces stay:
+    /// a porcelain line's first column may be one.
     private static func git(_ path: String, _ arguments: [String]) async -> String? {
         guard let executable = try? AgentDeckCLI.executablePath(named: "git") else { return nil }
         var environment = AgentDeckCLI.childEnvironment(binaryDirectory: nil, inherited: ProcessInfo.processInfo.environment)
@@ -139,7 +151,6 @@ public enum GitRepo {
         guard let result = try? await Subprocess.run(
             executable: executable, arguments: ["-C", path] + arguments, environment: environment, timeout: .seconds(5)
         ), result.succeeded else { return nil }
-        let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return output.isEmpty ? nil : output
+        return result.stdout.trimmingCharacters(in: .newlines)
     }
 }

@@ -124,6 +124,9 @@ struct MainWindowView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
+                    if let changes = model.workTree[selected.path], !changes.isEmpty {
+                        WorkTreeMark(changes: changes)
+                    }
                     GitHubToolbarLinks(github: github)
                 }
                 // In a grouping of their own, apart from the actions beside

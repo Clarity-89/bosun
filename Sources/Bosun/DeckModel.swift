@@ -52,6 +52,8 @@ final class DeckModel {
     let inbox: InboxCenter
     /// Two shells in each session's directory, beside its terminal.
     let sideTerminals = SideTerminals()
+    /// The shown session's uncommitted changes, for the toolbar.
+    let workTree: WorkTreeCenter
     /// The session list's folds, search, Open filter and sort.
     let sessionList: SessionList
     /// Counts notification clicks, so the window puts the keyboard in the
@@ -103,18 +105,23 @@ final class DeckModel {
     /// keyboard goes into the terminal once its attach lands.
     @ObservationIgnored private var focusOnAttach: String?
 
-    /// `shared` runs on the real agent-deck, GitHub and defaults; a test
-    /// gives fakes.
-    init(deck: any AgentDeck, gitHub: any GitHubClient, defaults: any Defaults) {
+    /// `shared` runs on the real agent-deck, GitHub, defaults and git; a
+    /// test gives fakes.
+    init(deck: any AgentDeck, gitHub: any GitHubClient, defaults: any Defaults, workTree: WorkTreeCenter = WorkTreeCenter()) {
         self.deck = deck
         self.defaults = defaults
+        self.workTree = workTree
         tab = SidebarTab(rawValue: defaults.string(forKey: "sidebarTab") ?? "") ?? .sessions
         attention = AttentionCenter(defaults: defaults)
         inbox = InboxCenter(gitHub: gitHub, defaults: defaults)
         sessionList = SessionList(defaults: defaults)
         // A turn is when an agent pushes, or opens or merges a pull request;
-        // the 5 min round would show it late.
-        attention.onTurnEnd = { [inbox] session in inbox.recheck(session) }
+        // the 5 min round would show it late. It is also when it has changed
+        // files, which the toolbar shows for the session on view.
+        attention.onTurnEnd = { [inbox, workTree, weak self] session in
+            inbox.recheck(session)
+            if session.id == self?.shownSessionID { workTree.rescan(session.path) }
+        }
     }
 
     var isRefreshing: Bool { refreshTask != nil }
@@ -211,10 +218,13 @@ final class DeckModel {
         }
         attention.stop()
         inbox.stop()
+        workTree.stop()
     }
 
     /// One `list --json` at a time: it runs a status pass, and a slower call
-    /// finishing last must not overwrite a newer snapshot.
+    /// finishing last must not overwrite a newer snapshot. The shown
+    /// session's work tree is read again with each: files change under
+    /// your own hands too, with no turn to end.
     func refresh() async {
         if let refreshTask {
             return await refreshTask.value
@@ -223,6 +233,13 @@ final class DeckModel {
         refreshTask = task
         await task.value
         refreshTask = nil
+        rescanWorkTree()
+    }
+
+    /// The shown session's uncommitted changes, read anew.
+    private func rescanWorkTree() {
+        guard let path = paneSession?.path, !path.isEmpty else { return }
+        workTree.rescan(path)
     }
 
     /// The session list and GitHub, together.
@@ -379,13 +396,14 @@ final class DeckModel {
     }
 
     /// Changes the session the pane shows. The terminal leaving yields its
-    /// window's size while hidden.
+    /// window's size while hidden; the toolbar reads the newcomer's work tree.
     private func show(_ sessionID: String?) {
         guard sessionID != shownSessionID else { return }
         focusOnAttach = nil
         if let hidden = attachedPane { yieldSize(of: hidden) }
         shownSessionID = sessionID
         shownChanged()
+        rescanWorkTree()
     }
 
     /// Attention hears what the pane shows: after a selection, a shown
