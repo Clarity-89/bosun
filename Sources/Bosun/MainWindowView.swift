@@ -41,7 +41,7 @@ struct MainWindowView: View {
                     InboxSidebar(inbox: model.inbox, selection: $inboxSelection)
                         .focused($sidebarFocus, equals: .list)
                 case .todos:
-                    TodoPanel(model: model)
+                    TodoPanel(todos: model.todos, agent: model.todoAgent)
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -65,16 +65,6 @@ struct MainWindowView: View {
                 }
             }
         }
-        // Into the Inbox list, never left in a terminal out of sight; into
-        // the to-do agent, there to be asked. Back in Sessions, Show Session
-        // puts it in the terminal.
-        .onChange(of: model.tab) {
-            switch model.tab {
-            case .inbox: Task { sidebarFocus = .list }
-            case .todos: model.todoAgent.focus()
-            case .sessions: break
-            }
-        }
         // The keyboard follows the list, as ⌃Q in the TUI goes back to its
         // list: into it as it shows, into the terminal as it hides.
         .onChange(of: columnVisibility) { _, visibility in
@@ -94,25 +84,16 @@ struct MainWindowView: View {
         // A closure, not `focusSidebar` itself: Swift 6.3's IRGen aborts on
         // the thunk for a main-actor method passed as a binding's setter.
         .focusedSceneValue(\.sidebarFocus, Binding(get: { sidebarFocus }, set: { focusSidebar($0) }))
-        // Into the list shown: the Inbox covers the terminal the keyboard may
-        // be in. The To-dos take it themselves, once a hidden sidebar is back.
-        .focusedSceneValue(\.sidebarTab, Binding(get: { model.tab }, set: { tab in
-            model.tab = tab
-            if tab != .todos {
-                focusSidebar(.list)
-            } else if columnVisibility == .detailOnly {
-                columnVisibility = .all
-            }
-        }))
-        .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab == .inbox ? nil : $terminalFocusRequest)
+        // The menu's Go to Sessions, Inbox and To-dos.
+        .focusedSceneValue(\.sidebarTab, Binding(get: { model.tab }, set: { show($0) }))
+        .focusedSceneValue(\.terminalFocusRequest, model.attachedPane == nil || model.tab.coversPane ? nil : $terminalFocusRequest)
         .focusedSceneValue(\.sessionListVisibility, $columnVisibility)
         .focusedSceneValue(\.sideTerminalsShown, model.paneSession == nil ? nil : Binding(get: { sideTerminalsShown }, set: { shown in
             if shown != sideTerminalsShown { toggleSideTerminals() }
         }))
         .navigationTitle(titleText)
         .toolbar {
-            // The Inbox covers the session; the To-dos sit beside it.
-            if model.tab != .inbox, let selected = model.selectedSession {
+            if !model.tab.coversPane, let selected = model.selectedSession {
                 let github = model.inbox[selected]
                 // The editor, then what to ask the agent for, then what it
                 // has made: the order the work goes in.
@@ -190,6 +171,19 @@ struct MainWindowView: View {
         model.sideTerminals.panes[session.path]?[0]?.focusTerminal()
     }
 
+    /// A tab chosen, in the picker or by its shortcut, which brings a hidden
+    /// sidebar back. The keyboard goes into the list shown, never left in a
+    /// terminal out of sight under the Inbox, or into the to-do agent, there
+    /// to be asked; Show Session puts it back in the terminal.
+    private func show(_ tab: SidebarTab) {
+        model.tab = tab
+        if columnVisibility == .detailOnly { columnVisibility = .all }
+        switch tab {
+        case .sessions, .inbox: Task { sidebarFocus = .list }
+        case .todos: model.todoAgent.focus()
+        }
+    }
+
     /// The menu bar's side of `sidebarFocus`, for Focus Sidebar and Filter
     /// Sessions: a hidden list comes back first, and the search lies under
     /// the Sessions tab.
@@ -226,7 +220,7 @@ struct MainWindowView: View {
     /// The sidebar's three lists, and Refresh, which reloads the sessions and GitHub.
     private var tabPicker: some View {
         HStack(spacing: 6) {
-            Picker("List", selection: $model.tab) {
+            Picker("List", selection: Binding(get: { model.tab }, set: { show($0) })) {
                 Text("Sessions").tag(SidebarTab.sessions)
                 Text("Inbox").tag(SidebarTab.inbox)
                 Text("To-dos").tag(SidebarTab.todos)
@@ -282,7 +276,7 @@ struct MainWindowView: View {
                 }
             }
             // Out of sight under the Inbox, so out of VoiceOver's reach too.
-            .accessibilityHidden(model.tab == .inbox)
+            .accessibilityHidden(model.tab.coversPane)
             // Over the terminals, which stay in the tree, so their tmux
             // clients live on while the Inbox shows.
             if model.tab == .inbox {
@@ -295,7 +289,7 @@ struct MainWindowView: View {
     /// nil while it would. The first click on a window in the background only
     /// brings it forward, so the keyboard then stays where it was.
     private var keyboardHint: String? {
-        guard let shown = model.attachedPane, model.tab != .inbox else { return nil }
+        guard let shown = model.attachedPane, !model.tab.coversPane else { return nil }
         guard controlActiveState == .key else { return "Click to type here" }
         guard !shown.hasKeyboard else { return nil }
         // Return hands the keyboard over from the list; elsewhere only the menu shortcut does.

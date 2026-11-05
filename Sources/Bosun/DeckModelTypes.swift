@@ -105,6 +105,10 @@ enum SidebarItem: Hashable {
 /// The sidebar's three lists.
 enum SidebarTab: String {
     case sessions, inbox, todos
+
+    /// Whether the list's detail covers the session's terminal: the
+    /// Inbox's does, and the To-dos sit beside it.
+    var coversPane: Bool { self == .inbox }
 }
 
 /// The New Session dialog's starting values.

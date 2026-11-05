@@ -10,7 +10,9 @@ final class DeckModel {
     static let shared = DeckModel(
         deck: AgentDeckCLI(agentDeckPath: UserDefaults.standard.string(forKey: "agentDeckPath")),
         gitHub: GitHubCLI(),
-        defaults: UserDefaults.standard
+        defaults: UserDefaults.standard,
+        todos: TodoStore(),
+        workTree: WorkTreeCenter()
     )
 
     private(set) var sessions: [DeckSession] = []
@@ -36,7 +38,7 @@ final class DeckModel {
         didSet {
             guard tab != oldValue else { return }
             defaults.set(tab.rawValue, forKey: "sidebarTab")
-            attention.paneCovered(tab == .inbox)
+            attention.paneCovered(tab.coversPane)
             if tab == .inbox { inbox.refreshIfStale() }
         }
     }
@@ -57,7 +59,7 @@ final class DeckModel {
     /// The omp process beside the list, which edits it when asked; Bosun's
     /// own, so it ends with Bosun.
     let todoAgent: TodoAgent
-    /// The shown session's uncommitted changes, for the toolbar.
+    /// The uncommitted changes of the shown session's directory, for the toolbar.
     let workTree: WorkTreeCenter
     /// The session list's folds, search, Open filter and sort.
     let sessionList: SessionList
@@ -112,12 +114,12 @@ final class DeckModel {
 
     /// `shared` runs on the real agent-deck, GitHub, defaults, to-do file
     /// and git; a test gives fakes.
-    init(deck: any AgentDeck, gitHub: any GitHubClient, defaults: any Defaults, todos: TodoStore = TodoStore(), workTree: WorkTreeCenter = WorkTreeCenter()) {
+    init(deck: any AgentDeck, gitHub: any GitHubClient, defaults: any Defaults, todos: TodoStore, workTree: WorkTreeCenter) {
         self.deck = deck
         self.defaults = defaults
         self.todos = todos
         self.workTree = workTree
-        todoAgent = TodoAgent(directory: todos.url.deletingLastPathComponent(), defaults: defaults)
+        todoAgent = TodoAgent(todos: todos, defaults: defaults)
         tab = SidebarTab(rawValue: defaults.string(forKey: "sidebarTab") ?? "") ?? .sessions
         attention = AttentionCenter(defaults: defaults)
         inbox = InboxCenter(gitHub: gitHub, defaults: defaults)
@@ -125,9 +127,9 @@ final class DeckModel {
         // A turn is when an agent pushes, or opens or merges a pull request;
         // the 5 min round would show it late. It is also when it has changed
         // files, which the toolbar shows for the session on view.
-        attention.onTurnEnd = { [inbox, workTree, weak self] session in
+        attention.onTurnEnd = { [inbox, workTree] session in
             inbox.recheck(session)
-            if session.id == self?.shownSessionID { workTree.rescan(session.path) }
+            workTree.rescan(ifFollowing: session.path)
         }
     }
 
@@ -241,13 +243,7 @@ final class DeckModel {
         refreshTask = task
         await task.value
         refreshTask = nil
-        rescanWorkTree()
-    }
-
-    /// The shown session's uncommitted changes, read anew.
-    private func rescanWorkTree() {
-        guard let path = paneSession?.path, !path.isEmpty else { return }
-        workTree.rescan(path)
+        workTree.rescan()
     }
 
     /// The session list and GitHub, together.
@@ -340,15 +336,6 @@ final class DeckModel {
         }
     }
 
-    /// Opens the to-do file in the code editor, making an empty one first
-    /// if there is none yet: an editor cannot open a file that is not there.
-    func openTodos(in editor: CodeEditor) {
-        run("open in \(editor.name)") { [todos] in
-            await todos.createIfMissing()
-            try await editor.open(todos.url)
-        }
-    }
-
     private func loadSessions() async {
         do {
             // Without the group order (a failed `group list`) the last one
@@ -420,7 +407,7 @@ final class DeckModel {
         if let hidden = attachedPane { yieldSize(of: hidden) }
         shownSessionID = sessionID
         shownChanged()
-        rescanWorkTree()
+        workTree.follow(paneSession?.path)
     }
 
     /// Attention hears what the pane shows: after a selection, a shown

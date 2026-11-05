@@ -1,5 +1,4 @@
 import AppKit
-import BosunCore
 import SwiftUI
 
 /// What Bosun tells you, and where, about sessions that want you. Stored in
@@ -82,7 +81,6 @@ struct AttentionSettingsView: View {
     @AppStorage(AttentionSettings.sound) private var sound = true
     @AppStorage(AttentionSettings.soundName) private var soundName = ""
     @AppStorage(AttentionSettings.menuBarCount) private var menuBarCount = true
-    @AppStorage(TodoAgent.modelKey) private var todoAgentModel = TodoAgentLaunch.defaultModel
     @State private var systemDenies = false
     /// Read once as the window opens; the set changes with a macOS update.
     private let sounds = NotificationSound.available
@@ -124,14 +122,7 @@ struct AttentionSettingsView: View {
             Section("Unread count") {
                 Toggle("In the menu bar", isOn: $menuBarCount)
             }
-            Section {
-                TextField("Model", text: $todoAgentModel, prompt: Text("omp's default"))
-            } header: {
-                Text("To-do agent")
-            } footer: {
-                Text("An omp model or role, such as @smol or @default; empty for omp's default. The agent takes it when it restarts.")
-                    .foregroundStyle(.secondary)
-            }
+            TodoAgentSettings()
         }
         .formStyle(.grouped)
         .frame(width: 400)

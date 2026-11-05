@@ -13,7 +13,8 @@ enum TodoMode: String {
 /// file with its own tools.
 @MainActor
 struct TodoPanel: View {
-    let model: DeckModel
+    let todos: TodoStore
+    let agent: TodoAgent
     /// Kept across launches: whoever edits the markdown keeps editing it.
     @AppStorage("todos.mode") private var mode = TodoMode.preview
 
@@ -24,12 +25,13 @@ struct TodoPanel: View {
                     // The list is what you read; the agent only answers in a line.
                     .frame(height: geometry.size.height * 0.7)
                 Divider()
-                TodoAgentView(agent: model.todoAgent)
+                TodoAgentView(agent: agent)
             }
         }
+        // The list first: it makes the directory the agent's prompt goes in.
         .onAppear {
-            model.todos.start()
-            model.todoAgent.start()
+            todos.start()
+            agent.start()
         }
     }
 
@@ -40,13 +42,13 @@ struct TodoPanel: View {
             Group {
                 switch mode {
                 case .preview:
-                    TodoPreview(todos: model.todos)
+                    TodoPreview(todos: todos)
                 case .edit:
-                    TodoEditor(todos: model.todos)
+                    TodoEditor(todos: todos)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if let error = model.todos.error {
+            if let error = todos.error {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
@@ -59,18 +61,18 @@ struct TodoPanel: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text(verbatim: "\(model.todos.document.openCount) open")
+            Text(verbatim: "\(todos.document.openCount) open")
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             if let editor = CodeEditor.installed {
                 Button {
-                    model.openTodos(in: editor)
+                    todos.open(in: editor)
                 } label: {
                     Label { Text("Open in \(editor.name)") } icon: { Image(nsImage: editor.icon) }
                 }
-                .help("Open \(model.todos.displayPath) in \(editor.name)")
+                .help("Open \(todos.displayPath) in \(editor.name)")
             }
             Button {
                 mode = mode == .preview ? .edit : .preview
@@ -96,9 +98,9 @@ private struct TodoAgentView: View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Label("Agent", systemImage: "sparkles")
-                    .help(agent.command ?? "omp, in \(agent.directory.path)")
+                    .help(agent.command ?? "omp")
                 Spacer(minLength: 0)
-                if case .running = agent.state {
+                if agent.pane != nil {
                     Button("Restart") { agent.restart() }
                         .help("Start omp again; it picks up its last conversation")
                 }
@@ -110,17 +112,14 @@ private struct TodoAgentView: View {
             .padding(.vertical, 4)
             Divider()
             Group {
-                switch agent.state {
-                case .idle, .launching:
-                    ProgressView()
-                case .running(let pane):
+                if let pane = agent.pane {
                     BorrowedTerminalHost(terminal: pane)
-                case .ended(let exit):
+                } else if let exit = agent.exit {
                     ContentUnavailableView {
                         Label("Agent ended", systemImage: "sparkles")
                     } description: {
                         if exit == .abnormal, let command = agent.command {
-                            Text("omp ended as it started. Run this in a terminal to see why:")
+                            Text("omp ended as it started: not installed, or it failed. Run this in a terminal to see why; the list works without it.")
                             Text(verbatim: command)
                                 .font(.caption.monospaced())
                                 .textSelection(.enabled)
@@ -130,17 +129,25 @@ private struct TodoAgentView: View {
                     } actions: {
                         Button("Restart") { agent.restart() }
                     }
-                case .notInstalled:
-                    ContentUnavailableView {
-                        Label("omp not found", systemImage: "questionmark.app")
-                    } description: {
-                        Text("The to-do agent runs omp, which is not on your login shell's PATH. The list works without it.")
-                    } actions: {
-                        Button("Try Again") { agent.restart() }
-                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+/// The agent's model, in Settings; it takes effect at its next start.
+struct TodoAgentSettings: View {
+    @AppStorage(TodoAgent.modelKey) private var model = TodoAgentLaunch.defaultModel
+
+    var body: some View {
+        Section {
+            TextField("Model", text: $model, prompt: Text("omp's default"))
+        } header: {
+            Text("To-do agent")
+        } footer: {
+            Text("An omp model or role, such as @smol or @default; empty for omp's default. The agent takes it when it restarts.")
+                .foregroundStyle(.secondary)
         }
     }
 }

@@ -24,20 +24,26 @@ import Testing
     }
 }
 
-/// The to-do agent's command, run as libghostty runs it: `sh` must hand omp
-/// each path whole, whatever spaces or quotes the directory has.
+/// The to-do agent's command, run as libghostty runs it: `sh` starts the
+/// login shell, whose rc files set PATH, and omp gets each path whole,
+/// whatever spaces or quotes the directory has. `ZDOTDIR` points zsh at rc
+/// files of the test's own, so the user's never run.
 @Suite struct TodoAgentLaunchTests {
-    @Test func shHandsOmpItsArgumentsWhole() async throws {
+    @Test func theLoginShellFindsOmpAndHandsItItsArgumentsWhole() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "bosun o'todo \(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let bin = directory.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         // Stands in for omp: prints each argument it got on a line of its own.
-        let omp = directory.appending(path: "omp")
+        let omp = bin.appending(path: "omp")
         try "#!/bin/sh\nfor argument in \"$@\"; do printf '%s\\n' \"$argument\"; done\n".write(to: omp, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: omp.path)
-        let launch = TodoAgentLaunch(executable: omp.path, model: "@smol", directory: directory.path, path: "/usr/bin:/bin")
+        // As an installer adds its directory to .zshrc.
+        try "export PATH=\(Terminal.shellQuote(bin.path)):$PATH\n".write(to: directory.appending(path: ".zshrc"), atomically: true, encoding: .utf8)
+        let launch = TodoAgentLaunch(list: directory.appending(path: "todo.md"), model: "@smol")
         let result = try await Subprocess.run(
-            executable: "/bin/sh", arguments: ["-c", "exec " + launch.command], environment: ["PATH": "/usr/bin:/bin"], timeout: .seconds(5)
+            executable: "/bin/sh", arguments: ["-c", "exec " + launch.command],
+            environment: ["PATH": "/usr/bin:/bin", "HOME": directory.path, "ZDOTDIR": directory.path], timeout: .seconds(10)
         )
         #expect(result.stdout.split(separator: "\n").map(String.init) == [
             "--model", "@smol", "--thinking", "low",
@@ -45,12 +51,15 @@ import Testing
             "--append-system-prompt", "\(directory.path)/todo-agent.md",
             "--no-skills", "--no-lsp", "--warn-cost", "2",
         ])
-        #expect(launch.environment == ["PATH": "/usr/bin:/bin"])
     }
 
-    @Test func anEmptyModelLeavesTheChoiceToOmp() {
-        let launch = TodoAgentLaunch(executable: "/bin/omp", model: "  ", directory: "/d", path: nil)
+    /// The prompt names the list as the file is called, so the agent and
+    /// the list never disagree on it.
+    @Test func anEmptyModelLeavesTheChoiceToOmpAndThePromptNamesTheList() {
+        let launch = TodoAgentLaunch(list: URL(fileURLWithPath: "/d/later.md"), model: "  ")
         #expect(!launch.command.contains("--model"))
-        #expect(launch.environment.isEmpty)
+        #expect(launch.directory == "/d")
+        #expect(launch.instructionsFile.path == "/d/todo-agent.md")
+        #expect(launch.instructions.contains("`later.md`"))
     }
 }

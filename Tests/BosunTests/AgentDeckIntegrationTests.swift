@@ -180,7 +180,11 @@ struct AgentDeckIntegrationTests {
 
     @Test func theModelRunsASessionsLifeOnTheRealDeck() async throws {
         try await withSandbox { sandbox in
-            let model = DeckModel(deck: sandbox.cli, gitHub: FakeGitHub(), defaults: MemoryDefaults())
+            let model = DeckModel(
+                deck: sandbox.cli, gitHub: FakeGitHub(), defaults: MemoryDefaults(),
+                todos: TodoStore(url: sandbox.root.appending(path: "home/.config/bosun/todo.md")),
+                workTree: WorkTreeCenter { _ in nil }
+            )
             defer { model.stop() }
             await model.connect()
             #expect(model.hasLoadedSessions)

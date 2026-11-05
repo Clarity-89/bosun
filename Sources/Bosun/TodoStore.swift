@@ -45,11 +45,7 @@ final class TodoStore {
     func stop() {
         watcher?.stop()
         watcher = nil
-        if saveTask != nil {
-            saveTask?.cancel()
-            saveTask = nil
-            save()
-        }
+        writePending()
     }
 
     /// The editor's text: shown at once, written 400 ms after the last change.
@@ -69,16 +65,34 @@ final class TodoStore {
     func toggle(lineAt index: Int) {
         guard let text = document.toggling(lineAt: index) else { return }
         document = TodoDocument(text: text)
-        saveTask?.cancel()
-        saveTask = nil
+        dropPending()
         save()
     }
 
-    /// An empty file where there is none, for an editor to open.
-    func createIfMissing() {
-        guard !FileManager.default.fileExists(atPath: url.path) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    /// Opens the file in the editor, writing an empty one first if there is
+    /// none yet: an editor cannot open a file that is not there.
+    func open(in editor: CodeEditor) {
+        if !FileManager.default.fileExists(atPath: url.path) { save() }
+        Task {
+            do {
+                try await editor.open(url)
+            } catch {
+                self.error = "Could not open \(displayPath) in \(editor.name): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// The keystrokes waiting for their write, written now.
+    private func writePending() {
+        guard saveTask != nil else { return }
+        dropPending()
         save()
+    }
+
+    /// The keystrokes waiting for their write, left to what `document` is now.
+    private func dropPending() {
+        saveTask?.cancel()
+        saveTask = nil
     }
 
     /// What is on disk, when it is not what Bosun last read or wrote. It
@@ -99,8 +113,7 @@ final class TodoStore {
         diskText = text
         if saveTask != nil {
             logger.info("\(self.displayPath, privacy: .public) changed on disk under an edit; the disk wins")
-            saveTask?.cancel()
-            saveTask = nil
+            dropPending()
         }
         if text != document.text {
             document = TodoDocument(text: text)
