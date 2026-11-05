@@ -119,13 +119,19 @@ final class WorkTreeCenter {
 
     private func start(_ path: String) {
         task = Task { [scan, weak self] in
-            let answer = await Result { try await scan(path) }
-            guard !Task.isCancelled, let self else { return }
-            task = nil
             // Git's nil is an answer, no repository; no answer at all keeps
             // the last one, so a slow repository's mark does not blink out
             // while git takes its time.
-            if case .success(let found) = answer { changes[path] = found }
+            var found: [String]?
+            var answered = true
+            do {
+                found = try await scan(path)
+            } catch {
+                answered = false
+            }
+            guard !Task.isCancelled, let self else { return }
+            task = nil
+            if answered { changes[path] = found }
             if rescanWanted {
                 rescanWanted = false
                 start(path)
