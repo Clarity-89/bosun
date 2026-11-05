@@ -135,10 +135,46 @@ public enum GitRepo {
     /// when clean, nil when `path` is not in a repository or git did not
     /// answer in time. Unlike `info` this stats every tracked file, which a
     /// large repository makes slow, so a caller asks for one directory at a
-    /// time.
+    /// time. A go.mod that Grafana's enterprise link alone changed is left
+    /// out: `make` writes that link into each module, and it is never
+    /// committed.
     public static func changes(path: String) async -> [String]? {
         guard let output = await git(path, ["status", "--porcelain", "--untracked-files=normal"]) else { return nil }
-        return output.split(separator: "\n").map(String.init)
+        let lines = output.split(separator: "\n").map(String.init)
+        let modules = lines.filter { !$0.hasPrefix("??") }.map { String($0.dropFirst(3)) }.filter { $0 == "go.mod" || $0.hasSuffix("/go.mod") }
+        guard !modules.isEmpty, let diff = await git(path, ["diff", "-U0", "HEAD", "--"] + modules) else { return lines }
+        let linked = enterpriseLinkOnly(diff: diff)
+        return lines.filter { !linked.contains(String($0.dropFirst(3))) }
+    }
+
+    /// The files in a `git diff` whose every changed line names
+    /// grafana-enterprise; blank lines, which the link brings with it, do
+    /// not count either way.
+    static func enterpriseLinkOnly(diff: String) -> Set<String> {
+        var linked: Set<String> = []
+        var file: String?
+        var onlyLink = false
+        func close() {
+            if let file, onlyLink { linked.insert(file) }
+        }
+        for line in diff.split(separator: "\n") {
+            if line.hasPrefix("diff --git ") {
+                close()
+                file = line.components(separatedBy: " b/").last
+                onlyLink = false
+            } else if line.hasPrefix("+++ ") || line.hasPrefix("--- ") {
+                continue
+            } else if line.hasPrefix("+") || line.hasPrefix("-") {
+                guard file != nil, !line.dropFirst().allSatisfy(\.isWhitespace) else { continue }
+                guard line.contains("github.com/grafana/grafana-enterprise") else {
+                    file = nil
+                    continue
+                }
+                onlyLink = true
+            }
+        }
+        close()
+        return linked
     }
 
     /// Stdout without its final newline, nil on any failure. Spaces stay:

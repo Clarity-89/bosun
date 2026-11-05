@@ -255,3 +255,73 @@ import Testing
         #expect(request.strings == ["o0": "Clarity-89", "n0": "bosun"])
     }
 }
+
+/// The toolbar's uncommitted count: Grafana's enterprise link in a go.mod
+/// is never committed, so a go.mod with nothing else changed is no change.
+@Suite struct WorkTreeChangesTests {
+    /// `git diff -U0 HEAD` in a Grafana worktree with the link, plus a module
+    /// that also has a real change.
+    static let diff = """
+        diff --git a/apps/iam/go.mod b/apps/iam/go.mod
+        index 93fb2faf18b..a33f97a2a80 100644
+        --- a/apps/iam/go.mod
+        +++ b/apps/iam/go.mod
+        @@ -152,0 +153,2 @@ require (
+        +
+        +replace github.com/grafana/grafana-enterprise => ../../../grafana-enterprise
+        diff --git a/apps/plugins/go.mod b/apps/plugins/go.mod
+        index 1111111..2222222 100644
+        --- a/apps/plugins/go.mod
+        +++ b/apps/plugins/go.mod
+        @@ -10 +10 @@ require (
+        -	github.com/grafana/grafana-app-sdk v0.40.0
+        +	github.com/grafana/grafana-app-sdk v0.41.0
+        @@ -152,0 +153,2 @@ require (
+        +
+        +replace github.com/grafana/grafana-enterprise => ../../../grafana-enterprise
+        diff --git a/go.mod b/go.mod
+        index 7ea418478d5..e609bc92ee8 100644
+        --- a/go.mod
+        +++ b/go.mod
+        @@ -476,0 +477 @@ require (
+        +	github.com/grafana/grafana-enterprise v0.0.0
+        @@ -732,0 +734,2 @@ exclude k8s.io/client-go v12.0.0+incompatible
+        +
+        +replace github.com/grafana/grafana-enterprise => ../grafana-enterprise
+        """
+
+    @Test func aModuleWithARealChangeStillCounts() {
+        #expect(GitRepo.enterpriseLinkOnly(diff: Self.diff) == ["apps/iam/go.mod", "go.mod"])
+    }
+
+    /// Through git itself: the status lists the linked module, the scan
+    /// drops it, and keeps a module with a real change and a new one.
+    @Test func theScanDropsOnlyLinkedModules() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "bosun-gomod-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appending(path: "apps/iam"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func git(_ arguments: String...) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", root.path, "-c", "user.name=t", "-c", "user.email=t@t"] + arguments
+            try process.run()
+            process.waitUntilExit()
+            #expect(process.terminationStatus == 0, "git \(arguments)")
+        }
+        func write(_ path: String, _ text: String) throws {
+            try text.write(to: root.appending(path: path), atomically: true, encoding: .utf8)
+        }
+        let module = "module x\n\nrequire (\n\tgithub.com/a/b v1.0.0\n)\n"
+        try git("init", "-q")
+        try write("go.mod", module)
+        try write("apps/iam/go.mod", module)
+        try git("add", ".")
+        try git("commit", "-q", "-m", "init")
+        let link = "\nreplace github.com/grafana/grafana-enterprise => ../grafana-enterprise\n"
+        try write("go.mod", module + link)
+        try write("apps/iam/go.mod", module.replacingOccurrences(of: "v1.0.0", with: "v1.1.0") + link)
+        try FileManager.default.createDirectory(at: root.appending(path: "apps/new"), withIntermediateDirectories: true)
+        try write("apps/new/go.mod", link)
+        #expect(await GitRepo.changes(path: root.path) == [" M apps/iam/go.mod", "?? apps/new/"])
+    }
+}
