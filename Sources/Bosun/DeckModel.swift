@@ -52,6 +52,11 @@ final class DeckModel {
     let inbox: InboxCenter
     /// Two shells in each session's directory, beside its terminal.
     let sideTerminals = SideTerminals()
+    /// The to-do list's file, read once the To-dos tab first shows.
+    let todos: TodoStore
+    /// The omp process beside the list, which edits it when asked; Bosun's
+    /// own, so it ends with Bosun.
+    let todoAgent: TodoAgent
     /// The shown session's uncommitted changes, for the toolbar.
     let workTree: WorkTreeCenter
     /// The session list's folds, search, Open filter and sort.
@@ -105,12 +110,14 @@ final class DeckModel {
     /// keyboard goes into the terminal once its attach lands.
     @ObservationIgnored private var focusOnAttach: String?
 
-    /// `shared` runs on the real agent-deck, GitHub, defaults and git; a
-    /// test gives fakes.
-    init(deck: any AgentDeck, gitHub: any GitHubClient, defaults: any Defaults, workTree: WorkTreeCenter = WorkTreeCenter()) {
+    /// `shared` runs on the real agent-deck, GitHub, defaults, to-do file
+    /// and git; a test gives fakes.
+    init(deck: any AgentDeck, gitHub: any GitHubClient, defaults: any Defaults, todos: TodoStore = TodoStore(), workTree: WorkTreeCenter = WorkTreeCenter()) {
         self.deck = deck
         self.defaults = defaults
+        self.todos = todos
         self.workTree = workTree
+        todoAgent = TodoAgent(directory: todos.url.deletingLastPathComponent(), defaults: defaults)
         tab = SidebarTab(rawValue: defaults.string(forKey: "sidebarTab") ?? "") ?? .sessions
         attention = AttentionCenter(defaults: defaults)
         inbox = InboxCenter(gitHub: gitHub, defaults: defaults)
@@ -219,6 +226,7 @@ final class DeckModel {
         attention.stop()
         inbox.stop()
         workTree.stop()
+        todos.stop()
     }
 
     /// One `list --json` at a time: it runs a status pass, and a slower call
@@ -329,6 +337,15 @@ final class DeckModel {
                 throw AgentDeckCLIError.reported("“\(session.title)” has no directory")
             }
             try await editor.open(directory: session.path)
+        }
+    }
+
+    /// Opens the to-do file in the code editor, making an empty one first
+    /// if there is none yet: an editor cannot open a file that is not there.
+    func openTodos(in editor: CodeEditor) {
+        run("open in \(editor.name)") { [todos] in
+            await todos.createIfMissing()
+            try await editor.open(todos.url)
         }
     }
 

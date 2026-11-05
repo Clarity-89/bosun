@@ -7,6 +7,7 @@ A macOS app over [agent-deck](https://github.com/asheshgoplani/agent-deck). Agen
 - New, stop, restart, rename and delete sessions, with git worktrees or in agent-deck's Docker sandbox; extra shell windows and splits; two side shells in the session's directory.
 - Inbox: review requests, your pull requests and issues, and mentions, through `gh`. Each session shows its branch's pull request and the issue it works on.
 - Toolbar buttons that open the session's directory in GoLand, VS Code or Cursor, and that ask its agent to merge main, open a pull request, or push to it. The toolbar also counts the session's uncommitted changes.
+- To-dos: one markdown list in `~/.config/bosun/todo.md`, in the sidebar's To-dos tab (⌘3) beside the session's terminal, shown as a checklist or edited as text. Below it runs an omp agent of Bosun's own, on omp's `@smol` model by default, which edits the list when you ask; the list works whether or not the agent runs.
 
 ## Requirements
 

@@ -64,14 +64,15 @@ final class WorkTreeScans {
     }
 }
 
-/// A model on a fake agent-deck, an empty GitHub, defaults of its own and
-/// no git. Its loops stop when the test ends, or the model would poll the
-/// fake for as long as the process runs.
+/// A model on a fake agent-deck, an empty GitHub, defaults of its own, a
+/// to-do file under /tmp and no git. Its loops stop when the test ends, or
+/// the model would poll the fake for as long as the process runs.
 @MainActor
 final class DeckFixture {
     let deck = FakeAgentDeck()
     let defaults = MemoryDefaults()
     let workTreeScans = WorkTreeScans()
+    let todoFile = FileManager.default.temporaryDirectory.appending(path: "bosun-tests-\(UUID().uuidString)/todo.md")
     let model: DeckModel
 
     /// `groups` defaults to the sessions' groups in order of appearance;
@@ -93,12 +94,14 @@ final class DeckFixture {
         let scans = workTreeScans
         model = DeckModel(
             deck: deck, gitHub: FakeGitHub(), defaults: defaults,
+            todos: TodoStore(url: todoFile),
             workTree: WorkTreeCenter { path in await scans.scan(path) }
         )
     }
 
     isolated deinit {
         model.stop()
+        try? FileManager.default.removeItem(at: todoFile.deletingLastPathComponent())
     }
 
     var sessions: [DeckSession] { model.sessions }

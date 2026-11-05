@@ -64,8 +64,8 @@ struct SideTerminalsView: View {
 
 /// Shows a terminal the model owns, for as long as the view is up. Where
 /// TerminalHost's pane ends with its view, this one leaves hidden, its
-/// shell still running, for the next view to take up.
-private struct BorrowedTerminalHost: NSViewRepresentable {
+/// command still running, for the next view to take up.
+struct BorrowedTerminalHost: NSViewRepresentable {
     let terminal: TerminalPane
 
     func makeNSView(context: Context) -> TerminalSlot {
@@ -86,7 +86,7 @@ private struct BorrowedTerminalHost: NSViewRepresentable {
 /// Holds one borrowed terminal. As the pane moves to a session in another
 /// directory, SwiftUI keeps the slot and hands it that directory's
 /// terminal, so the one leaving hides first.
-private final class TerminalSlot: NSView {
+final class TerminalSlot: NSView {
     private var terminal: TerminalPane?
 
     func hold(_ terminal: TerminalPane) {
@@ -104,6 +104,9 @@ private final class TerminalSlot: NSView {
     func release() {
         guard let terminal else { return }
         self.terminal = nil
+        // SwiftUI may build a view's replacement before it dismantles the
+        // view, and the new slot then holds the terminal already.
+        guard terminal.superview === self else { return }
         terminal.setShown(false)
         terminal.removeFromSuperview()
     }

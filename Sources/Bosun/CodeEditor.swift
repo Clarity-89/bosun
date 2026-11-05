@@ -24,9 +24,10 @@ struct CodeEditor {
     }()
 
     func open(directory: String) async throws {
-        _ = try await NSWorkspace.shared.open(
-            [URL(fileURLWithPath: directory, isDirectory: true)],
-            withApplicationAt: url, configuration: NSWorkspace.OpenConfiguration()
-        )
+        try await open(URL(fileURLWithPath: directory, isDirectory: true))
+    }
+
+    func open(_ url: URL) async throws {
+        _ = try await NSWorkspace.shared.open([url], withApplicationAt: self.url, configuration: NSWorkspace.OpenConfiguration())
     }
 }
