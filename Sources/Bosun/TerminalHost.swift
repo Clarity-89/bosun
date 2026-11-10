@@ -47,10 +47,13 @@ struct TerminalHost: NSViewRepresentable {
         if isShown { pane.focusTerminal() }
     }
 
-    /// SwiftUI drops the pane once the model lets it go; the engine surface
-    /// must go with it, now, not whenever ARC gets around to it.
+    /// SwiftUI drops the pane once the model lets it go, and the model kills
+    /// the pane's view as it does, which ends the tmux client. The surface
+    /// goes once the client has: freeing it first deadlocks the main thread
+    /// on a client that writes as it exits. A pane attached through
+    /// agent-deck has no view to kill, and goes after the grace.
     static func dismantleNSView(_ pane: TerminalPane, coordinator: Coordinator) {
-        pane.teardown()
+        pane.teardownAfterExit(grace: .seconds(5))
     }
 }
 
