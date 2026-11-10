@@ -123,6 +123,40 @@ public final class TerminalPane: NSView {
         surfaceView.teardownSurface()
     }
 
+    /// Panes whose view is gone, held until their command ends: the engine
+    /// keeps each as unretained userdata until its surface is freed.
+    private static var ending: Set<TerminalPane> = []
+
+    /// Frees the surface once its command has ended, or after `grace` if it
+    /// has not, and reports nothing more to the owner. Freeing a live
+    /// surface blocks the main thread until the engine reaps the command,
+    /// and a command that writes on its way out, as a tmux client does,
+    /// never finishes while the main thread cannot drain the engine's
+    /// mailbox. So the owner ends the command, and the free waits for that.
+    public func teardownAfterExit(grace: Duration) {
+        onTitleChange = nil
+        onInput = nil
+        onFocusChange = nil
+        setShown(false)
+        guard let controller = surfaceView.surfaceController, !controller.processExited else {
+            teardown()
+            return
+        }
+        Self.ending.insert(self)
+        // The engine reports the end from inside its own callback, which
+        // must return before the surface goes.
+        onProcessExit = { [weak self] _ in Task { self?.finishEnding() } }
+        Task { [weak self] in
+            try? await Task.sleep(for: grace)
+            self?.finishEnding()
+        }
+    }
+
+    private func finishEnding() {
+        guard Self.ending.remove(self) != nil else { return }
+        teardown()
+    }
+
     private func createSurface() {
         let controller = GhosttyAppController.shared
         guard let app = controller.app else {
