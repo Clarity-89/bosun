@@ -1,6 +1,11 @@
 import BosunCore
 import SwiftUI
 
+/// The sidebar's terminal marks — a session's extra windows and a command in
+/// its side shells — take purple, so they stand apart from the status dots,
+/// which own blue, red, yellow, indigo and gray.
+private let terminalMark = Color.purple
+
 /// The sidebar's session list: the TUI's search, Open filter and the sort
 /// over the rows, the rows themselves, and the TUI's keys on the selected
 /// row.
@@ -285,7 +290,7 @@ private struct SidebarSessionRow: View {
             if model.sideTerminals.isBusy(in: session.path) {
                 Image(systemName: "terminal")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(terminalMark)
                     .help("A command runs in this session's side shells (\(Shortcut.toggleSideTerminals.menuLabel))")
             }
             BranchChip(branch: github.branch)
@@ -493,7 +498,7 @@ private struct WindowRow: View {
             Color.clear.frame(width: DragHandle.width, height: 0)
             Image(systemName: "terminal")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(terminalMark)
             Text(window.title)
                 .lineLimit(1)
             Spacer()
