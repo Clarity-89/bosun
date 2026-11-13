@@ -1,6 +1,5 @@
 import CSentry
 import Darwin
-import GhosttyKit
 import os
 
 private let logger = Logger(subsystem: "com.bosun.Bosun", category: "GhosttyInit")
@@ -42,31 +41,26 @@ enum GhosttyInit {
         _ = sentry_close()
     }
 
-    /// Whether this process receives hardware faults itself, as Breakpad
-    /// does: its own, and those of every process it starts.
+    /// Whether this process receives its own bad-access faults, as it does
+    /// while Breakpad runs. Breakpad takes every fault type on one port, so
+    /// one type answers for all, and every process this one starts inherits
+    /// that port.
     static func takesFaults() -> Bool {
         let task = mach_task_self_
-        let capacity = Int(EXC_TYPES_COUNT)
-        var masks = [exception_mask_t](repeating: 0, count: capacity)
-        var ports = [mach_port_t](repeating: mach_port_t(MACH_PORT_NULL), count: capacity)
-        var behaviors = [exception_behavior_t](repeating: 0, count: capacity)
-        var flavors = [thread_state_flavor_t](repeating: 0, count: capacity)
-        var count = mach_msg_type_number_t(capacity)
-        let faults = exception_mask_t(EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_ARITHMETIC | EXC_MASK_BREAKPOINT)
-        guard task_get_exception_ports(task, faults, &masks, &count, &ports, &behaviors, &flavors) == KERN_SUCCESS else {
-            return false
-        }
-        var receives = false
-        // ~0 is MACH_PORT_DEAD, which Swift does not import: a port whose
-        // receiver is gone, and no name in this task.
-        for port in ports.prefix(Int(count)) where port != MACH_PORT_NULL && port != ~0 {
-            var refs: mach_port_urefs_t = 0
-            if mach_port_get_refs(task, port, MACH_PORT_RIGHT_RECEIVE, &refs) == KERN_SUCCESS, refs > 0 {
-                receives = true
-            }
-            // The read added a send right to each port; this gives it back.
-            mach_port_deallocate(task, port)
-        }
-        return receives
+        var mask: exception_mask_t = 0
+        var port = mach_port_t(MACH_PORT_NULL)
+        var behavior: exception_behavior_t = 0
+        var flavor: thread_state_flavor_t = 0
+        // One exception type has one port, so one entry is room enough.
+        var count: mach_msg_type_number_t = 1
+        guard task_get_exception_ports(task, exception_mask_t(EXC_MASK_BAD_ACCESS), &mask, &count, &port, &behavior, &flavor) == KERN_SUCCESS,
+              // ~0 is MACH_PORT_DEAD, which Swift does not import: a port
+              // whose receiver is gone, and no name in this task.
+              port != MACH_PORT_NULL, port != ~0
+        else { return false }
+        // The read added a send right to the port; this gives it back.
+        defer { mach_port_deallocate(task, port) }
+        var refs: mach_port_urefs_t = 0
+        return mach_port_get_refs(task, port, MACH_PORT_RIGHT_RECEIVE, &refs) == KERN_SUCCESS && refs > 0
     }
 }
