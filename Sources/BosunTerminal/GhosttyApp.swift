@@ -41,7 +41,7 @@ public final class GhosttyAppController {
     public func start() throws {
         guard app == nil else { return }
         // ghostty_init must precede every other engine call, including ghostty_config_new.
-        guard GhosttyFFI.initialize() else { throw GhosttyEngineError.initFailed }
+        guard GhosttyInit.run() else { throw GhosttyEngineError.initFailed }
         guard let configManager = GhosttyConfigManager() else { throw GhosttyEngineError.configFailed }
         var runtimeConfig = ghostty_runtime_config_s(
             userdata: Unmanaged.passUnretained(self).toOpaque(),
