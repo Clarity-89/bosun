@@ -24,8 +24,8 @@ vendor:
 build: vendor
 	swift build -c release --product $(APP)
 
-# Unit tests: BosunCore, and the app's model on a fake agent-deck. The
-# engine needs a GUI session, so the terminal has none.
+# Unit tests: BosunCore, the app's model on a fake agent-deck, and the
+# engine's start. Panes need a GUI session, so the terminal has no more.
 test: vendor
 	swift test
 

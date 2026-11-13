@@ -14,9 +14,11 @@ let package = Package(
         // libghostty (Ghostty 1.3.1) as built by Calyx; fetched into the
         // gitignored Vendor/ by `make vendor` (scripts/fetch-ghosttykit.sh).
         .binaryTarget(name: "GhosttyKit", path: "Vendor/GhosttyKit.xcframework"),
+        // Declares sentry_close, which libghostty links in with no header.
+        .systemLibrary(name: "CSentry", path: "Sources/CSentry"),
         .target(
             name: "BosunTerminal",
-            dependencies: ["GhosttyKit"],
+            dependencies: ["GhosttyKit", "CSentry"],
             exclude: ["Vendored/CALYX-LICENSE"],
             linkerSettings: [
                 .linkedFramework("Metal"),

@@ -1,0 +1,4 @@
+module CSentry [system] {
+    header "CSentry.h"
+    export *
+}
