@@ -23,9 +23,10 @@ struct SessionActionItems: View {
             ShellActionItems(model: model, session: session)
             Divider()
             Button("Open in Ghostty", action: perform(session, model.openInGhostty)).shortcut(.openInGhostty)
-            if let editor = CodeEditor.installed {
-                Button("Open in \(editor.name)", action: perform(session) { model.open($0, in: editor) })
-            }
+            CodeEditorButton(
+                help: { _ in "" },
+                open: { editor in perform(session) { model.open($0, in: editor) }() }
+            )
             Divider()
             if session?.status != .stopped {
                 ForEach(AgentRequest.requests(for: session.flatMap { model.inbox[$0].branch.pullRequest }), id: \.self) { request in
