@@ -97,15 +97,11 @@ struct MainWindowView: View {
                 let github = model.inbox[selected]
                 // The editor, then what to ask the agent for, then what it
                 // has made: the order the work goes in.
-                if let editor = CodeEditor.installed {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            model.open(selected, in: editor)
-                        } label: {
-                            Label { Text("Open in \(editor.name)") } icon: { Image(nsImage: editor.icon) }
-                        }
-                        .help("Open the session's directory in \(editor.name)")
-                    }
+                ToolbarItem(placement: .primaryAction) {
+                    CodeEditorButton(
+                        help: { "Open the session's directory in \($0.name)" },
+                        open: { model.open(selected, in: $0) }
+                    )
                 }
                 // A stopped session has no agent to ask.
                 if selected.status != .stopped {

@@ -66,14 +66,10 @@ struct TodoPanel: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            if let editor = CodeEditor.installed {
-                Button {
-                    todos.open(in: editor)
-                } label: {
-                    Label { Text("Open in \(editor.name)") } icon: { Image(nsImage: editor.icon) }
-                }
-                .help("Open \(todos.displayPath) in \(editor.name)")
-            }
+            CodeEditorButton(
+                help: { "Open \(todos.displayPath) in \($0.name)" },
+                open: { todos.open(in: $0) }
+            )
             Button {
                 mode = mode == .preview ? .edit : .preview
             } label: {
