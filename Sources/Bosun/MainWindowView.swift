@@ -124,11 +124,12 @@ struct MainWindowView: View {
                 .sharedBackgroundVisibility(.hidden)
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                if model.paneSession != nil {
+                if let session = model.paneSession {
                     Button {
                         toggleSideTerminals()
                     } label: {
                         Label("Shells", systemImage: "terminal")
+                            .foregroundStyle(model.sideTerminals.isBusy(in: session.path) ? terminalMark : Color.primary)
                     }
                     .help((sideTerminalsShown ? "Hide the session's two shells" : "Show two shells in the session's directory") + " (\(Shortcut.toggleSideTerminals.menuLabel))")
                 }

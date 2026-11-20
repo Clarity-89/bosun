@@ -1,10 +1,10 @@
 import BosunCore
 import SwiftUI
 
-/// The sidebar's terminal marks — a session's extra windows and a command in
-/// its side shells — take purple, so they stand apart from the status dots,
-/// which own blue, red, yellow, indigo and gray.
-private let terminalMark = Color.purple
+/// A session's terminal marks — its extra windows, a command in its side
+/// shells, its shells' toolbar button — take purple, so they stand apart
+/// from the status dots, which own blue, red, yellow, indigo and gray.
+let terminalMark = Color.purple
 
 /// The sidebar's session list: the TUI's search, Open filter and the sort
 /// over the rows, the rows themselves, and the TUI's keys on the selected
